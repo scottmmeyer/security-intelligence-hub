@@ -1,0 +1,92 @@
+{
+  "ess_stage_manifest_exists": true,
+  "overall_status": "COMPLETE",
+  "physical_row_counts": {
+    "base_equity_universe.csv": 2746,
+    "signal_lineage_registry.csv": 2746,
+    "signal_snapshots.csv": 2746,
+    "universe_lineage_registry.csv": 2746
+  },
+  "reconstruction_method": {
+    "inputs": [
+      "runs/manifests/RUN-REAL-ESS-20260513-002_manifest.json",
+      "runs/logs/RUN-REAL-ESS-20260513-002.log",
+      "runs/stage_manifests/RUN-REAL-ESS-20260513-002_ess_intake.json",
+      "data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_snapshots.csv",
+      "data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_lineage_registry.csv",
+      "data/history/universe/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/base_equity_universe.csv",
+      "data/history/universe/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/universe_lineage_registry.csv",
+      "data/history/signal_index.csv",
+      "data/history/universe_index.csv"
+    ],
+    "mode": "deterministic_synthesis",
+    "note": "PipelineRunner emits run/stage manifests and run log but does not emit validation_report files; report synthesized from immutable runtime artifacts."
+  },
+  "run_id": "RUN-REAL-ESS-20260513-002",
+  "run_log_exists": true,
+  "run_manifest_exists": true,
+  "run_row_counts": {
+    "base_equity_universe.csv": 2746,
+    "signal_index.csv": 1,
+    "signal_lineage_registry.csv": 2746,
+    "signal_snapshots.csv": 2746,
+    "universe_index.csv": 1,
+    "universe_lineage_registry.csv": 2746
+  },
+  "snapshot_date": "2026-05-13",
+  "stage_error_counts": {
+    "benchmark_snapshot_ingestion": 0,
+    "benchmark_validation": 0,
+    "ess_intake": 0,
+    "normalization": 0,
+    "snapshot_export": 0
+  },
+  "stage_status": {
+    "benchmark_snapshot_ingestion": "COMPLETE",
+    "benchmark_validation": "COMPLETE",
+    "ess_intake": "COMPLETE",
+    "normalization": "COMPLETE",
+    "snapshot_export": "COMPLETE"
+  },
+  "stage_warning_counts": {
+    "benchmark_snapshot_ingestion": 1,
+    "benchmark_validation": 1,
+    "ess_intake": 2,
+    "normalization": 1,
+    "snapshot_export": 1
+  },
+  "validation_summary": {
+    "benchmark_snapshot_ingestion.contract_status": "REGISTERED_PLACEHOLDER",
+    "benchmark_validation.contract_status": "REGISTERED_PLACEHOLDER",
+    "ess_intake.artifact.current_base_equity_universe.path": "data/current/base_equity_universe.csv",
+    "ess_intake.artifact.current_base_equity_universe.rows": "2746",
+    "ess_intake.artifact.current_signal_snapshot.path": "data/current/signal_snapshot.csv",
+    "ess_intake.artifact.current_signal_snapshot.rows": "2746",
+    "ess_intake.artifact.partition_base_equity_universe.path": "data/history/universe/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/base_equity_universe.csv",
+    "ess_intake.artifact.partition_base_equity_universe.rows": "2746",
+    "ess_intake.artifact.partition_signal_lineage.path": "data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_lineage_registry.csv",
+    "ess_intake.artifact.partition_signal_lineage.rows": "2746",
+    "ess_intake.artifact.partition_signal_snapshot.path": "data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_snapshots.csv",
+    "ess_intake.artifact.partition_signal_snapshot.rows": "2746",
+    "ess_intake.artifact.partition_universe_lineage.path": "data/history/universe/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/universe_lineage_registry.csv",
+    "ess_intake.artifact.partition_universe_lineage.rows": "2746",
+    "ess_intake.artifact.signal_index.path": "data/history/signal_index.csv",
+    "ess_intake.artifact.universe_index.path": "data/history/universe_index.csv",
+    "ess_intake.base_universe_rows_appended": "2746",
+    "ess_intake.duplicate_symbols": "78",
+    "ess_intake.ess_files_discovered": "2",
+    "ess_intake.malformed_values": "0",
+    "ess_intake.persisted_base_universe_rows": "2746",
+    "ess_intake.persisted_signal_rows": "2746",
+    "ess_intake.persistence_verification": "PASSED",
+    "ess_intake.raw_rows_discovered": "2841",
+    "ess_intake.raw_rows_parsed": "2746",
+    "ess_intake.rows_appended": "2746",
+    "ess_intake.rows_normalized": "2746",
+    "ess_intake.rows_rejected": "95",
+    "ess_intake.rows_validated": "2746",
+    "ess_intake.unmapped_columns": "0",
+    "normalization.contract_status": "REGISTERED_PLACEHOLDER",
+    "snapshot_export.contract_status": "REGISTERED_PLACEHOLDER"
+  }
+}

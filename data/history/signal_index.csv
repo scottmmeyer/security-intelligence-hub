@@ -1,0 +1,2 @@
+snapshot_date,run_id,created_at_utc,partition_path,signal_snapshots_path,signal_lineage_registry_path,row_count,provider_count,source_file_count
+2026-05-13,RUN-REAL-ESS-20260513-002,2026-05-13T15:28:42.825732+00:00,data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002,data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_snapshots.csv,data/history/signals/snapshot_date=2026-05-13/run_id=RUN-REAL-ESS-20260513-002/signal_lineage_registry.csv,2746,1,2

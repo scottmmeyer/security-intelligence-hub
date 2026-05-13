@@ -1,0 +1,19 @@
+{
+  "run_id": "RUN-REAL-ESS-20260513-002",
+  "snapshot_date": "2026-05-13",
+  "stage": {
+    "artifacts_created": [],
+    "completed_at": "2026-05-13T15:28:43.101352+00:00",
+    "duration_seconds": 6e-06,
+    "errors": [],
+    "stage_name": "normalization",
+    "started_at": "2026-05-13T15:28:43.101346+00:00",
+    "status": "COMPLETE",
+    "validation_summary": {
+      "contract_status": "REGISTERED_PLACEHOLDER"
+    },
+    "warnings": [
+      "Placeholder stage: normalization has no business logic implementation yet."
+    ]
+  }
+}

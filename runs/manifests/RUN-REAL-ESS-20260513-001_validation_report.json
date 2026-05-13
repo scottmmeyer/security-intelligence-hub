@@ -1,0 +1,120 @@
+{
+  "coverage_domain_expected_counts": {
+    "NON_STARMINE_ANALYST": 368,
+    "STARMINE_COVERED": 2473
+  },
+  "ess_error_categories": {
+    "Malformed row detection at row <n>": 4946,
+    "Required column validation failed": 1,
+    "Snapshot metadata validation at row <n>": 2473,
+    "Source lineage validation at row <n>": 2473
+  },
+  "ess_error_count": 9893,
+  "input_inspection": [
+    {
+      "duplicate_symbol_count": 78,
+      "file": "incoming/ess/starmine/SecurityExtract_ESS_2026May13.csv",
+      "has_utf8_bom": true,
+      "headers": [
+        "Symbol",
+        "Company Name",
+        "Security Type",
+        "Security Price",
+        "Equity Summary Score (ESS) from LSEG StarMine",
+        "Forward EPS Long Term Growth (3-5 Yrs)",
+        "Market Capitalization",
+        "Jefferson Research",
+        "Zacks Investment Research",
+        "McLean Capital Management"
+      ],
+      "missing_required_columns": [
+        "snapshot_date",
+        "provider",
+        "source_file",
+        "starmine_ess_text"
+      ],
+      "row_count": 2473,
+      "universe": "starmine"
+    },
+    {
+      "duplicate_symbol_count": 0,
+      "file": "incoming/ess/non_starmine_zacks/starmine_zacks.csv",
+      "has_utf8_bom": true,
+      "headers": [
+        "Symbol",
+        "Company Name",
+        "Security Type",
+        "Security Price",
+        "Forward EPS Long Term Growth (3-5 Yrs)",
+        "Market Capitalization",
+        "Jefferson Research",
+        "Zacks Investment Research",
+        "McLean Capital Management"
+      ],
+      "missing_required_columns": [
+        "snapshot_date",
+        "provider",
+        "source_file",
+        "analyst_rating"
+      ],
+      "row_count": 368,
+      "universe": "non_starmine_zacks"
+    }
+  ],
+  "lineage_verification": {
+    "run_log_exists": true,
+    "run_manifest_exists": true,
+    "snapshot_append_blocked_on_validation_failure": true,
+    "stage_manifest_exists": true
+  },
+  "overall_status": "FAILED",
+  "overlap_symbol_count_between_universes": 244,
+  "overlap_symbol_sample": [
+    "AA",
+    "AAON",
+    "ACEL",
+    "ADEA",
+    "ADI",
+    "ADM",
+    "ADSK",
+    "AEIS",
+    "AER",
+    "AGX",
+    "ALB",
+    "ALRS",
+    "AMD",
+    "AMN",
+    "ANAB",
+    "ANET",
+    "ANIP",
+    "APA",
+    "APEI",
+    "APPN",
+    "AR",
+    "ARCB",
+    "ARW",
+    "ASUR",
+    "ATEN"
+  ],
+  "run_id": "RUN-REAL-ESS-20260513-001",
+  "snapshot_generation": {
+    "signal_snapshot_rows_appended": 0,
+    "signal_snapshot_total_rows_after_run": 0
+  },
+  "stage_error_counts": {
+    "benchmark_validation": 0,
+    "ess_intake": 9893
+  },
+  "stage_status": {
+    "benchmark_validation": "COMPLETE",
+    "ess_intake": "FAILED"
+  },
+  "stage_warning_counts": {
+    "benchmark_validation": 1,
+    "ess_intake": 0
+  },
+  "validation_summary": {
+    "benchmark_validation.contract_status": "REGISTERED_PLACEHOLDER",
+    "ess_intake.ess_validation": "FAILED"
+  }
+}
