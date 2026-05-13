@@ -1,15 +1,16 @@
-current_waypoint: WP-03
+current_waypoint: WP-03.4
 current_objective: >
-  Establish ESS intake and immutable signal snapshot foundation with coverage
-  domain modeling, provenance-aware normalization, and historical lineage.
+  Finalize partitioned historical persistence governance by aligning
+  documentation and waypoint state with implemented deterministic Fidelity
+  ingestion, canonical normalization, and persistence verification behavior.
 
 in_scope_items:
-  - ESS intake contracts for StarMine and non-StarMine universes
-  - Coverage-domain modeling and validation
-  - Provenance-aware ESS normalization and source-type tracking
-  - Immutable signal snapshot append scaffolding
-  - ESS pipeline stage integration with manifest status tracking
-  - Deterministic unit tests for ESS validation and lineage behavior
+  - Partitioned immutable history contracts for signals and base universe
+  - Current authoritative output contracts under data/current
+  - Append-only index governance for signal_index and universe_index artifacts
+  - Persistence verification philosophy and fail-closed validation semantics
+  - Waypoint and master-plan synchronization with committed Unit 1 scope
+  - Deterministic commit-boundary governance for Unit 2 documentation alignment
 
 out_of_scope_items:
   - Web scraping or automated provider acquisition logic
@@ -21,10 +22,11 @@ out_of_scope_items:
   - DAG scheduling and workflow orchestration engines
   - Distributed workers, async orchestration, and runtime state machines
   - Autonomous runtime governance or recursive control loops
+  - Runtime identity resolution implementation for ticker/corporate events
 
 next_action: >
-  Integrate benchmark validation and ESS intake outputs into downstream
-  normalization and export stages while preserving immutable lineage contracts.
+  Execute Unit 3 runtime evidence retention decision and staging under governed
+  commit boundaries without mixing cleanup/deprecation scope.
 
 architectural_boundaries:
   platform_boundary: >
@@ -48,6 +50,12 @@ architectural_boundaries:
   snapshot_boundary: >
     Signal snapshots are append-only historical truth. No overwrite behavior is
     permitted for published run lineage records.
+  terminology_boundary: >
+    Canonical terms must retain deterministic, non-overlapping definitions
+    across architecture, governance, and philosophy documentation.
+  temporal_boundary: >
+    Point-in-time semantics are mandatory. No retroactive mutation or future
+    information leakage is permitted in snapshot or benchmark-relative records.
   observability_boundary: >
     Manifests describe execution outcomes and lineage. They do not orchestrate,
     schedule, retry, or recursively govern runtime execution.

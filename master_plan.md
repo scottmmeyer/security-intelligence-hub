@@ -6,8 +6,12 @@
 2. WP-01.5 - COMPLETE
 3. WP-02 - COMPLETE
 4. WP-02.5 - NOT STARTED
-5. WP-03 - IN PROGRESS
-6. WP-04 - NOT STARTED
+5. WP-03 - COMPLETE
+6. WP-03.1 - COMPLETE
+7. WP-03.2 - COMPLETE
+8. WP-03.4 - COMPLETE
+9. WP-03.5 - COMPLETE
+10. WP-04 - NOT STARTED
 
 ## Waypoint Roadmap
 
@@ -16,7 +20,11 @@
 3. WP-02 - Benchmark Intelligence Foundation
 4. WP-02.5 - Macro Intelligence Foundation
 5. WP-03 - ESS Intake Foundation
-6. WP-04 - Security Master Foundation
+6. WP-03.1 - Runtime Governance Hardening
+7. WP-03.2 - Fidelity ESS Adapter And Base Universe Generation
+8. WP-03.4 - Partitioned Historical Persistence And Verification
+9. WP-03.5 - Architecture Hardening And Canonical Terminology Foundation
+10. WP-04 - Security Master Foundation
 
 ## Waypoint Deliverables
 
@@ -49,6 +57,22 @@
 - Immutable signal snapshot append and lineage registry scaffolding
 - ESS pipeline stage integration for manifest-aware execution
 
+### WP-03.5 - Architecture Hardening And Canonical Terminology Foundation
+- Canonical terminology dictionary with deterministic non-overlapping definitions
+- Security identity philosophy guardrails and point-in-time identity principles
+- Temporal integrity philosophy and no-leakage benchmark alignment rules
+- Provider lineage philosophy and canonical normalization boundary constraints
+- Snapshot consistency rules with explicit propagation and immutability contracts
+- Lightweight architecture consistency validator and deterministic tests
+
+### WP-03.4 - Partitioned Historical Persistence And Verification
+- Authoritative latest outputs in data/current for signal snapshot and base universe
+- Immutable run-partitioned history writes under data/history/signals and data/history/universe
+- Append-only signal and universe index artifacts for run-level retrieval
+- Deterministic persistence verification for physical rows, run-row isolation,
+  lineage fields, and index integrity
+- ESS stage persistence summaries with explicit pass/fail accounting
+
 ### WP-04 - Security Master Foundation
 - Canonical security model enrichment and validation rules
 - Security-type and region classification consistency checks
@@ -69,7 +93,10 @@
 3. WP-02 depends on WP-01 and WP-01.5 for observable lineage contracts.
 4. WP-02.5 depends on WP-02 baseline benchmark context.
 5. WP-03 depends on WP-01 through WP-02.5 for normalization context.
-6. WP-04 depends on WP-03 intake contracts and canonical classifications.
+6. WP-03.4 depends on WP-03.2 provider adaptation and canonical row production.
+7. WP-04 depends on WP-03 intake contracts and canonical classifications.
+8. WP-04 depends on WP-03.4 persistence integrity and immutable history contracts.
+9. WP-04 depends on WP-03.5 terminology and architecture hardening guardrails.
 
 ## WP-02 Success Criteria
 
@@ -103,3 +130,31 @@
 - Signal snapshots append immutably with run lineage metadata.
 - ESS stage integrates with sequential pipeline manifests without introducing
 	orchestration complexity.
+
+### WP-03.2 - Fidelity ESS Adapter And Base Universe Generation
+- Fidelity provider-native schema contracts and adapter layer
+- Deterministic provider-to-canonical mapping with provenance lineage
+- Fail-closed mapping validation with explicit malformed/unmapped visibility
+- Canonical base universe append contracts and lineage registry
+- ESS stage row accounting for discovered, validated, normalized, rejected,
+  and appended records
+
+## WP-03.5 Success Criteria
+
+- Canonical terminology is explicitly defined and reused across architecture docs.
+- Security identity, temporal integrity, provider lineage, and snapshot
+	consistency philosophies are documented with deterministic boundaries.
+- Architecture consistency validator detects missing foundational docs and
+	terminology or principle drift through lightweight deterministic checks.
+- Unit tests cover required document presence, terminology integrity, snapshot
+	consistency rule coverage, and governance artifact detection.
+- Governance artifacts reflect the hardened foundation prior to WP-04 expansion.
+
+## WP-03.4 Success Criteria
+
+- Current authoritative outputs are emitted deterministically in data/current.
+- Immutable historical partitions are created by snapshot_date and run_id.
+- Index rows are appended once per run with valid lineage path references.
+- Persistence verification fails closed for row-count mismatches, malformed rows,
+  run isolation violations, or missing lineage fields.
+- ESS stage reports deterministic persistence validation summaries in manifests.

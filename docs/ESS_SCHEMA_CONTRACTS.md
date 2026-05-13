@@ -1,5 +1,15 @@
 # ESS Schema Contracts
 
+## WP-03.2 Addendum: Fidelity Provider-Native Adapter Boundary
+
+- Fidelity raw exports are provider-native and authoritative.
+- Fidelity raw files are no longer expected to include canonical fields like
+  `snapshot_date`, `provider`, or `source_file`.
+- Canonical fields are populated by adapter and normalization layers after
+  provider-native parsing.
+- Unmapped provider-native columns are surfaced explicitly in validation and
+  lineage outputs.
+
 ## Deterministic Contract Scope
 
 This document defines expected CSV schema contracts for:
@@ -15,28 +25,29 @@ Landing zone: incoming/ess/starmine/
 
 ### Required Columns
 
-- snapshot_date
-- symbol
-- provider
-- source_file
-- starmine_ess_text
+- Symbol
+- Company Name
+- Security Type
+- Equity Summary Score (ESS) from LSEG StarMine
+- Market Capitalization
 
 ### Optional Columns
 
-- starmine_ess_numeric
-- starmine_ess_numeric_estimated
-- starmine_ess_source_type
-- analyst_rating
-- notes
+- Security Price
+- Forward EPS Long Term Growth (3-5 Yrs)
+- Jefferson Research
+- Zacks Investment Research
+- McLean Capital Management
+- Geography
 
 ### Normalization Expectations
 
-- symbol normalized to uppercase trimmed token.
-- coverage_domain assigned as STARMINE_COVERED unless explicit override policy
-  is introduced later.
-- starmine_ess_text preserved as-source (normalized to uppercase token form).
-- starmine_ess_numeric only treated as authoritative when source_type is
-  DIRECT_NUMERIC.
+- Provider-native rows are adapted into canonical rows before strict
+  validation and persistence checks.
+- symbol is normalized to an uppercase trimmed token.
+- coverage_domain is assigned as STARMINE_COVERED.
+- ESS categorical text is normalized to canonical token values.
+- Unknown provider columns are surfaced as explicit unmapped-column warnings.
 
 ## Universe B: NON_STARMINE_ANALYST
 
@@ -44,40 +55,43 @@ Landing zone: incoming/ess/non_starmine_zacks/
 
 ### Required Columns
 
-- snapshot_date
-- symbol
-- provider
-- source_file
-- analyst_rating
+- Symbol
+- Company Name
+- Security Type
+- Zacks Investment Research
+- Market Capitalization
 
 ### Optional Columns
 
-- starmine_ess_text
-- starmine_ess_numeric
-- starmine_ess_numeric_estimated
-- starmine_ess_source_type
-- notes
+- Security Price
+- Forward EPS Long Term Growth (3-5 Yrs)
+- Jefferson Research
+- McLean Capital Management
+- Geography
 
 ### Normalization Expectations
 
-- symbol normalized to uppercase trimmed token.
-- coverage_domain assigned as NON_STARMINE_ANALYST.
-- if ESS text/numeric exists, provenance fields must remain explicit.
+- Provider-native rows are adapted into canonical rows before strict
+  validation and persistence checks.
+- symbol is normalized to an uppercase trimmed token.
+- coverage_domain is assigned as NON_STARMINE_ANALYST.
+- analyst_rating preserves provider provenance lineage.
 
 ## Lineage Requirements
 
-Each normalized row must preserve:
+Each canonical row produced by provider adaptation must preserve:
 
 - snapshot_date
 - provider
 - source_file
 - coverage_domain
 - run_id (assigned at ingestion stage)
+- created_at_utc (assigned at persistence time)
 
 ## Malformed Row Handling Philosophy
 
 - malformed rows fail validation with row-specific errors.
 - duplicate symbols within the same intake file fail validation.
 - empty files fail validation.
-- invalid coverage domains or source types fail validation.
+- invalid coverage domains or unsupported provider mappings fail validation.
 - no silent row drops or silent correction.
