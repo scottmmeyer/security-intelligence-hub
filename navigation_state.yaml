@@ -1,17 +1,15 @@
-current_waypoint: WP-01.5
+current_waypoint: WP-03
 current_objective: >
-  Establish deterministic pipeline observability foundation with run manifests,
-  stage manifests, explicit status tracking, and artifact lineage visibility.
+  Establish ESS intake and immutable signal snapshot foundation with coverage
+  domain modeling, provenance-aware normalization, and historical lineage.
 
 in_scope_items:
-  - Run manifest and stage manifest contracts
-  - Pipeline stage status models and deterministic enums
-  - Sequential execution scaffold with explicit failure visibility
-  - Artifact registry and lineage traceability structures
-  - Execution summary rendering for terminal and chat compatibility
-  - Deterministic unit tests for observability contracts
-  - Fidelity-aligned canonical market-cap bucket normalization
-  - Snapshot-based market-cap classification and provider lineage contracts
+  - ESS intake contracts for StarMine and non-StarMine universes
+  - Coverage-domain modeling and validation
+  - Provenance-aware ESS normalization and source-type tracking
+  - Immutable signal snapshot append scaffolding
+  - ESS pipeline stage integration with manifest status tracking
+  - Deterministic unit tests for ESS validation and lineage behavior
 
 out_of_scope_items:
   - Web scraping or automated provider acquisition logic
@@ -25,8 +23,8 @@ out_of_scope_items:
   - Autonomous runtime governance or recursive control loops
 
 next_action: >
-  Integrate market-cap normalization and benchmark validation into sequential
-  pipeline stages while preserving manifest-only observability semantics.
+  Integrate benchmark validation and ESS intake outputs into downstream
+  normalization and export stages while preserving immutable lineage contracts.
 
 architectural_boundaries:
   platform_boundary: >
@@ -41,9 +39,15 @@ architectural_boundaries:
   provider_boundary: >
     Provider-specific semantics remain isolated in provider modules and are
     translated into canonical forms through explicit contracts.
+  coverage_boundary: >
+    Coverage domains are first-class metadata. Lack of StarMine coverage must
+    not be interpreted as low security quality.
   market_cap_boundary: >
     Market-cap classification is snapshot-based normalization context, not
     immutable security metadata. Provider lineage must be preserved.
+  snapshot_boundary: >
+    Signal snapshots are append-only historical truth. No overwrite behavior is
+    permitted for published run lineage records.
   observability_boundary: >
     Manifests describe execution outcomes and lineage. They do not orchestrate,
     schedule, retry, or recursively govern runtime execution.

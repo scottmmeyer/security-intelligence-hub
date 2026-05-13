@@ -46,6 +46,9 @@ class StageDefinition:
 def default_stage_registry() -> tuple[StageDefinition, ...]:
     """Return default sequential stage registration for the pipeline."""
 
+    # Lazy import avoids cyclical loading between stage contracts and stage implementations.
+    from src.pipeline.stages.ess_intake_stage import execute_ess_intake_stage
+
     return (
         StageDefinition(
             stage_name="benchmark_validation",
@@ -58,6 +61,7 @@ def default_stage_registry() -> tuple[StageDefinition, ...]:
         StageDefinition(
             stage_name="ess_intake",
             description="Ingest ESS intake lane payloads into run-scoped staging.",
+            executor=execute_ess_intake_stage,
         ),
         StageDefinition(
             stage_name="normalization",

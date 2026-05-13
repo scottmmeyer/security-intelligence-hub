@@ -3,10 +3,10 @@
 ## Current Execution State
 
 1. WP-01 - COMPLETE
-2. WP-01.5 - IN PROGRESS
+2. WP-01.5 - COMPLETE
 3. WP-02 - COMPLETE
 4. WP-02.5 - NOT STARTED
-5. WP-03 - NOT STARTED
+5. WP-03 - IN PROGRESS
 6. WP-04 - NOT STARTED
 
 ## Waypoint Roadmap
@@ -43,8 +43,11 @@
 - Market regime vocabulary and contract documentation
 
 ### WP-03 - ESS Intake Foundation
-- Isolated intake zones for StarMine and non-StarMine Zacks universes
-- Deterministic normalization contracts and validation boundaries
+- Isolated intake zones for StarMine and non-StarMine analyst universes
+- Coverage-domain and ESS schema contracts
+- Provenance-aware ESS normalization scaffolding
+- Immutable signal snapshot append and lineage registry scaffolding
+- ESS pipeline stage integration for manifest-aware execution
 
 ### WP-04 - Security Master Foundation
 - Canonical security model enrichment and validation rules
@@ -91,3 +94,12 @@
 - Provider lineage fields are required for historical reproducibility.
 - Future provider divergence is handled through deterministic normalization
   contracts rather than implicit assumptions.
+
+## WP-03 Success Criteria
+
+- ESS schema validation fails closed with explicit row-level errors.
+- Coverage-domain assignment remains explicit and deterministic.
+- ESS text values and numeric mapping provenance are preserved.
+- Signal snapshots append immutably with run lineage metadata.
+- ESS stage integrates with sequential pipeline manifests without introducing
+	orchestration complexity.

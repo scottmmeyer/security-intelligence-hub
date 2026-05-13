@@ -40,6 +40,12 @@ class ProviderSignal:
     signal_value: float
     raw_payload_ref: str
     signal_scope: str
+    signal_coverage_status: str = "UNKNOWN"
+    coverage_domain: str = "NO_COVERAGE"
+    starmine_ess_text: Optional[str] = None
+    starmine_ess_numeric: Optional[float] = None
+    starmine_ess_numeric_estimated: bool = False
+    starmine_ess_source_type: str = "UNKNOWN"
     metadata: Dict[str, str] = field(default_factory=dict)
 
 
@@ -53,6 +59,15 @@ class SignalSnapshot:
     provider_name: str
     signal_name: str
     signal_value: float
+    snapshot_date: Optional[date] = None
+    run_id: Optional[str] = None
+    source_file: Optional[str] = None
+    signal_coverage_status: str = "UNKNOWN"
+    coverage_domain: str = "NO_COVERAGE"
+    starmine_ess_text: Optional[str] = None
+    starmine_ess_numeric: Optional[float] = None
+    starmine_ess_numeric_estimated: bool = False
+    starmine_ess_source_type: str = "UNKNOWN"
     snapshot_version: int = 1
     correction_of_snapshot_id: Optional[str] = None
 

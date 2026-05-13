@@ -1,0 +1,3 @@
+snapshot_date,symbol,provider,source_file,analyst_rating
+2026-05-13,SMCP,ZACKS,non_starmine_fixture.csv,OUTPERFORM
+2026-05-13,ALFA,ANALYST_FEED,non_starmine_fixture.csv,BUY

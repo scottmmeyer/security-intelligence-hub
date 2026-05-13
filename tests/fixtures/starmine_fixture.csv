@@ -1,0 +1,3 @@
+snapshot_date,symbol,provider,source_file,starmine_ess_text,starmine_ess_source_type
+2026-05-13,ABC,FIDELITY,starmine_fixture.csv,BULLISH,UNKNOWN
+2026-05-13,XYZ,FIDELITY,starmine_fixture.csv,NEUTRAL,UNKNOWN

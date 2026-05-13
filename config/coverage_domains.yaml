@@ -1,0 +1,27 @@
+version: 1
+description: Deterministic coverage domain definitions for ESS intake normalization.
+
+coverage_domains:
+  - STARMINE_COVERED
+  - NON_STARMINE_ANALYST
+  - PARTIAL_COVERAGE
+  - NO_COVERAGE
+
+signal_coverage_status_values:
+  - COVERED
+  - NON_COVERED
+  - PARTIAL
+  - UNKNOWN
+
+starmine_ess_source_types:
+  - DIRECT_NUMERIC
+  - TEXT_MAPPED
+  - MANUAL_ESTIMATE
+  - UNKNOWN
+
+universe_to_domain:
+  starmine: STARMINE_COVERED
+  non_starmine_zacks: NON_STARMINE_ANALYST
+
+todo:
+  - Add ETF and fund coverage domains in future waypoints.

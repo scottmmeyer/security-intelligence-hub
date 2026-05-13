@@ -69,3 +69,21 @@
 - Drift Assessment:
   No drift detected. Work remains within normalization and validation scope,
   with no provider ingestion, orchestration engines, or speculative abstractions.
+
+## Entry 0005
+
+- Intent:
+  Implement WP-03 ESS intake and snapshot foundation with deterministic schema
+  validation, coverage-domain modeling, provenance-aware normalization, and
+  immutable signal snapshot append behavior.
+- Action:
+  Added ESS intake philosophy and schema contract docs, coverage-domain config,
+  ESS validator and normalizer scaffolding, immutable signal snapshot manager,
+  ESS intake pipeline stage scaffolding, fixture CSVs for both universes, and
+  deterministic unit tests for validation, provenance, and immutability.
+- Result:
+  The project now has first operational ESS ingestion scaffolding with explicit
+  coverage-domain handling and immutable historical signal lineage contracts.
+- Drift Assessment:
+  No drift detected. WP-03 implementation avoids scraping, external APIs,
+  orchestration engines, ML, and speculative runtime complexity.
