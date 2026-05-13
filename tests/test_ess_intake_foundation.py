@@ -122,8 +122,10 @@ def test_provenance_preservation_and_numeric_mapping_lineage() -> None:
 
 
 def test_snapshot_append_behavior_and_immutable_protection(tmp_path: Path) -> None:
+    current_root = tmp_path / "current"
     history_root = tmp_path / "history" / "signals"
-    ensure_signal_history_contracts(history_root=history_root)
+    index_path = tmp_path / "history" / "signal_index.csv"
+    ensure_signal_history_contracts(current_root=current_root, index_path=index_path)
 
     normalized_records = [
         {
@@ -143,20 +145,31 @@ def test_snapshot_append_behavior_and_immutable_protection(tmp_path: Path) -> No
     appended = append_signal_snapshots(
         normalized_records=normalized_records,
         run_id="RUN-ESS-001",
+        current_root=current_root,
         history_root=history_root,
+        index_path=index_path,
     )
     assert appended == 1
 
-    with (history_root / "signal_snapshots.csv").open("r", encoding="utf-8", newline="") as handle:
+    with (current_root / "signal_snapshot.csv").open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
     assert rows[0]["run_id"] == "RUN-ESS-001"
 
-    with pytest.raises(ValueError, match="Immutable snapshot protection"):
+    partition_snapshot_path = (
+        history_root / "snapshot_date=2026-05-13" / "run_id=RUN-ESS-001" / "signal_snapshots.csv"
+    )
+    with partition_snapshot_path.open("r", encoding="utf-8", newline="") as handle:
+        partition_rows = list(csv.DictReader(handle))
+    assert len(partition_rows) == 1
+
+    with pytest.raises(ValueError, match="Immutable signal partition protection"):
         append_signal_snapshots(
             normalized_records=normalized_records,
             run_id="RUN-ESS-001",
+            current_root=current_root,
             history_root=history_root,
+            index_path=index_path,
         )
 
 

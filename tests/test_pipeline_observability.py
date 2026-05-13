@@ -70,6 +70,37 @@ def test_stage_status_handling_promotes_overall_warning(tmp_path) -> None:
     assert any("Coverage below threshold" in warning for warning in manifest.warnings)
 
 
+def test_blocked_stage_halts_downstream_execution(tmp_path) -> None:
+    executed = {"downstream": False}
+
+    def stage_ok(_: StageContext) -> StageExecutionOutput:
+        return StageExecutionOutput(status=PipelineStatus.COMPLETE.value)
+
+    def stage_blocked(_: StageContext) -> StageExecutionOutput:
+        return StageExecutionOutput(
+            status=PipelineStatus.BLOCKED.value,
+            errors=("Intake readiness gate blocked",),
+            validation_summary={"blocked_reason": "NO_ELIGIBLE_ESS_INTAKE_FILES"},
+        )
+
+    def stage_downstream(_: StageContext) -> StageExecutionOutput:
+        executed["downstream"] = True
+        return StageExecutionOutput(status=PipelineStatus.COMPLETE.value)
+
+    stages = (
+        StageDefinition("benchmark_validation", "test stage", stage_ok),
+        StageDefinition("ess_intake", "test stage", stage_blocked),
+        StageDefinition("normalization", "test stage", stage_downstream),
+    )
+
+    runner = PipelineRunner(runs_root=tmp_path / "runs", stages=stages)
+    manifest = runner.run(run_id="RUN-BLOCK-001", snapshot_date=date(2026, 5, 13))
+
+    assert manifest.overall_status == PipelineStatus.BLOCKED.value
+    assert len(manifest.stages) == 2
+    assert executed["downstream"] is False
+
+
 def test_invalid_status_detection() -> None:
     now = datetime(2026, 5, 13, tzinfo=timezone.utc)
     with pytest.raises(ValueError):

@@ -2,16 +2,30 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
 import yaml
 
-from src.history.signal_snapshot_manager import append_signal_snapshots, ensure_signal_history_contracts
+from src.history.base_universe_manager import (
+    append_base_universe_rows,
+    build_base_universe_storage_paths,
+    ensure_base_universe_contracts,
+)
+from src.history.signal_snapshot_manager import (
+    append_signal_snapshots,
+    build_signal_storage_paths,
+    ensure_signal_history_contracts,
+)
 from src.models.pipeline_models import ArtifactRecord, PipelineStatus
-from src.normalize.ess_normalizer import normalize_ess_rows
+from src.normalize.provider_normalizer import normalize_fidelity_ess_file
 from src.pipeline.stage_registry import StageContext, StageExecutionOutput
-from src.validation.ess_validator import EssValidationError, assert_valid_ess_file
+from src.validation.intake_readiness_validator import (
+    INTAKE_OPERATOR_GUIDANCE,
+    validate_intake_readiness,
+)
+from src.validation.persistence_validator import validate_ess_stage_persistence
 
 
 def _load_coverage_config(config_path: str | Path = "config/coverage_domains.yaml") -> Dict[str, object]:
@@ -28,107 +42,354 @@ def _discover_csv_files(base_path: str | Path) -> List[Path]:
     return sorted(p for p in path.glob("*.csv") if p.is_file())
 
 
-def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
-    """Execute deterministic ESS intake scaffold and append immutable snapshots."""
-
-    ensure_signal_history_contracts()
-    coverage_config = _load_coverage_config()
-    allowed_domains = list(coverage_config.get("coverage_domains", []))
-    allowed_source_types = list(coverage_config.get("starmine_ess_source_types", []))
-    universe_mapping = dict(coverage_config.get("universe_to_domain", {}))
-
-    discovered: Dict[str, List[Path]] = {
-        "starmine": _discover_csv_files("incoming/ess/starmine"),
-        "non_starmine_zacks": _discover_csv_files("incoming/ess/non_starmine_zacks"),
+def _base_row_accounting() -> Dict[str, int]:
+    return {
+        "raw_rows_discovered": 0,
+        "raw_rows_parsed": 0,
+        "rows_validated": 0,
+        "rows_normalized": 0,
+        "rows_rejected": 0,
+        "duplicate_symbols": 0,
+        "malformed_values": 0,
     }
 
-    if not discovered["starmine"] and not discovered["non_starmine_zacks"]:
+
+def _to_validation_summary(
+    *,
+    discovered_files: int,
+    accounting: Dict[str, int],
+    rows_appended: int,
+    base_universe_rows_appended: int,
+    unmapped_columns: List[str],
+) -> Dict[str, str]:
+    summary = {
+        "ess_files_discovered": str(discovered_files),
+        "raw_rows_discovered": str(accounting["raw_rows_discovered"]),
+        "raw_rows_parsed": str(accounting["raw_rows_parsed"]),
+        "rows_validated": str(accounting["rows_validated"]),
+        "rows_normalized": str(accounting["rows_normalized"]),
+        "rows_rejected": str(accounting["rows_rejected"]),
+        "rows_appended": str(rows_appended),
+        "base_universe_rows_appended": str(base_universe_rows_appended),
+        "duplicate_symbols": str(accounting["duplicate_symbols"]),
+        "unmapped_columns": str(len(unmapped_columns)),
+        "malformed_values": str(accounting["malformed_values"]),
+    }
+    if unmapped_columns:
+        summary["unmapped_column_list"] = "|".join(unmapped_columns)
+    return summary
+
+
+def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
+    """Execute deterministic Fidelity provider intake and append immutable outputs."""
+
+    ensure_signal_history_contracts()
+    ensure_base_universe_contracts()
+
+    coverage_config = _load_coverage_config()
+    universe_mapping = dict(coverage_config.get("universe_to_domain", {}))
+
+    intake_readiness = validate_intake_readiness()
+    discovered = intake_readiness.discovered_files
+    discovered_files = intake_readiness.eligible_file_count
+
+    if not intake_readiness.is_ready:
+        empty_accounting = _base_row_accounting()
+        blocked_summary = _to_validation_summary(
+            discovered_files=0,
+            accounting=empty_accounting,
+            rows_appended=0,
+            base_universe_rows_appended=0,
+            unmapped_columns=[],
+        )
+        blocked_summary.update(intake_readiness.to_validation_summary())
+
         return StageExecutionOutput(
-            status=PipelineStatus.WARNING.value,
-            warnings=("No ESS input CSV files found in configured intake folders.",),
-            validation_summary={"ess_files_discovered": "0", "ess_rows_appended": "0"},
+            status=PipelineStatus.BLOCKED.value,
+            errors=(
+                "Intake readiness gate blocked: no eligible ESS intake files were discovered.",
+                INTAKE_OPERATOR_GUIDANCE,
+            ),
+            validation_summary=blocked_summary,
         )
 
-    normalized_records: List[Dict[str, object]] = []
+    normalized_signal_records: List[Dict[str, object]] = []
+    base_universe_rows: List[Dict[str, object]] = []
     artifact_specs: List[Dict[str, str]] = []
     warnings: List[str] = []
+    errors: List[str] = []
+    accounting = _base_row_accounting()
+    unmapped_columns_set: set[str] = set()
+
+    for universe, files in discovered.items():
+        for file_path in files:
+            normalized_result = normalize_fidelity_ess_file(
+                file_path=file_path,
+                universe=universe,
+                snapshot_date=context.snapshot_date,
+                run_id=context.run_id,
+                coverage_mapping=universe_mapping,
+            )
+
+            accounting["raw_rows_discovered"] += normalized_result.raw_rows_discovered
+            accounting["raw_rows_parsed"] += normalized_result.raw_rows_parsed
+            accounting["rows_validated"] += normalized_result.rows_validated
+            accounting["rows_normalized"] += normalized_result.rows_normalized
+            accounting["rows_rejected"] += normalized_result.rows_rejected
+            accounting["duplicate_symbols"] += normalized_result.duplicate_symbols
+            accounting["malformed_values"] += normalized_result.malformed_values
+            unmapped_columns_set.update(normalized_result.unmapped_columns)
+
+            normalized_signal_records.extend(normalized_result.normalized_signal_rows)
+            base_universe_rows.extend(normalized_result.base_universe_rows)
+
+            if normalized_result.warnings:
+                warnings.extend(
+                    f"{Path(file_path).name}: {warning}" for warning in normalized_result.warnings
+                )
+
+            if normalized_result.errors:
+                errors.extend(f"{Path(file_path).name}: {error}" for error in normalized_result.errors)
+
+            artifact_specs.append(
+                {
+                    "artifact_name": file_path.name,
+                    "artifact_path": str(file_path),
+                    "artifact_type": "ESS_INPUT_CSV",
+                    "lineage_notes": f"Provider-native Fidelity export discovered for universe={universe}",
+                }
+            )
+
+    sorted_unmapped = sorted(unmapped_columns_set)
+
+    if unmapped_columns_set:
+        warnings.append("Unmapped provider columns observed: " + ", ".join(sorted_unmapped))
+
+    if errors:
+        return StageExecutionOutput(
+            status=PipelineStatus.FAILED.value,
+            warnings=tuple(warnings),
+            errors=tuple(errors),
+            validation_summary=_to_validation_summary(
+                discovered_files=discovered_files,
+                accounting=accounting,
+                rows_appended=0,
+                base_universe_rows_appended=0,
+                unmapped_columns=sorted_unmapped,
+            ),
+        )
+
+    now = datetime.now(timezone.utc)
+    finalized_artifacts = [
+        ArtifactRecord(
+            artifact_name=item["artifact_name"],
+            artifact_path=item["artifact_path"],
+            artifact_type=item["artifact_type"],
+            created_at=now,
+            producing_stage="ess_intake",
+            checksum_placeholder="TODO",
+            lineage_notes=item["lineage_notes"],
+        )
+        for item in artifact_specs
+    ]
 
     try:
-        for universe, files in discovered.items():
-            for file_path in files:
-                rows = assert_valid_ess_file(
-                    file_path=file_path,
-                    universe=universe,
-                    allowed_coverage_domains=allowed_domains,
-                    allowed_source_types=allowed_source_types,
-                )
-                normalized = normalize_ess_rows(
-                    rows=rows,
-                    universe=universe,
-                    coverage_mapping=universe_mapping,
-                    derive_numeric=True,
-                )
-                normalized_records.extend(normalized)
-
-                artifact_specs.append(
-                    {
-                        "artifact_name": file_path.name,
-                        "artifact_path": str(file_path),
-                        "artifact_type": "ESS_INPUT_CSV",
-                        "lineage_notes": f"Validated and normalized from universe={universe}",
-                    }
-                )
-
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
-        finalized_artifacts = [
-            ArtifactRecord(
-                artifact_name=item["artifact_name"],
-                artifact_path=item["artifact_path"],
-                artifact_type=item["artifact_type"],
-                created_at=now,
-                producing_stage="ess_intake",
-                checksum_placeholder="TODO",
-                lineage_notes=item["lineage_notes"],
-            )
-            for item in artifact_specs
-        ]
-
-        appended_count = append_signal_snapshots(
-            normalized_records=normalized_records,
+        appended_signal_count = append_signal_snapshots(
+            normalized_records=normalized_signal_records,
             run_id=context.run_id,
+            current_root="data/current",
             history_root="data/history/signals",
+            index_path="data/history/signal_index.csv",
         )
+
+        appended_universe_count = append_base_universe_rows(
+            base_rows=base_universe_rows,
+            run_id=context.run_id,
+            current_root="data/current",
+            history_root="data/history/universe",
+            index_path="data/history/universe_index.csv",
+        )
+
+        signal_storage_paths = build_signal_storage_paths(
+            snapshot_date=context.snapshot_date.isoformat(),
+            run_id=context.run_id,
+            current_root="data/current",
+            history_root="data/history/signals",
+            index_path="data/history/signal_index.csv",
+        )
+        universe_storage_paths = build_base_universe_storage_paths(
+            snapshot_date=context.snapshot_date.isoformat(),
+            run_id=context.run_id,
+            current_root="data/current",
+            history_root="data/history/universe",
+            index_path="data/history/universe_index.csv",
+        )
+
+        persistence_result = validate_ess_stage_persistence(
+            run_id=context.run_id,
+            snapshot_date=context.snapshot_date.isoformat(),
+            expected_signal_rows=appended_signal_count,
+            expected_base_universe_rows=appended_universe_count,
+            current_root="data/current",
+            signal_history_root="data/history/signals",
+            universe_history_root="data/history/universe",
+            signal_index_path="data/history/signal_index.csv",
+            universe_index_path="data/history/universe_index.csv",
+        )
+        warnings.extend(persistence_result.warnings)
+
+        if persistence_result.errors:
+            failure_summary = _to_validation_summary(
+                discovered_files=discovered_files,
+                accounting=accounting,
+                rows_appended=persistence_result.signal_rows_persisted,
+                base_universe_rows_appended=persistence_result.base_universe_rows_persisted,
+                unmapped_columns=sorted_unmapped,
+            )
+            failure_summary.update(
+                {
+                    "persistence_verification": "FAILED",
+                    "persisted_signal_rows": str(persistence_result.signal_rows_persisted),
+                    "persisted_base_universe_rows": str(persistence_result.base_universe_rows_persisted),
+                    "artifact.current_signal_snapshot.path": str(
+                        signal_storage_paths.current_signal_snapshot_path
+                    ),
+                    "artifact.current_base_equity_universe.path": str(
+                        universe_storage_paths.current_base_universe_path
+                    ),
+                    "artifact.partition_signal_snapshot.path": str(
+                        signal_storage_paths.partition_signal_snapshots_path
+                    ),
+                    "artifact.partition_signal_lineage.path": str(
+                        signal_storage_paths.partition_signal_lineage_path
+                    ),
+                    "artifact.partition_base_equity_universe.path": str(
+                        universe_storage_paths.partition_base_universe_path
+                    ),
+                    "artifact.partition_universe_lineage.path": str(
+                        universe_storage_paths.partition_lineage_registry_path
+                    ),
+                    "artifact.signal_index.path": str(signal_storage_paths.index_path),
+                    "artifact.universe_index.path": str(universe_storage_paths.index_path),
+                    "artifact.current_signal_snapshot.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.current_base_equity_universe.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                    "artifact.partition_signal_snapshot.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.partition_signal_lineage.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.partition_base_equity_universe.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                    "artifact.partition_universe_lineage.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                }
+            )
+            return StageExecutionOutput(
+                status=PipelineStatus.FAILED.value,
+                warnings=tuple(warnings),
+                errors=tuple(persistence_result.errors),
+                artifacts_created=tuple(finalized_artifacts),
+                validation_summary=failure_summary,
+            )
 
         finalized_artifacts.extend(
             [
                 ArtifactRecord(
-                    artifact_name="signal_snapshots.csv",
-                    artifact_path="data/history/signals/signal_snapshots.csv",
+                    artifact_name="signal_snapshot.csv",
+                    artifact_path=str(signal_storage_paths.current_signal_snapshot_path),
                     artifact_type="HISTORY_CSV",
                     created_at=now,
                     producing_stage="ess_intake",
                     checksum_placeholder="TODO",
-                    lineage_notes="Immutable signal snapshots appended.",
+                    lineage_notes=(
+                        "Current/latest signal snapshot output overwritten by latest successful run. "
+                        f"rows={persistence_result.signal_rows_persisted}"
+                    ),
                 ),
                 ArtifactRecord(
-                    artifact_name="signal_snapshot_history.csv",
-                    artifact_path="data/history/signals/signal_snapshot_history.csv",
+                    artifact_name="signal_snapshots.csv",
+                    artifact_path=str(signal_storage_paths.partition_signal_snapshots_path),
                     artifact_type="HISTORY_CSV",
                     created_at=now,
                     producing_stage="ess_intake",
                     checksum_placeholder="TODO",
-                    lineage_notes="Signal append event history updated.",
+                    lineage_notes=(
+                        "Immutable run-scoped partitioned signal snapshot output created. "
+                        f"rows={persistence_result.signal_rows_persisted}"
+                    ),
                 ),
                 ArtifactRecord(
                     artifact_name="signal_lineage_registry.csv",
-                    artifact_path="data/history/signals/signal_lineage_registry.csv",
+                    artifact_path=str(signal_storage_paths.partition_signal_lineage_path),
                     artifact_type="HISTORY_CSV",
                     created_at=now,
                     producing_stage="ess_intake",
                     checksum_placeholder="TODO",
-                    lineage_notes="Signal lineage registry updated.",
+                    lineage_notes=(
+                        "Immutable run-scoped partitioned signal lineage registry created. "
+                        f"rows={persistence_result.signal_rows_persisted}"
+                    ),
+                ),
+                ArtifactRecord(
+                    artifact_name="base_equity_universe.csv",
+                    artifact_path=str(universe_storage_paths.current_base_universe_path),
+                    artifact_type="DERIVED_CSV",
+                    created_at=now,
+                    producing_stage="ess_intake",
+                    checksum_placeholder="TODO",
+                    lineage_notes=(
+                        "Current/latest base-universe output overwritten by latest successful run. "
+                        f"rows={persistence_result.base_universe_rows_persisted}"
+                    ),
+                ),
+                ArtifactRecord(
+                    artifact_name="base_equity_universe.csv",
+                    artifact_path=str(universe_storage_paths.partition_base_universe_path),
+                    artifact_type="DERIVED_CSV",
+                    created_at=now,
+                    producing_stage="ess_intake",
+                    checksum_placeholder="TODO",
+                    lineage_notes=(
+                        "Immutable run-scoped partitioned base-universe output created. "
+                        f"rows={persistence_result.base_universe_rows_persisted}"
+                    ),
+                ),
+                ArtifactRecord(
+                    artifact_name="universe_lineage_registry.csv",
+                    artifact_path=str(universe_storage_paths.partition_lineage_registry_path),
+                    artifact_type="DERIVED_CSV",
+                    created_at=now,
+                    producing_stage="ess_intake",
+                    checksum_placeholder="TODO",
+                    lineage_notes=(
+                        "Immutable run-scoped partitioned base-universe lineage registry created. "
+                        f"rows={persistence_result.base_universe_rows_persisted}"
+                    ),
+                ),
+                ArtifactRecord(
+                    artifact_name="signal_index.csv",
+                    artifact_path=str(signal_storage_paths.index_path),
+                    artifact_type="HISTORY_CSV",
+                    created_at=now,
+                    producing_stage="ess_intake",
+                    checksum_placeholder="TODO",
+                    lineage_notes="Append-only signal index updated with run partition pointer.",
+                ),
+                ArtifactRecord(
+                    artifact_name="universe_index.csv",
+                    artifact_path=str(universe_storage_paths.index_path),
+                    artifact_type="HISTORY_CSV",
+                    created_at=now,
+                    producing_stage="ess_intake",
+                    checksum_placeholder="TODO",
+                    lineage_notes="Append-only universe index updated with run partition pointer.",
                 ),
             ]
         )
@@ -138,20 +399,68 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
             warnings=tuple(warnings),
             artifacts_created=tuple(finalized_artifacts),
             validation_summary={
-                "ess_files_discovered": str(sum(len(items) for items in discovered.values())),
-                "ess_rows_normalized": str(len(normalized_records)),
-                "ess_rows_appended": str(appended_count),
+                **_to_validation_summary(
+                    discovered_files=discovered_files,
+                    accounting=accounting,
+                    rows_appended=persistence_result.signal_rows_persisted,
+                    base_universe_rows_appended=persistence_result.base_universe_rows_persisted,
+                    unmapped_columns=sorted_unmapped,
+                ),
+                **{
+                    "persistence_verification": "PASSED",
+                    "persisted_signal_rows": str(persistence_result.signal_rows_persisted),
+                    "persisted_base_universe_rows": str(persistence_result.base_universe_rows_persisted),
+                    "artifact.current_signal_snapshot.path": str(
+                        signal_storage_paths.current_signal_snapshot_path
+                    ),
+                    "artifact.current_base_equity_universe.path": str(
+                        universe_storage_paths.current_base_universe_path
+                    ),
+                    "artifact.partition_signal_snapshot.path": str(
+                        signal_storage_paths.partition_signal_snapshots_path
+                    ),
+                    "artifact.partition_signal_lineage.path": str(
+                        signal_storage_paths.partition_signal_lineage_path
+                    ),
+                    "artifact.partition_base_equity_universe.path": str(
+                        universe_storage_paths.partition_base_universe_path
+                    ),
+                    "artifact.partition_universe_lineage.path": str(
+                        universe_storage_paths.partition_lineage_registry_path
+                    ),
+                    "artifact.signal_index.path": str(signal_storage_paths.index_path),
+                    "artifact.universe_index.path": str(universe_storage_paths.index_path),
+                    "artifact.current_signal_snapshot.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.current_base_equity_universe.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                    "artifact.partition_signal_snapshot.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.partition_signal_lineage.rows": str(
+                        persistence_result.signal_rows_persisted
+                    ),
+                    "artifact.partition_base_equity_universe.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                    "artifact.partition_universe_lineage.rows": str(
+                        persistence_result.base_universe_rows_persisted
+                    ),
+                },
             },
-        )
-    except EssValidationError as exc:
-        return StageExecutionOutput(
-            status=PipelineStatus.FAILED.value,
-            errors=tuple(exc.errors),
-            validation_summary={"ess_validation": "FAILED"},
         )
     except Exception as exc:
         return StageExecutionOutput(
             status=PipelineStatus.FAILED.value,
-            errors=(f"Unhandled ESS intake error: {exc}",),
-            validation_summary={"ess_execution": "FAILED_EXCEPTION"},
+            warnings=tuple(warnings),
+            errors=(f"Unhandled ESS intake append error: {exc}",),
+            validation_summary=_to_validation_summary(
+                discovered_files=discovered_files,
+                accounting=accounting,
+                rows_appended=0,
+                base_universe_rows_appended=0,
+                unmapped_columns=sorted_unmapped,
+            ),
         )
