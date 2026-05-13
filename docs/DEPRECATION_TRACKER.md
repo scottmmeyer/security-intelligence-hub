@@ -35,8 +35,9 @@ lineage integrity during transition.
 - data/derived/base_universe remains KEEP TEMPORARILY and is not removed in this
   cleanup unit.
 
-## Explicitly Not Removed In Unit 4
+## Final Helper Drift Resolution Status
 
-- iecho (INVESTIGATE)
-- inspect_ess.py (USER DECISION REQUIRED)
-- inspect_ess_csvs.py (USER DECISION REQUIRED)
+- Legacy root-level helper drift was resolved in the final pre-WP-04 hygiene
+  pass.
+- Reusable read-only diagnostics were formalized under scripts/diagnostics.
+- Non-deterministic scratch helpers were removed.

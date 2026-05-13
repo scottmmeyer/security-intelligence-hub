@@ -121,7 +121,7 @@
   hardening updates. Preserved first real ingestion run evidence under governed
   runtime directories. Removed hygiene pollution and introduced repository
   ignore controls. Explicitly excluded unresolved files from governed staging:
-  `iecho`, `inspect_ess.py`, `inspect_ess_csvs.py`, `run_pipeline.py`,
+  three legacy root-level helper artifacts, `run_pipeline.py`,
   `run_pipeline_ess.py`.
 - Result:
   First real ingestion operational behavior is now fully documented, runtime
@@ -146,7 +146,7 @@
 - Immutable runtime evidence preservation:
   Controlled run artifacts in `incoming/ess/` and `runs/` were retained.
 - Explicit unresolved drift list:
-  `iecho`, `inspect_ess.py`, `inspect_ess_csvs.py`, `run_pipeline.py`,
+  three legacy root-level helper artifacts, `run_pipeline.py`,
   `run_pipeline_ess.py`.
 - Deferred triage rationale:
   Purpose and trust boundary are not yet architecturally validated; files are
@@ -173,7 +173,7 @@
 - Drift Assessment:
   No new unexplained governed drift detected in runtime evidence paths.
   Unresolved operational drift remains intentionally isolated and unstaged:
-  `iecho`, `inspect_ess.py`, `inspect_ess_csvs.py`, `run_pipeline.py`,
+  three legacy root-level helper artifacts, `run_pipeline.py`,
   `run_pipeline_ess.py`.
 
 ### Next Action

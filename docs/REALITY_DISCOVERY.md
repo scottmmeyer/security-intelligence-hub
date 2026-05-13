@@ -135,9 +135,7 @@ were intentionally not ignored.
 
 ### UNEXPECTED_DIRTY
 
-- `iecho`
-- `inspect_ess.py`
-- `inspect_ess_csvs.py`
+- three legacy root-level helper artifacts (resolved in final helper drift pass)
 - `run_pipeline.py`
 - `run_pipeline_ess.py`
 
@@ -207,9 +205,7 @@ were intentionally not ignored.
 The following files remain unexplained by current waypoint scope and require
 intent confirmation before commit:
 
-- `iecho`
-- `inspect_ess.py`
-- `inspect_ess_csvs.py`
+- three legacy root-level helper artifacts (resolved in final helper drift pass)
 - `run_pipeline.py`
 - `run_pipeline_ess.py`
 

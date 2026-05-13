@@ -63,9 +63,7 @@ Added/updated governance hardening artifacts including:
 
 Excluded from governed staging pending review:
 
-- `iecho`
-- `inspect_ess.py`
-- `inspect_ess_csvs.py`
+- three legacy root-level helper artifacts (resolved in final helper drift pass)
 - `run_pipeline.py`
 - `run_pipeline_ess.py`
 
