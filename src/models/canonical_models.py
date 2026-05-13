@@ -22,6 +22,9 @@ class SecurityMaster:
     security_type: str
     region: str
     market_cap_bucket: str
+    market_cap_raw_usd: Optional[int] = None
+    market_cap_bucket_provider: str = "CANONICAL"
+    market_cap_snapshot_date: Optional[date] = None
     currency: str = "USD"
     is_active: bool = True
 

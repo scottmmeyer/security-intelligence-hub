@@ -1,22 +1,26 @@
 version: 1
+provider: FIDELITY
+effective_date: "TBD"
 currency: USD
+boundary_semantics: MIN_INCLUSIVE_MAX_EXCLUSIVE
 
 buckets:
   MEGA:
-    min_usd: 200000000000
-    max_usd: null
+    min_usd_inclusive: 565620000000
+    max_usd_exclusive: null
   LARGE:
-    min_usd: 10000000000
-    max_usd: 199999999999
+    min_usd_inclusive: 84970000000
+    max_usd_exclusive: 565620000000
   MID:
-    min_usd: 2000000000
-    max_usd: 9999999999
+    min_usd_inclusive: 13980000000
+    max_usd_exclusive: 84970000000
   SMALL:
-    min_usd: 300000000
-    max_usd: 1999999999
+    min_usd_inclusive: 3510000000
+    max_usd_exclusive: 13980000000
   MICRO:
-    min_usd: 0
-    max_usd: 299999999
+    min_usd_inclusive: 0
+    max_usd_exclusive: 3510000000
 
 todo:
-  - Validate thresholds against selected benchmark families in WP-02.
+  - Add provider-specific alternate threshold mappings in future waypoints.
+  - Version threshold changes as historical records; do not overwrite past definitions.

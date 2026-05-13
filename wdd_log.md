@@ -51,3 +51,21 @@
 - Drift Assessment:
   No drift detected. WP-01.5 implementation preserves non-goals by avoiding
   DAGs, schedulers, distributed execution, retries, and runtime state machines.
+
+## Entry 0004
+
+- Intent:
+  Align canonical market-cap classification to Fidelity thresholds while
+  preserving snapshot-based behavior and provider lineage for reproducibility.
+- Action:
+  Updated market-cap configuration with explicit USD boundaries, added market
+  cap classification philosophy documentation, extended canonical security model
+  with snapshot-aware lineage fields, and introduced deterministic market-cap
+  normalization and validation modules with unit tests.
+- Result:
+  Security Intelligence Hub now has a deterministic market-cap normalization
+  foundation that supports historical truth, provider traceability, and future
+  multi-provider divergence handling.
+- Drift Assessment:
+  No drift detected. Work remains within normalization and validation scope,
+  with no provider ingestion, orchestration engines, or speculative abstractions.

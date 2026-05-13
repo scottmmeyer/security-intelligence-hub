@@ -49,6 +49,7 @@
 ### WP-04 - Security Master Foundation
 - Canonical security model enrichment and validation rules
 - Security-type and region classification consistency checks
+- Snapshot-aware market-cap normalization and lineage-aware classification
 
 ## Success Criteria
 
@@ -82,3 +83,11 @@
 - Artifacts are registered with producing stage and lineage notes.
 - Non-goals remain enforced: no DAG orchestration, schedulers, retries, or
 	runtime state-machine complexity.
+
+## Market-Cap Classification Alignment Notes
+
+- Canonical internal market-cap framework is currently Fidelity-aligned.
+- Classification is snapshot-based and cannot be treated as immutable metadata.
+- Provider lineage fields are required for historical reproducibility.
+- Future provider divergence is handled through deterministic normalization
+  contracts rather than implicit assumptions.

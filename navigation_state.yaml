@@ -10,6 +10,8 @@ in_scope_items:
   - Artifact registry and lineage traceability structures
   - Execution summary rendering for terminal and chat compatibility
   - Deterministic unit tests for observability contracts
+  - Fidelity-aligned canonical market-cap bucket normalization
+  - Snapshot-based market-cap classification and provider lineage contracts
 
 out_of_scope_items:
   - Web scraping or automated provider acquisition logic
@@ -23,8 +25,8 @@ out_of_scope_items:
   - Autonomous runtime governance or recursive control loops
 
 next_action: >
-  Integrate WP-02 benchmark validation stage implementation into the sequential
-  runner while preserving manifest-only observability semantics.
+  Integrate market-cap normalization and benchmark validation into sequential
+  pipeline stages while preserving manifest-only observability semantics.
 
 architectural_boundaries:
   platform_boundary: >
@@ -39,6 +41,9 @@ architectural_boundaries:
   provider_boundary: >
     Provider-specific semantics remain isolated in provider modules and are
     translated into canonical forms through explicit contracts.
+  market_cap_boundary: >
+    Market-cap classification is snapshot-based normalization context, not
+    immutable security metadata. Provider lineage must be preserved.
   observability_boundary: >
     Manifests describe execution outcomes and lineage. They do not orchestrate,
     schedule, retry, or recursively govern runtime execution.
