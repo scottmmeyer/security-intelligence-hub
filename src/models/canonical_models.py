@@ -56,15 +56,44 @@ class SignalSnapshot:
 
 @dataclass(frozen=True)
 class BenchmarkDefinition:
-    """Benchmark mapping context used for relative performance interpretation."""
+    """Authoritative benchmark registry entry for relative intelligence."""
 
-    benchmark_id: str
+    benchmark_symbol: str
     benchmark_name: str
-    region: str
+    geography: str
     market_cap_bucket: str
-    ticker: str
-    effective_start_date: date
-    effective_end_date: Optional[date] = None
+    benchmark_type: str
+    provider: str
+    active_status: bool
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class BenchmarkSnapshot:
+    """Immutable point-in-time benchmark price and return snapshot."""
+
+    benchmark_symbol: str
+    snapshot_date: date
+    adjusted_close: float
+    daily_return: Optional[float]
+    return_30d: Optional[float]
+    return_90d: Optional[float]
+    return_180d: Optional[float]
+    source_provider: str
+    run_id: str
+
+
+@dataclass(frozen=True)
+class BenchmarkOutcomeWindow:
+    """Deterministic benchmark outcome window for future relative analytics."""
+
+    benchmark_symbol: str
+    snapshot_date: date
+    horizon_days: int
+    total_return: float
+    annualized_return: float
+    volatility: Optional[float]
+    relative_strength: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -94,4 +123,5 @@ class PerformanceOutcome:
 
 # TODO(WP-03): add deterministic schema validation helpers for ESS payloads.
 # TODO(WP-04): add classification validation for security_type and market_cap.
+# TODO(WP-05): integrate external benchmark provider ingestion adapters.
 # TODO(FUTURE): introduce pydantic or typed validation adapters if needed.

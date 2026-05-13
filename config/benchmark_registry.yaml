@@ -1,10 +1,11 @@
 version: 1
 description: >
-  Initial benchmark registry scaffold for Security Intelligence Hub.
-  Identifiers and tickers are placeholders and will be finalized in WP-02.
+  Authoritative benchmark registry contracts for benchmark-relative
+  intelligence. Values are deterministic placeholders until live provider
+  integration is introduced in a future waypoint.
 
 dimensions:
-  region:
+  geography:
     - US
     - INTERNATIONAL
   market_cap_bucket:
@@ -14,51 +15,135 @@ dimensions:
     - SMALL
     - MICRO
 
-benchmarks:
+required_market_cap_by_geography:
   US:
-    MEGA:
-      benchmark_id: US_MEGA_PLACEHOLDER
-      benchmark_name: US Mega Cap Placeholder Index
-      ticker: TBD
-    LARGE:
-      benchmark_id: US_LARGE_PLACEHOLDER
-      benchmark_name: US Large Cap Placeholder Index
-      ticker: TBD
-    MID:
-      benchmark_id: US_MID_PLACEHOLDER
-      benchmark_name: US Mid Cap Placeholder Index
-      ticker: TBD
-    SMALL:
-      benchmark_id: US_SMALL_PLACEHOLDER
-      benchmark_name: US Small Cap Placeholder Index
-      ticker: TBD
-    MICRO:
-      benchmark_id: US_MICRO_PLACEHOLDER
-      benchmark_name: US Micro Cap Placeholder Index
-      ticker: TBD
-
+    - MEGA
+    - LARGE
+    - MID
+    - SMALL
+    - MICRO
   INTERNATIONAL:
-    MEGA:
-      benchmark_id: INTL_MEGA_PLACEHOLDER
-      benchmark_name: International Mega Cap Placeholder Index
-      ticker: TBD
-    LARGE:
-      benchmark_id: INTL_LARGE_PLACEHOLDER
-      benchmark_name: International Large Cap Placeholder Index
-      ticker: TBD
-    MID:
-      benchmark_id: INTL_MID_PLACEHOLDER
-      benchmark_name: International Mid Cap Placeholder Index
-      ticker: TBD
-    SMALL:
-      benchmark_id: INTL_SMALL_PLACEHOLDER
-      benchmark_name: International Small Cap Placeholder Index
-      ticker: TBD
-    MICRO:
-      benchmark_id: INTL_MICRO_PLACEHOLDER
-      benchmark_name: International Micro Cap Placeholder Index
-      ticker: TBD
+    - LARGE
+    - SMALL
+
+optional_categories_by_geography:
+  INTERNATIONAL:
+    - EMERGING
+
+benchmark_definitions:
+  - benchmark_symbol: US_MEGA_CORE_IDX
+    benchmark_name: US Mega Cap Core Placeholder Index
+    geography: US
+    market_cap_bucket: MEGA
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: US_LARGE_CORE_IDX
+    benchmark_name: US Large Cap Core Placeholder Index
+    geography: US
+    market_cap_bucket: LARGE
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: US_MID_CORE_IDX
+    benchmark_name: US Mid Cap Core Placeholder Index
+    geography: US
+    market_cap_bucket: MID
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: US_SMALL_CORE_IDX
+    benchmark_name: US Small Cap Core Placeholder Index
+    geography: US
+    market_cap_bucket: SMALL
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: US_MICRO_CORE_IDX
+    benchmark_name: US Micro Cap Core Placeholder Index
+    geography: US
+    market_cap_bucket: MICRO
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: INTL_LARGE_CORE_IDX
+    benchmark_name: International Large Cap Core Placeholder Index
+    geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: INTL_SMALL_CORE_IDX
+    benchmark_name: International Small Cap Core Placeholder Index
+    geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    benchmark_type: EQUITY_CORE
+    provider: INTERNAL_PLACEHOLDER
+    active_status: true
+    created_at: "2026-05-13T00:00:00Z"
+
+  - benchmark_symbol: INTL_EMERGING_CORE_IDX
+    benchmark_name: International Emerging Markets Placeholder Index
+    geography: INTERNATIONAL
+    market_cap_bucket: EMERGING
+    benchmark_type: EQUITY_EMERGING
+    provider: INTERNAL_PLACEHOLDER
+    active_status: false
+    created_at: "2026-05-13T00:00:00Z"
+
+benchmark_assignments:
+  - geography: US
+    market_cap_bucket: MEGA
+    benchmark_symbol: US_MEGA_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: LARGE
+    benchmark_symbol: US_LARGE_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MID
+    benchmark_symbol: US_MID_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: SMALL
+    benchmark_symbol: US_SMALL_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MICRO
+    benchmark_symbol: US_MICRO_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    benchmark_symbol: INTL_LARGE_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    benchmark_symbol: INTL_SMALL_CORE_IDX
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: EMERGING
+    benchmark_symbol: INTL_EMERGING_CORE_IDX
+    assignment_status: PLACEHOLDER
 
 todo:
-  - Replace placeholder benchmark identifiers with production IDs in WP-02.
-  - Add fixed-income benchmark families in a later waypoint.
+  - Replace INTERNAL_PLACEHOLDER provider references with authoritative source.
+  - Add immutable benchmark price snapshot population in a future waypoint.

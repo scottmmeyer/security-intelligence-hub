@@ -1,0 +1,1 @@
+"""Validation layer package for deterministic contract checks."""

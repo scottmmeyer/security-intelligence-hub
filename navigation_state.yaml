@@ -1,15 +1,15 @@
-current_waypoint: WP-01
+current_waypoint: WP-02
 current_objective: >
-  Establish deterministic control plane foundation with explicit architectural
-  boundaries, governance artifacts, and waypoint navigation contracts.
+  Establish the benchmark intelligence foundation with deterministic benchmark
+  contracts, immutable snapshot lineage philosophy, and fail-closed validation.
 
 in_scope_items:
-  - Repository structure and deterministic file-system boundaries
-  - Architecture and SDLC governance documentation
-  - Waypoint navigation state and master roadmap initialization
-  - Benchmark and provider registry scaffolding
-  - ESS intake lane separation contracts
-  - Canonical model placeholders for core entities
+  - Authoritative benchmark definitions and mapping contracts
+  - Benchmark snapshot and outcome model scaffolding
+  - Benchmark registry validation and lineage checks
+  - Immutable benchmark history file contracts
+  - Snapshot lineage and run metadata documentation
+  - Deterministic unit tests for benchmark foundation
 
 out_of_scope_items:
   - Web scraping or automated provider acquisition logic
@@ -17,10 +17,11 @@ out_of_scope_items:
   - Dashboards, UI, and external API serving layers
   - Database persistence and distributed deployment concerns
   - Portfolio construction, optimization, or execution logic
+  - Sector, industry, factor, and theme benchmark overlays
 
 next_action: >
-  Advance to WP-02 by finalizing benchmark identifier mappings and defining
-  immutable benchmark history ingestion contracts.
+  Continue WP-02 by implementing deterministic benchmark snapshot ingestion
+  stubs and appending benchmark history artifacts by run_id.
 
 architectural_boundaries:
   platform_boundary: >
@@ -30,8 +31,8 @@ architectural_boundaries:
     Single-process, deterministic pipeline progression with no microservices,
     workflow engines, or runtime autonomous agents.
   data_boundary: >
-    Historical snapshots are immutable and append-oriented; normalization does
-    not overwrite prior historical truth.
+    Benchmark snapshots and outcomes are immutable and append-oriented.
+    Historical truth is preserved through run lineage metadata.
   provider_boundary: >
     Provider-specific semantics remain isolated in provider modules and are
     translated into canonical forms through explicit contracts.

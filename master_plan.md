@@ -1,5 +1,13 @@
 # Security Intelligence Hub Master Plan
 
+## Current Execution State
+
+1. WP-01 - COMPLETE
+2. WP-02 - IN PROGRESS
+3. WP-02.5 - NOT STARTED
+4. WP-03 - NOT STARTED
+5. WP-04 - NOT STARTED
+
 ## Waypoint Roadmap
 
 1. WP-01 - Control Plane Foundation
@@ -16,9 +24,10 @@
 - Initial configuration registries and canonical model placeholders
 
 ### WP-02 - Benchmark Intelligence Foundation
-- Benchmark registry with US and international dimensions
-- Market-cap to benchmark mapping contracts
-- Benchmark history scaffolding and validation placeholders
+- Authoritative benchmark registry with deterministic mappings
+- Benchmark snapshot and outcome contracts with run lineage fields
+- Immutable benchmark history scaffolding in data/history/benchmarks/
+- Fail-closed benchmark validation for registry and lineage integrity
 
 ### WP-02.5 - Macro Intelligence Foundation
 - Macro snapshot schema and taxonomy conventions
@@ -47,3 +56,10 @@
 3. WP-02.5 depends on WP-02 baseline benchmark context.
 4. WP-03 depends on WP-01 through WP-02.5 for normalization context.
 5. WP-04 depends on WP-03 intake contracts and canonical classifications.
+
+## WP-02 Success Criteria
+
+- Benchmark registry passes deterministic validation with explicit errors.
+- Snapshot lineage contracts enforce run_id and source consistency.
+- Historical benchmark artifacts are append-oriented and immutable by policy.
+- Unit tests cover valid registry, malformed entries, and duplicate mappings.
