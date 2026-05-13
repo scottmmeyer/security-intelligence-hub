@@ -1,0 +1,143 @@
+{
+  "run_id": "RUN-20260513-EXAMPLE",
+  "snapshot_date": "2026-05-13",
+  "overall_status": "WARNING",
+  "started_at": "2026-05-13T14:00:00+00:00",
+  "completed_at": "2026-05-13T14:01:30+00:00",
+  "stages": [
+    {
+      "stage_name": "benchmark_validation",
+      "status": "COMPLETE",
+      "started_at": "2026-05-13T14:00:00+00:00",
+      "completed_at": "2026-05-13T14:00:10+00:00",
+      "duration_seconds": 10.0,
+      "warnings": [],
+      "errors": [],
+      "artifacts_created": [],
+      "validation_summary": {
+        "benchmark_mapping_coverage": "100%"
+      }
+    },
+    {
+      "stage_name": "benchmark_snapshot_ingestion",
+      "status": "COMPLETE",
+      "started_at": "2026-05-13T14:00:10+00:00",
+      "completed_at": "2026-05-13T14:00:30+00:00",
+      "duration_seconds": 20.0,
+      "warnings": [],
+      "errors": [],
+      "artifacts_created": [
+        {
+          "artifact_name": "benchmark_snapshots.csv",
+          "artifact_path": "data/history/benchmarks/benchmark_snapshots.csv",
+          "artifact_type": "CSV",
+          "created_at": "2026-05-13T14:00:30+00:00",
+          "producing_stage": "benchmark_snapshot_ingestion",
+          "checksum_placeholder": "TODO",
+          "lineage_notes": "Created from deterministic benchmark snapshot contract"
+        }
+      ],
+      "validation_summary": {
+        "snapshot_rows_written": "0"
+      }
+    },
+    {
+      "stage_name": "ess_intake",
+      "status": "COMPLETE",
+      "started_at": "2026-05-13T14:00:30+00:00",
+      "completed_at": "2026-05-13T14:00:45+00:00",
+      "duration_seconds": 15.0,
+      "warnings": [],
+      "errors": [],
+      "artifacts_created": [],
+      "validation_summary": {
+        "ess_contract_status": "REGISTERED"
+      }
+    },
+    {
+      "stage_name": "normalization",
+      "status": "WARNING",
+      "started_at": "2026-05-13T14:00:45+00:00",
+      "completed_at": "2026-05-13T14:01:10+00:00",
+      "duration_seconds": 25.0,
+      "warnings": [
+        "Market-cap classification coverage is below target threshold"
+      ],
+      "errors": [],
+      "artifacts_created": [
+        {
+          "artifact_name": "normalized_universe.csv",
+          "artifact_path": "data/normalized/normalized_universe.csv",
+          "artifact_type": "CSV",
+          "created_at": "2026-05-13T14:01:10+00:00",
+          "producing_stage": "normalization",
+          "checksum_placeholder": "TODO",
+          "lineage_notes": "Normalization artifact generated from run RUN-20260513-EXAMPLE"
+        }
+      ],
+      "validation_summary": {
+        "market_cap_classification_coverage": "97%"
+      }
+    },
+    {
+      "stage_name": "snapshot_export",
+      "status": "COMPLETE",
+      "started_at": "2026-05-13T14:01:10+00:00",
+      "completed_at": "2026-05-13T14:01:30+00:00",
+      "duration_seconds": 20.0,
+      "warnings": [],
+      "errors": [],
+      "artifacts_created": [
+        {
+          "artifact_name": "signal_snapshot.csv",
+          "artifact_path": "data/exports/signal_snapshot.csv",
+          "artifact_type": "CSV",
+          "created_at": "2026-05-13T14:01:30+00:00",
+          "producing_stage": "snapshot_export",
+          "checksum_placeholder": "TODO",
+          "lineage_notes": "Export artifact emitted for downstream portfolio managers"
+        }
+      ],
+      "validation_summary": {
+        "export_contract_status": "READY"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_name": "benchmark_snapshots.csv",
+      "artifact_path": "data/history/benchmarks/benchmark_snapshots.csv",
+      "artifact_type": "CSV",
+      "created_at": "2026-05-13T14:00:30+00:00",
+      "producing_stage": "benchmark_snapshot_ingestion",
+      "checksum_placeholder": "TODO",
+      "lineage_notes": "Created from deterministic benchmark snapshot contract"
+    },
+    {
+      "artifact_name": "normalized_universe.csv",
+      "artifact_path": "data/normalized/normalized_universe.csv",
+      "artifact_type": "CSV",
+      "created_at": "2026-05-13T14:01:10+00:00",
+      "producing_stage": "normalization",
+      "checksum_placeholder": "TODO",
+      "lineage_notes": "Normalization artifact generated from run RUN-20260513-EXAMPLE"
+    },
+    {
+      "artifact_name": "signal_snapshot.csv",
+      "artifact_path": "data/exports/signal_snapshot.csv",
+      "artifact_type": "CSV",
+      "created_at": "2026-05-13T14:01:30+00:00",
+      "producing_stage": "snapshot_export",
+      "checksum_placeholder": "TODO",
+      "lineage_notes": "Export artifact emitted for downstream portfolio managers"
+    }
+  ],
+  "warnings": [
+    "Normalization stage emitted non-blocking coverage warning"
+  ],
+  "errors": [],
+  "validation_summary": {
+    "benchmark_mapping_coverage": "100%",
+    "market_cap_classification_coverage": "97%"
+  }
+}

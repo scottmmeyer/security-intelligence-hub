@@ -3,18 +3,20 @@
 ## Current Execution State
 
 1. WP-01 - COMPLETE
-2. WP-02 - IN PROGRESS
-3. WP-02.5 - NOT STARTED
-4. WP-03 - NOT STARTED
-5. WP-04 - NOT STARTED
+2. WP-01.5 - IN PROGRESS
+3. WP-02 - COMPLETE
+4. WP-02.5 - NOT STARTED
+5. WP-03 - NOT STARTED
+6. WP-04 - NOT STARTED
 
 ## Waypoint Roadmap
 
 1. WP-01 - Control Plane Foundation
-2. WP-02 - Benchmark Intelligence Foundation
-3. WP-02.5 - Macro Intelligence Foundation
-4. WP-03 - ESS Intake Foundation
-5. WP-04 - Security Master Foundation
+2. WP-01.5 - Pipeline Observability Foundation
+3. WP-02 - Benchmark Intelligence Foundation
+4. WP-02.5 - Macro Intelligence Foundation
+5. WP-03 - ESS Intake Foundation
+6. WP-04 - Security Master Foundation
 
 ## Waypoint Deliverables
 
@@ -22,6 +24,13 @@
 - Repository scaffolding with deterministic domain boundaries
 - Architecture, governance, and navigation documents
 - Initial configuration registries and canonical model placeholders
+
+### WP-01.5 - Pipeline Observability Foundation
+- Run manifest and stage manifest contracts in runs/
+- Flat pipeline status semantics and stage result models
+- Sequential deterministic runner scaffolding without orchestration engines
+- Artifact registry records with lineage metadata and summary rendering
+- Future terminal, chat, and dashboard-compatible execution summaries
 
 ### WP-02 - Benchmark Intelligence Foundation
 - Authoritative benchmark registry with deterministic mappings
@@ -52,10 +61,11 @@
 ## Dependency Chain
 
 1. WP-01 enables governance and reproducible execution boundaries.
-2. WP-02 depends on WP-01 contracts for deterministic registries.
-3. WP-02.5 depends on WP-02 baseline benchmark context.
-4. WP-03 depends on WP-01 through WP-02.5 for normalization context.
-5. WP-04 depends on WP-03 intake contracts and canonical classifications.
+2. WP-01.5 depends on WP-01 for deterministic governance boundaries.
+3. WP-02 depends on WP-01 and WP-01.5 for observable lineage contracts.
+4. WP-02.5 depends on WP-02 baseline benchmark context.
+5. WP-03 depends on WP-01 through WP-02.5 for normalization context.
+6. WP-04 depends on WP-03 intake contracts and canonical classifications.
 
 ## WP-02 Success Criteria
 
@@ -63,3 +73,12 @@
 - Snapshot lineage contracts enforce run_id and source consistency.
 - Historical benchmark artifacts are append-oriented and immutable by policy.
 - Unit tests cover valid registry, malformed entries, and duplicate mappings.
+
+## WP-01.5 Success Criteria
+
+- Run and stage manifests are generated as deterministic historical evidence.
+- Pipeline statuses remain flat, explicit, and fail-closed.
+- Execution summaries are readable in terminal and chat contexts.
+- Artifacts are registered with producing stage and lineage notes.
+- Non-goals remain enforced: no DAG orchestration, schedulers, retries, or
+	runtime state-machine complexity.

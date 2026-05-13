@@ -32,3 +32,22 @@
 - Drift Assessment:
   No drift detected. WP-02 remains bounded to contracts, lineage, validation,
   and history scaffolding only (no scraping, ML, dashboards, or databases).
+
+## Entry 0003
+
+- Intent:
+  Implement WP-01.5 pipeline observability foundation to provide deterministic
+  execution manifests, stage visibility, artifact traceability, and run lineage
+  compatible with future terminal, chat, and UI summary views.
+- Action:
+  Added pipeline observability dataclasses, flat status constants, sequential
+  pipeline runner scaffold, stage registry contracts, execution summary
+  renderer, runs manifest directory contracts, example run manifest,
+  observability philosophy documentation, artifact registry philosophy
+  documentation, and deterministic unit tests.
+- Result:
+  Project now has a lightweight manifest-driven observability layer that tracks
+  explicit failures and artifacts without introducing orchestration engines.
+- Drift Assessment:
+  No drift detected. WP-01.5 implementation preserves non-goals by avoiding
+  DAGs, schedulers, distributed execution, retries, and runtime state machines.
