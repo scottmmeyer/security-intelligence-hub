@@ -1,0 +1,64 @@
+version: 1
+description: >
+  Initial benchmark registry scaffold for Security Intelligence Hub.
+  Identifiers and tickers are placeholders and will be finalized in WP-02.
+
+dimensions:
+  region:
+    - US
+    - INTERNATIONAL
+  market_cap_bucket:
+    - MEGA
+    - LARGE
+    - MID
+    - SMALL
+    - MICRO
+
+benchmarks:
+  US:
+    MEGA:
+      benchmark_id: US_MEGA_PLACEHOLDER
+      benchmark_name: US Mega Cap Placeholder Index
+      ticker: TBD
+    LARGE:
+      benchmark_id: US_LARGE_PLACEHOLDER
+      benchmark_name: US Large Cap Placeholder Index
+      ticker: TBD
+    MID:
+      benchmark_id: US_MID_PLACEHOLDER
+      benchmark_name: US Mid Cap Placeholder Index
+      ticker: TBD
+    SMALL:
+      benchmark_id: US_SMALL_PLACEHOLDER
+      benchmark_name: US Small Cap Placeholder Index
+      ticker: TBD
+    MICRO:
+      benchmark_id: US_MICRO_PLACEHOLDER
+      benchmark_name: US Micro Cap Placeholder Index
+      ticker: TBD
+
+  INTERNATIONAL:
+    MEGA:
+      benchmark_id: INTL_MEGA_PLACEHOLDER
+      benchmark_name: International Mega Cap Placeholder Index
+      ticker: TBD
+    LARGE:
+      benchmark_id: INTL_LARGE_PLACEHOLDER
+      benchmark_name: International Large Cap Placeholder Index
+      ticker: TBD
+    MID:
+      benchmark_id: INTL_MID_PLACEHOLDER
+      benchmark_name: International Mid Cap Placeholder Index
+      ticker: TBD
+    SMALL:
+      benchmark_id: INTL_SMALL_PLACEHOLDER
+      benchmark_name: International Small Cap Placeholder Index
+      ticker: TBD
+    MICRO:
+      benchmark_id: INTL_MICRO_PLACEHOLDER
+      benchmark_name: International Micro Cap Placeholder Index
+      ticker: TBD
+
+todo:
+  - Replace placeholder benchmark identifiers with production IDs in WP-02.
+  - Add fixed-income benchmark families in a later waypoint.

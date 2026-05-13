@@ -1,0 +1,56 @@
+version: 1
+
+providers:
+  STARMINE:
+    active: true
+    category: ANALYST_INTELLIGENCE
+    coverage_lane: STARMINE_COVERED_UNIVERSE
+    supported_security_types:
+      - EQUITY
+      - ETF
+  ZACKS:
+    active: true
+    category: ANALYST_INTELLIGENCE
+    coverage_lane: NON_STARMINE_ZACKS_UNIVERSE
+    supported_security_types:
+      - EQUITY
+  FIDELITY:
+    active: false
+    category: ANALYST_INTELLIGENCE
+    coverage_lane: FUTURE
+    supported_security_types: []
+  DANELFIN:
+    active: false
+    category: ANALYST_INTELLIGENCE
+    coverage_lane: FUTURE
+    supported_security_types: []
+  YAHOO:
+    active: false
+    category: MARKET_DATA
+    coverage_lane: FUTURE
+    supported_security_types: []
+  MORNINGSTAR:
+    active: false
+    category: ANALYST_INTELLIGENCE
+    coverage_lane: FUTURE
+    supported_security_types: []
+
+ess_intake_lanes:
+  STARMINE_COVERED_UNIVERSE:
+    incoming_path: incoming/ess/starmine
+    required_fields:
+      - as_of_date
+      - provider_security_id
+      - ticker
+      - starmine_ess_score
+  NON_STARMINE_ZACKS_UNIVERSE:
+    incoming_path: incoming/ess/non_starmine_zacks
+    required_fields:
+      - as_of_date
+      - provider_security_id
+      - ticker
+      - zacks_rating
+      - starmine_coverage_flag
+
+todo:
+  - Add schema versioning for each provider payload contract in WP-03.

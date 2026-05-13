@@ -1,0 +1,37 @@
+current_waypoint: WP-01
+current_objective: >
+  Establish deterministic control plane foundation with explicit architectural
+  boundaries, governance artifacts, and waypoint navigation contracts.
+
+in_scope_items:
+  - Repository structure and deterministic file-system boundaries
+  - Architecture and SDLC governance documentation
+  - Waypoint navigation state and master roadmap initialization
+  - Benchmark and provider registry scaffolding
+  - ESS intake lane separation contracts
+  - Canonical model placeholders for core entities
+
+out_of_scope_items:
+  - Web scraping or automated provider acquisition logic
+  - Machine learning and predictive modeling pipelines
+  - Dashboards, UI, and external API serving layers
+  - Database persistence and distributed deployment concerns
+  - Portfolio construction, optimization, or execution logic
+
+next_action: >
+  Advance to WP-02 by finalizing benchmark identifier mappings and defining
+  immutable benchmark history ingestion contracts.
+
+architectural_boundaries:
+  platform_boundary: >
+    Security Intelligence Hub publishes authoritative intelligence datasets;
+    portfolio managers are external consumers and remain out of scope.
+  runtime_boundary: >
+    Single-process, deterministic pipeline progression with no microservices,
+    workflow engines, or runtime autonomous agents.
+  data_boundary: >
+    Historical snapshots are immutable and append-oriented; normalization does
+    not overwrite prior historical truth.
+  provider_boundary: >
+    Provider-specific semantics remain isolated in provider modules and are
+    translated into canonical forms through explicit contracts.

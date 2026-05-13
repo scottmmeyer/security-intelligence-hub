@@ -1,0 +1,15 @@
+version: 1
+
+security_types:
+  - EQUITY
+  - ETF
+  - MUTUAL_FUND
+  - BOND
+
+region_scope:
+  - US
+  - INTERNATIONAL
+
+signal_coverage_policy: >
+  Signals are security-type-scoped. A missing signal for a security type must
+  be represented as explicit non-coverage, not as a neutral or zero score.

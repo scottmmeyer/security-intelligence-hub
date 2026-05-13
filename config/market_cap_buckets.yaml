@@ -1,0 +1,22 @@
+version: 1
+currency: USD
+
+buckets:
+  MEGA:
+    min_usd: 200000000000
+    max_usd: null
+  LARGE:
+    min_usd: 10000000000
+    max_usd: 199999999999
+  MID:
+    min_usd: 2000000000
+    max_usd: 9999999999
+  SMALL:
+    min_usd: 300000000
+    max_usd: 1999999999
+  MICRO:
+    min_usd: 0
+    max_usd: 299999999
+
+todo:
+  - Validate thresholds against selected benchmark families in WP-02.
