@@ -38,3 +38,12 @@ clear policy documentation and deterministic behavior.
 ## Current Governed Diagnostic Scripts
 
 - scripts/diagnostics/ess_payload_profile.py
+- scripts/diagnostics/build_wp04_foundation.py
+
+## Local Utility Runner
+
+- scripts/run_outcome_ui.py
+	- Purpose: launch a local static server for the WP-04.1 visualization
+		prototype.
+	- Boundary: UI serving only; no mutation of platform contracts or runtime
+		outputs.

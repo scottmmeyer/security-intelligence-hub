@@ -1,0 +1,172 @@
+version: 1
+description: >
+  WP-05A investable vehicle registry mapping analytical categories to ETF or fund
+  alternatives that are distinct from benchmark analytical baselines.
+
+dimensions:
+  geography:
+    - US
+    - INTERNATIONAL
+  market_cap_bucket:
+    - MEGA
+    - LARGE
+    - MID
+    - SMALL
+    - MICRO
+  industry_scope:
+    - ALL
+
+investable_vehicles:
+  - vehicle_id: VEH_US_MEGA_OEF
+    symbol: OEF
+    name: iShares S&P 100 ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_US_MEGA_SP100
+    geography: US
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+
+  - vehicle_id: VEH_US_LARGE_SPY
+    symbol: SPY
+    name: SPDR S&P 500 ETF Trust
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_US_LARGE_SP500
+    geography: US
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+
+  - vehicle_id: VEH_US_MID_MDY
+    symbol: MDY
+    name: SPDR S&P MidCap 400 ETF Trust
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_US_MID_SP400
+    geography: US
+    market_cap_bucket: MID
+    industry_scope: ALL
+
+  - vehicle_id: VEH_US_SMALL_IWM
+    symbol: IWM
+    name: iShares Russell 2000 ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_US_SMALL_RUT
+    geography: US
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+
+  - vehicle_id: VEH_US_MICRO_IWC
+    symbol: IWC
+    name: iShares Micro-Cap ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_US_MICRO_RUMIC
+    geography: US
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+
+  - vehicle_id: VEH_INTL_MEGA_IEFA
+    symbol: IEFA
+    name: iShares Core MSCI EAFE ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_INTL_MEGA_ACWI
+    geography: INTERNATIONAL
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+
+  - vehicle_id: VEH_INTL_LARGE_IEFA
+    symbol: IEFA
+    name: iShares Core MSCI EAFE ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_INTL_LARGE_EAFE
+    geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+
+  - vehicle_id: VEH_INTL_MID_VXUS
+    symbol: VXUS
+    name: Vanguard Total International Stock ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_INTL_MID_ACWI_EXUS
+    geography: INTERNATIONAL
+    market_cap_bucket: MID
+    industry_scope: ALL
+
+  - vehicle_id: VEH_INTL_SMALL_SCGZ
+    symbol: VXUS
+    name: Vanguard Total International Stock ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_INTL_SMALL_MSCI_SMALL
+    geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+
+  - vehicle_id: VEH_INTL_MICRO_VXUS
+    symbol: VXUS
+    name: Vanguard Total International Stock ETF
+    vehicle_type: ETF
+    tracks_benchmark_id: BM_INTL_MICRO_GLOBAL_SMALL
+    geography: INTERNATIONAL
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+
+vehicle_assignments:
+  - geography: US
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    vehicle_id: VEH_US_MEGA_OEF
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    vehicle_id: VEH_US_LARGE_SPY
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MID
+    industry_scope: ALL
+    vehicle_id: VEH_US_MID_MDY
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    vehicle_id: VEH_US_SMALL_IWM
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    vehicle_id: VEH_US_MICRO_IWC
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    vehicle_id: VEH_INTL_MEGA_IEFA
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    vehicle_id: VEH_INTL_LARGE_IEFA
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MID
+    industry_scope: ALL
+    vehicle_id: VEH_INTL_MID_VXUS
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    vehicle_id: VEH_INTL_SMALL_SCGZ
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    vehicle_id: VEH_INTL_MICRO_VXUS
+    assignment_status: ACTIVE
+
+todo:
+  - Add optional industry-specific investable mappings in a later waypoint.

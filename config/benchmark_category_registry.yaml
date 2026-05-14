@@ -1,0 +1,173 @@
+version: 1
+description: >
+  WP-05A analytical benchmark category registry for replay and visualization
+  mappings. This registry keeps benchmark baselines distinct from investable
+  vehicle alternatives.
+
+dimensions:
+  geography:
+    - US
+    - INTERNATIONAL
+  market_cap_bucket:
+    - MEGA
+    - LARGE
+    - MID
+    - SMALL
+    - MICRO
+  industry_scope:
+    - ALL
+
+benchmark_definitions:
+  - benchmark_id: BM_US_MEGA_SP100
+    name: S&P 100 Index
+    category: US_MEGA_ALL
+    geography: US
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    symbol_or_index: ^OEX
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_US_LARGE_SP500
+    name: S&P 500 Index
+    category: US_LARGE_ALL
+    geography: US
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    symbol_or_index: ^GSPC
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_US_MID_SP400
+    name: S&P MidCap 400 Index
+    category: US_MID_ALL
+    geography: US
+    market_cap_bucket: MID
+    industry_scope: ALL
+    symbol_or_index: ^MID
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_US_SMALL_RUT
+    name: Russell 2000 Index
+    category: US_SMALL_ALL
+    geography: US
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    symbol_or_index: ^RUT
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_US_MICRO_RUMIC
+    name: Russell 2000 Index
+    category: US_MICRO_ALL
+    geography: US
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    symbol_or_index: ^RUT
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_INTL_MEGA_ACWI
+    name: MSCI ACWI Index
+    category: INTERNATIONAL_MEGA_ALL
+    geography: INTERNATIONAL
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    symbol_or_index: ACWI
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_INTL_LARGE_EAFE
+    name: MSCI EAFE Index
+    category: INTERNATIONAL_LARGE_ALL
+    geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    symbol_or_index: EFA
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_INTL_MID_ACWI_EXUS
+    name: MSCI ACWI Index
+    category: INTERNATIONAL_MID_ALL
+    geography: INTERNATIONAL
+    market_cap_bucket: MID
+    industry_scope: ALL
+    symbol_or_index: ACWI
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_INTL_SMALL_MSCI_SMALL
+    name: MSCI Emerging Markets Index Proxy
+    category: INTERNATIONAL_SMALL_ALL
+    geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    symbol_or_index: EEM
+    benchmark_type: EQUITY_INDEX
+
+  - benchmark_id: BM_INTL_MICRO_GLOBAL_SMALL
+    name: MSCI Emerging Markets Index Proxy
+    category: INTERNATIONAL_MICRO_ALL
+    geography: INTERNATIONAL
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    symbol_or_index: EEM
+    benchmark_type: EQUITY_INDEX
+
+benchmark_assignments:
+  - geography: US
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    benchmark_id: BM_US_MEGA_SP100
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    benchmark_id: BM_US_LARGE_SP500
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MID
+    industry_scope: ALL
+    benchmark_id: BM_US_MID_SP400
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    benchmark_id: BM_US_SMALL_RUT
+    assignment_status: ACTIVE
+
+  - geography: US
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    benchmark_id: BM_US_MICRO_RUMIC
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MEGA
+    industry_scope: ALL
+    benchmark_id: BM_INTL_MEGA_ACWI
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: LARGE
+    industry_scope: ALL
+    benchmark_id: BM_INTL_LARGE_EAFE
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MID
+    industry_scope: ALL
+    benchmark_id: BM_INTL_MID_ACWI_EXUS
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: SMALL
+    industry_scope: ALL
+    benchmark_id: BM_INTL_SMALL_MSCI_SMALL
+    assignment_status: ACTIVE
+
+  - geography: INTERNATIONAL
+    market_cap_bucket: MICRO
+    industry_scope: ALL
+    benchmark_id: BM_INTL_MICRO_GLOBAL_SMALL
+    assignment_status: ACTIVE
+
+todo:
+  - Add optional industry-specific mappings in a later waypoint.

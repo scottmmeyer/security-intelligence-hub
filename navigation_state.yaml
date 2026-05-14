@@ -1,32 +1,37 @@
-current_waypoint: WP-03.4
+current_waypoint: WP-05C
 current_objective: >
-  Finalize partitioned historical persistence governance by aligning
-  documentation and waypoint state with implemented deterministic Fidelity
-  ingestion, canonical normalization, and persistence verification behavior.
+  Establish temporal snapshot architecture and foundational hardening: atomic
+  current publication, snapshot registries, single-source registry governance,
+  temporal validation hardening, replay mode detection, expanded coverage states,
+  and freshness metadata.
 
 in_scope_items:
-  - Partitioned immutable history contracts for signals and base universe
-  - Current authoritative output contracts under data/current
-  - Append-only index governance for signal_index and universe_index artifacts
-  - Persistence verification philosophy and fail-closed validation semantics
-  - Waypoint and master-plan synchronization with committed Unit 1 scope
-  - Deterministic commit-boundary governance for Unit 2 documentation alignment
+  - Phase A: snapshot_date-partitioned replay history directories
+  - Phase B: analytical_snapshot_registry.csv and replay_snapshot_registry.csv append registries
+  - Phase C: atomic current publication via os.replace() with .tmp/ staging and cleanup
+  - Phase D: single-source YAML registry governance — WP05B_REQUIRED_* constants removed; providers derive from registry
+  - Phase E: temporal validation hardening — 5 new validators (duplicate registry, partial publication, freshness, mode consistency, history sync)
+  - Phase F: ReplayMode enum (HISTORICAL_VALIDATION, CURRENT_RECOMMENDATION, FORWARD_SIMULATION); detect_replay_mode(); replay_mode in ReplaySelection, headers, and CSVs
+  - Phase G: FAILED and STALE added to REPLAY_STATUS_ENUM
+  - Phase H: current_snapshot_metadata.json freshness metadata written to data/current/
+  - Phase I: test_wp05c_temporal_snapshot.py — 23 new tests (94 total, up from 71)
+  - Phase J: governance docs updated (navigation_state.yaml, wdd_log.md)
+  - UI: Snapshot Freshness panel added; replay_mode badge in status line; Phase A history path resolution
 
 out_of_scope_items:
-  - Web scraping or automated provider acquisition logic
+  - Full-universe and top-N stock return replay curves
+  - Rebalance logic, ML ranking, database systems, and workflow orchestration
+  - Intraday market-data ingestion, options, futures, or non-daily frequencies
+  - Polished production dashboard implementation or design-system work
   - Machine learning and predictive modeling pipelines
-  - Dashboards, UI, and external API serving layers
-  - Database persistence and distributed deployment concerns
-  - Portfolio construction, optimization, or execution logic
-  - Sector, industry, factor, and theme benchmark overlays
-  - DAG scheduling and workflow orchestration engines
+  - Real-time API serving and dashboard deployment layers
+  - Portfolio execution, optimization, and order routing logic
   - Distributed workers, async orchestration, and runtime state machines
   - Autonomous runtime governance or recursive control loops
-  - Runtime identity resolution implementation for ticker/corporate events
 
 next_action: >
-  Execute Unit 3 runtime evidence retention decision and staging under governed
-  commit boundaries without mixing cleanup/deprecation scope.
+  Plan WP-05D stock replay curve integration and top-N availability activation
+  while preserving WP-05C temporal snapshot governance contracts.
 
 architectural_boundaries:
   platform_boundary: >
@@ -50,6 +55,15 @@ architectural_boundaries:
   snapshot_boundary: >
     Signal snapshots are append-only historical truth. No overwrite behavior is
     permitted for published run lineage records.
+  replay_boundary: >
+    Replay selection must use start-date analytical universe rows only. Future
+    scores and revised snapshots cannot influence initial basket construction.
+  benchmark_vehicle_boundary: >
+    Benchmark baselines and investable vehicle alternatives are distinct
+    contracts and cannot be conflated in registry definitions or UI semantics.
+  ui_boundary: >
+    Prototype UI reads deterministic replay contracts only and does not
+    introduce backend services, databases, or authentication layers.
   terminology_boundary: >
     Canonical terms must retain deterministic, non-overlapping definitions
     across architecture, governance, and philosophy documentation.

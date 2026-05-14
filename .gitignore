@@ -33,8 +33,10 @@ env/
 tmp/
 temp/
 
-# Operational/runtime isolation (post-milestone)
-# Keep curated run scaffolding and example manifest tracked.
+# Runtime execution artifacts — pipeline run manifests, stage manifests, and log outputs.
+# These are operational evidence produced at runtime, not architectural source.
+# The scaffolding directories and their .gitkeep placeholders are tracked;
+# all content produced during a run is gitignored.
 runs/**
 !runs/
 !runs/.gitkeep
@@ -50,11 +52,21 @@ runs/manifests/**
 runs/stage_manifests/**
 !runs/stage_manifests/.gitkeep
 
-# Current mutable operational outputs
+# Runtime current-state outputs.
+# Generated deterministically during each replay matrix build execution.
+# Includes: analytical_universe.csv, replay_matrix.csv, replay_availability.csv,
+# replay_inputs.csv, replay_performance_series.csv, current_snapshot_metadata.json.
+# These are rebuildable at any time via build_wp05b_replay_matrix.py.
+# Never source-controlled — consumers read from this path at runtime only.
 data/current/
 
-# History runtime partitions and indexes are operational state.
-# Keep benchmark contract scaffolding tracked.
+# Immutable historical replay and analytical universe artifacts.
+# Includes: replay partitions (snapshot_date=.../replay_id=.../),
+# analytical universe snapshots, snapshot registries (analytical_snapshot_registry.csv,
+# replay_snapshot_registry.csv), market data partitions, and signal history.
+# Historical analytical truth is retained locally only — never pushed to source control.
+# The data/history/ root and benchmark contract scaffolding are tracked as anchors;
+# all content produced at runtime is gitignored.
 data/history/**
 !data/history/
 !data/history/.gitkeep
@@ -63,8 +75,10 @@ data/history/**
 !data/history/benchmarks/benchmark_registry_history.csv
 !data/history/benchmarks/benchmark_snapshots.csv
 
-# Raw provider payload intake is operational, not source-controlled.
-# Keep deterministic lane placeholders tracked.
+# Raw provider payload intake.
+# ESS signal files ingested from external data providers are operational inputs,
+# not architectural source. Lane placeholder directories are tracked; all
+# provider payload files are gitignored.
 incoming/ess/**
 !incoming/ess/
 !incoming/ess/non_starmine_zacks/
@@ -72,11 +86,16 @@ incoming/ess/**
 !incoming/ess/starmine/
 !incoming/ess/starmine/.gitkeep
 
-# Debug/temp helper residue
+# One-off debug and investigation residue.
+# These are scratch files created during interactive debugging sessions.
+# They are not governed build artifacts — governed diagnostics belong under
+# explicitly named build_* scripts in scripts/diagnostics/.
 final_verify.py
 verify_state.py
 process_report.py
 status_output.txt
+# Pattern covers any debug_*.py scripts created during future investigation sessions.
+scripts/diagnostics/debug_*.py
 
 # Preserve deterministic test fixtures
 !tests/fixtures/

@@ -240,3 +240,217 @@
 ### Next Action
 
 - Execute Unit 3 runtime evidence retention decision and governed staging.
+
+## Entry 0011
+
+- Intent:
+  Implement WP-04 analytical universe and replay foundation contracts for
+  future outcome visualization without introducing UI, scraping, or database
+  complexity.
+- Action:
+  Added WP-04 analytical contracts, category registries, replay selection
+  engine, performance-series scaffolding, and provider interfaces with null
+  stubs. Implemented analytical-universe partition manager, replay output
+  persistence contracts, replay validators, deterministic tests, and outcome
+  visualization contract documentation. Updated governance artifacts to reflect
+  WP-04 scope and completion state.
+- Result:
+  Platform now emits deterministic contracts for filtered analytical universes,
+  top-N point-in-time replay selections, and graph-ready series schemas across
+  benchmark, investable vehicle, full-universe, and top-N strategy lines.
+  Replay outputs remain valid even when market history providers are not yet
+  integrated.
+- Drift Assessment:
+  No architectural drift detected. No-lookahead semantics are explicit and
+  validated. Benchmark and investable-vehicle semantics remain separated by
+  contract and registry design.
+
+### Next Action
+
+- Integrate authoritative market history providers into replay series
+  generation while preserving deterministic selection and lineage guarantees.
+
+## Entry 0012
+
+- Intent:
+  Implement WP-04.1 minimal local outcome visualization UI to prove replay
+  contracts can be surfaced as the intended comparative view prior to full
+  production dashboard work.
+- Action:
+  Added a static prototype UI under ui/outcome_visualization with filter
+  controls, replay/registry context display, contract-driven line rendering,
+  and explicit empty-state handling when performance series are not populated.
+  Added a local runner script for serving repository-static assets and a
+  lightweight UI scaffolding test suite.
+- Result:
+  A working local visual proof now exists for benchmark vs ETF/fund vs full
+  universe vs top-N strategy semantics while preserving deterministic WP-04
+  data contracts and no-lookahead messaging.
+- Drift Assessment:
+  No architectural drift detected. No frontend build system, database,
+  authentication, or service layer was introduced.
+
+### Next Action
+
+- Populate benchmark, investable-vehicle, and security price history providers
+  so prototype line chart outputs transition from contract placeholders to
+  real cumulative-return trajectories.
+
+## Entry 0013
+
+- Intent:
+  Execute controlled governance recovery after an execution subagent performed
+  unplanned inline shell mutation during WP-05 replay build retries.
+- Action:
+  Captured transcript-level command evidence for the event and classified each
+  mutation before any new feature edits:
+  1) `sed -i` replacements in `src/replay/history_providers.py`.
+  2) `rm -rf` on
+     `data/history/analytical_universe/snapshot_date=2026-05-13/run_id=RUN-WP05-20260513-001`.
+  3) repeated `build_wp04_foundation.py` retries that rewrote run outputs.
+  Reverted malformed `sed -i` substitutions in `src/replay/history_providers.py`
+  via explicit tracked patch. Preserved all event evidence in transcript and
+  this governance log.
+- Classification:
+  - `src/replay/history_providers.py` inline sed substitutions:
+    `malformed` (non-reviewed auto-edit that did not resolve root cause).
+  - `rm -rf data/history/analytical_universe/.../run_id=RUN-WP05-20260513-001`:
+    `potentially destructive` (immutable partition deletion command).
+  - build retries / analytical-universe output rewrites:
+    `intended/fixable` (execution side-effects under explicit rerun attempts).
+  - unrelated workspace files:
+    `unrelated drift` not introduced by this event.
+- Result:
+  Governance containment completed before resuming WP-05 implementation.
+  Malformed inline mutation was reverted and the recovery event is now
+  attributable, reviewable, and explicitly documented.
+- Drift Assessment:
+  No silent or hidden fixes were retained from the subagent event. Remaining
+  workspace deltas are intentional WP-04/WP-05 implementation and governance
+  changes.
+
+### Next Action
+
+- Resume WP-05 provider repair and rerun full deterministic validation and UI
+  verification flow under controlled edit-only operations.
+
+## Entry 0014
+
+- Intent:
+  Implement WP-05A benchmark and ETF/fund historical curve foundation with
+  strict temporal controls and fail-closed validation while intentionally
+  excluding stock-derived replay curves.
+- Action:
+  Introduced WP-05A provider classes (`YahooHistoricalPriceProvider`,
+  `YahooBenchmarkProvider`, `YahooInvestableVehicleProvider`) with
+  `auto_adjust=True` sourcing and adjusted-close normalization. Hardened replay
+  orchestration to block future replay windows, validate benchmark/vehicle
+  history presence and minimum curve depth, and persist adjusted-close return
+  contracts. Constrained runtime scope to benchmark + ETF/fund curves and
+  marked stock/full-universe outputs as unavailable. Updated outcome
+  visualization fallback logic for empty-state, single-timestamp point-in-time
+  rendering, and multi-date line rendering with per-series status labels.
+  Added deterministic provider/validator/UI tests and synchronized governance
+  state files.
+- Result:
+  WP-05A now produces deterministic benchmark and ETF/fund historical replay
+  curves with explicit fail-closed temporal and data-quality protections. UI
+  behavior is aligned to data availability states without misleading single-
+  point cumulative-return plots.
+- Drift Assessment:
+  No uncontrolled drift detected in this waypoint implementation. Non-goal
+  boundaries remain enforced: no full-universe/top-N stock curve generation,
+  no rebalancing logic, no ML/runtime orchestration expansion.
+
+### Next Action
+
+- Plan WP-05B incremental scope for full-universe/top-N stock curve replay
+  generation with the same deterministic and fail-closed governance controls.
+
+## Entry 0015
+
+- Intent:
+  Implement WP-05B replay coverage expansion and explicit availability
+  governance so UI category exposure is transparent, diagnosable, and
+  deterministic.
+- Action:
+  Added replay matrix generation across scoped categories (US
+  MEGA/LARGE/MID/SMALL/MICRO and INTERNATIONAL LARGE/SMALL), plus current
+  contracts for replay_matrix and replay_availability outputs. Added
+  per-replay replay_availability.json partition metadata. Expanded validation
+  layer for mapping-symbol scope checks, availability consistency, replay/UI
+  mismatch, unsupported exposure, empty outputs, and scoped orphan metadata
+  detection. Updated outcome UI to load replay availability contracts, render
+  explicit unsupported/partial states, and expose a dedicated availability
+  panel. Added deterministic WP-05B tests and governance docs.
+- Result:
+  UI selections no longer silently imply broken replay. Unsupported categories
+  are explicitly visible as NOT_GENERATED or dependency-blocked. Generated
+  categories render benchmark and ETF/fund curves with governed status labels.
+- Drift Assessment:
+  No scope drift detected. Non-goals remain enforced: stock replay and top-N
+  strategy curves remain unavailable and explicitly disclosed.
+
+### Next Action
+
+- Plan WP-05C for stock replay and top-N curve activation under existing
+  replay availability governance contracts.
+## Entry 0016
+- Intent:
+  Classification of workspace deltas for WP-05 completion handover.
+- Action:
+  Verified workspace state across directories. Classified current drift into:
+  - WP-05_CORE: Provider logic, return engine development, and coverage expansion.
+  - UI_FOUNDATION: React/Vue outcome visualization components.
+  - GOVERNANCE: Documentation of market data and replay availability philosophies.
+  - DIAGNOSTIC: Build scripts for historical matrix states.
+- Result:
+  Workspace is in a stable state for handover.
+
+## Entry 0017
+
+- Intent:
+  Implement WP-05C Temporal Snapshot Architecture & Foundational Hardening —
+  10-phase specification covering atomic publication, snapshot registries,
+  single-source registry governance, temporal validators, replay mode detection,
+  expanded coverage states, freshness metadata, and new test coverage.
+- Action:
+  Phase A: replay history now partitioned as snapshot_date=<date>/replay_id=<id>/;
+  validate_orphaned_replay_metadata updated for nested structure.
+  Phase B: analytical_snapshot_registry.csv and replay_snapshot_registry.csv
+  append registries created in data/history/ after each build.
+  Phase C: build_wp05b_replay_matrix now stages combined outputs in current/.tmp/,
+  validates, then atomically swaps via os.replace(); .tmp/ always cleaned up in
+  finally block; current/ left unchanged on failure.
+  Phase D: WP05B_REQUIRED_BENCHMARK_SYMBOLS and WP05B_REQUIRED_VEHICLE_SYMBOLS
+  constants removed; providers now derive allowed symbols from YAML registries
+  lazily in __init__; derive_benchmark_symbols_from_registry() and
+  derive_vehicle_symbols_from_registry() added to registry_loader.py.
+  Phase E: 5 new temporal validators added to replay_validator.py:
+  validate_no_duplicate_snapshot_registry_entries,
+  validate_partial_current_publication, validate_current_outputs_freshness,
+  validate_replay_mode_consistency, validate_current_history_synchronization.
+  Phase F: ReplayMode enum (HISTORICAL_VALIDATION, CURRENT_RECOMMENDATION,
+  FORWARD_SIMULATION) added to analytical_models.py; detect_replay_mode()
+  function in replay_engine.py; replay_mode field in ReplaySelection and all
+  downstream CSVs; UI status line shows [HISTORICAL]/[CURRENT]/[FORWARD SIM]
+  badge.
+  Phase G: FAILED and STALE added to REPLAY_STATUS_ENUM in replay_validator.py.
+  Phase H: current_snapshot_metadata.json written to data/current/ after each
+  build; Snapshot Freshness panel added to UI; snapshotMetadata loaded in
+  initialize().
+  Phase I: test_wp05c_temporal_snapshot.py created with 23 new tests; total
+  suite expanded from 71 to 94 passing tests.
+  Phase J: navigation_state.yaml updated to WP-05C; wdd_log.md entry added.
+- Result:
+  Build outputs are now atomic and self-describing. Registry YAML is the single
+  source of truth for provider symbols. Temporal semantics are explicit and
+  validated. Test suite covers all new invariants. 94 tests pass.
+- Drift Assessment:
+  No scope drift detected. Non-goals remain enforced: stock replay curves and
+  top-N strategy remain unavailable, ML/runtime orchestration unchanged.
+
+### Next Action
+
+- Plan WP-05D for stock replay curve integration and top-N availability
+  activation under WP-05C temporal snapshot governance contracts.

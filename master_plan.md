@@ -11,7 +11,10 @@
 7. WP-03.2 - COMPLETE
 8. WP-03.4 - COMPLETE
 9. WP-03.5 - COMPLETE
-10. WP-04 - NOT STARTED
+10. WP-04 - COMPLETE
+11. WP-04.1 - COMPLETE
+12. WP-05A - COMPLETE
+13. WP-05B - COMPLETE
 
 ## Waypoint Roadmap
 
@@ -24,7 +27,10 @@
 7. WP-03.2 - Fidelity ESS Adapter And Base Universe Generation
 8. WP-03.4 - Partitioned Historical Persistence And Verification
 9. WP-03.5 - Architecture Hardening And Canonical Terminology Foundation
-10. WP-04 - Security Master Foundation
+10. WP-04 - Analytical Universe And Replay Foundation
+11. WP-04.1 - Outcome Visualization Prototype UI
+12. WP-05A - Benchmark And ETF Historical Curve Foundation
+13. WP-05B - Replay Coverage Expansion And Availability Governance
 
 ## Waypoint Deliverables
 
@@ -73,10 +79,50 @@
   lineage fields, and index integrity
 - ESS stage persistence summaries with explicit pass/fail accounting
 
-### WP-04 - Security Master Foundation
-- Canonical security model enrichment and validation rules
-- Security-type and region classification consistency checks
-- Snapshot-aware market-cap normalization and lineage-aware classification
+### WP-04 - Analytical Universe And Replay Foundation
+- Analytical universe row contract for UI-ready category filtering and replay
+	selection
+- Configurable benchmark-category registry and separate investable-vehicle
+	registry mappings
+- Deterministic point-in-time top-N replay selection scaffolding with explicit
+	no-lookahead semantics
+- Replay performance-series contracts for BENCHMARK, INVESTABLE_VEHICLE,
+	FULL_UNIVERSE, and TOP_N_STRATEGY lines
+- Immutable replay partition outputs and current replay contract exports for
+	future UI graphing
+- Validation and deterministic tests for mapping completeness, replay
+	reproducibility, and series shape contracts
+
+### WP-04.1 - Outcome Visualization Prototype UI
+- Lightweight local UI prototype for replay output visualization
+- Local filter controls for geography, market-cap bucket, industry, timeframe,
+	and top-N strategy size
+- Graph scaffolding for Benchmark, ETF/Fund, Full Universe, and Top-N Strategy
+	lines
+- Explicit empty-state UX when replay contracts exist but performance history
+	series are not yet populated
+- Local static-server runner and usage documentation without heavyweight
+	frontend tooling
+
+### WP-05A - Benchmark And ETF Historical Curve Foundation
+- Yahoo-backed historical providers for benchmark and investable vehicle curves
+- Adjusted-close and cumulative-return persistence contracts for benchmark and
+	ETF/fund outputs
+- Historical replay-window validation that blocks future end-date windows
+- Fail-closed validators for missing history, malformed rows, duplicates, and
+	insufficient curve depth
+- UI fallback behavior for empty-state, single-timestamp point-in-time, and
+	multi-date cumulative line rendering
+- Explicit scope boundary preserving full-universe/top-N stock curves as
+	deferred work
+
+### WP-05B - Replay Coverage Expansion And Availability Governance
+- Replay matrix generation for category-scoped coverage expansion
+- Availability registry publication with explicit replay status contracts
+- Mapping completeness validators for required benchmark and ETF/fund symbols
+- UI availability panel and governed unsupported-category disclosure
+- Replay metadata, availability metadata, and matrix reference persistence
+- Validation/test expansion for replay/UI consistency and coverage governance
 
 ## Success Criteria
 
@@ -97,6 +143,11 @@
 7. WP-04 depends on WP-03 intake contracts and canonical classifications.
 8. WP-04 depends on WP-03.4 persistence integrity and immutable history contracts.
 9. WP-04 depends on WP-03.5 terminology and architecture hardening guardrails.
+10. WP-04.1 depends on WP-04 replay contract outputs and mapping registries.
+11. WP-05A depends on WP-04.1 contract-driven visualization baseline and
+	WP-04 replay selection semantics.
+12. WP-05B depends on WP-05A historical curve foundation and extends category
+  coverage with explicit availability governance.
 
 ## WP-02 Success Criteria
 
