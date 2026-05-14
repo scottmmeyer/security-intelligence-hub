@@ -114,6 +114,8 @@ def normalize_fidelity_ess_file(
                 "market_cap_bucket": market_cap_bucket,
                 "coverage_domain": signal_row.get("coverage_domain"),
                 "starmine_ess_text": signal_row.get("starmine_ess_text") or "",
+                "zacks_rating": "",
+                "ess_zacks_rating": validated_row.get("analyst_rating") or "",
                 "provider": signal_row.get("provider"),
                 "source_file": signal_row.get("source_file"),
                 "snapshot_date": signal_row.get("snapshot_date"),

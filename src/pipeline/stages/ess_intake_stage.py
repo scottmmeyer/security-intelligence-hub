@@ -42,6 +42,22 @@ def _discover_csv_files(base_path: str | Path) -> List[Path]:
     return sorted(p for p in path.glob("*.csv") if p.is_file())
 
 
+def _cleanup_processed_intake_files(
+    discovered: Dict[str, List[Path]],
+) -> tuple[List[str], List[str]]:
+    """Delete successfully processed intake files. Returns (cleaned_paths, failed_paths)."""
+    cleaned: List[str] = []
+    failed: List[str] = []
+    for files in discovered.values():
+        for file_path in files:
+            try:
+                file_path.unlink()
+                cleaned.append(str(file_path))
+            except Exception as exc:
+                failed.append(f"{file_path}: {exc}")
+    return cleaned, failed
+
+
 def _base_row_accounting() -> Dict[str, int]:
     return {
         "raw_rows_discovered": 0,
@@ -394,6 +410,12 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
             ]
         )
 
+        cleaned_files, failed_cleanups = _cleanup_processed_intake_files(discovered)
+        if failed_cleanups:
+            warnings.extend(
+                f"Intake cleanup failed (file not deleted): {msg}" for msg in failed_cleanups
+            )
+
         return StageExecutionOutput(
             status=PipelineStatus.COMPLETE.value,
             warnings=tuple(warnings),
@@ -408,6 +430,8 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
                 ),
                 **{
                     "persistence_verification": "PASSED",
+                    "intake_files_cleaned": str(len(cleaned_files)),
+                    "intake_files_cleanup_failed": str(len(failed_cleanups)),
                     "persisted_signal_rows": str(persistence_result.signal_rows_persisted),
                     "persisted_base_universe_rows": str(persistence_result.base_universe_rows_persisted),
                     "artifact.current_signal_snapshot.path": str(

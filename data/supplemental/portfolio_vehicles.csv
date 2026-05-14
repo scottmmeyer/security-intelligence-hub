@@ -1,0 +1,3 @@
+symbol,vehicle_name,vehicle_type,benchmark_id,market_cap_bucket,geography,total_assets_usd,note
+VO,Vanguard Mid-Cap Index Fund ETF Shares,ETF,BM_US_MID_SP400,MID,US,213762310144,Vanguard Mid-Cap ETF; tracks CRSP US Mid Cap Index; comparable to MDY
+FMCSX,Fidelity Mid-Cap Stock Fund,Mutual Fund,BM_US_MID_SP400,MID,US,8758191104,Fidelity actively-managed mid-cap mutual fund; benchmarked to S&P 400

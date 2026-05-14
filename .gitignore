@@ -86,6 +86,15 @@ incoming/ess/**
 !incoming/ess/starmine/
 !incoming/ess/starmine/.gitkeep
 
+# Fetched signal data from external providers (Zacks, Yahoo, Danelfin).
+# These are runtime artifacts refreshed on demand — not source-controlled.
+# The data/signals/ directory tree is rebuildable by running the fetch_* scripts.
+data/signals/**
+!data/signals/
+
+# Supplemental seed data IS tracked (watchlist, portfolio vehicles).
+# Only runtime signal fetches are excluded above.
+
 # One-off debug and investigation residue.
 # These are scratch files created during interactive debugging sessions.
 # They are not governed build artifacts — governed diagnostics belong under
@@ -96,6 +105,9 @@ process_report.py
 status_output.txt
 # Pattern covers any debug_*.py scripts created during future investigation sessions.
 scripts/diagnostics/debug_*.py
+# Root-level throwaway migration / scratch scripts.
+migrate_zacks.py
+script.py
 
 # Preserve deterministic test fixtures
 !tests/fixtures/

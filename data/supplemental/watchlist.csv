@@ -1,0 +1,5 @@
+symbol,company_name,security_type,geography,market_cap_raw_usd,market_cap_bucket,coverage_domain,starmine_ess_text,ess_zacks_rating,note
+SBS,Companhia de Saneamento Basico do Estado de Sao Paulo,Common Stock,INTERNATIONAL,6500000000,LARGE,WATCHLIST,,,Brazilian water utility ADR on NYSE
+MCB,Metropolitan Commercial Bank,Common Stock,US,550000000,SMALL,WATCHLIST,,,US community bank NYSE listed
+JXN,Jackson Financial Inc,Common Stock,US,7793792000,MID,WATCHLIST,,,Insurance/annuities; not in ESS coverage
+SMR,NuScale Power Corporation,Common Stock,US,4165383168,MID,WATCHLIST,,,Nuclear SMR developer; not in ESS coverage

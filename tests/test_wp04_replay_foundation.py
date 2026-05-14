@@ -185,6 +185,7 @@ def test_analytical_universe_row_creation_and_write(tmp_path: Path) -> None:
         benchmark_registry=benchmark_registry,
         vehicle_registry=vehicle_registry,
         current_root=current_root,
+        watchlist_path=tmp_path / "no_watchlist.csv",  # isolate test from real watchlist
     )
 
     assert len(rows) == 1
