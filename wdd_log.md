@@ -454,3 +454,71 @@
 
 - Plan WP-05D for stock replay curve integration and top-N availability
   activation under WP-05C temporal snapshot governance contracts.
+
+---
+
+## Entry 0018
+
+- Intent:
+  Implement WP-05D Stock Historical Replay Curve Foundation — 11-phase
+  specification activating full-universe and top-N equal-weight stock curves,
+  coverage tracking, evidence summary artifact, UI panels, and governance docs.
+- Action:
+  Phase A: YahooHistoricalPriceProvider.get_batch_prices() and _download_batch()
+  added to history_providers.py; multi-ticker yfinance.download() call with
+  group_by="ticker", handles MultiIndex orientations, per-symbol isolation; _batch_cache
+  per instance; stock_replay_service._fetch_symbol_series() calls batch first,
+  falls back to per-symbol loop.
+  Phase B: _batch_cache added to YahooHistoricalPriceProvider.__init__.
+  Phase C: 5 stock coverage validators added to market_data_validator.py:
+  validate_stock_coverage_status, validate_stock_price_completeness,
+  validate_stock_start_price_presence (±7d tolerance), validate_stock_end_price_presence
+  (±7d tolerance), validate_stock_curve_depth.
+  Phase D: src/replay/stock_replay_service.py created with StockCurveResult frozen
+  dataclass; build_full_universe_curve() — equal-weight composite, coverage tracking,
+  500-symbol cap; _classify_symbol_series, _coverage_status_from_fraction helpers.
+  Phase E: build_top_n_curve() added to stock_replay_service.py — uses frozen
+  selection.selected_symbols basket, coverage threshold 0.80.
+  Phase F: PerformanceSeries.coverage_status field added with default "AVAILABLE";
+  PERFORMANCE_SERIES_HEADERS extended to include coverage_status;
+  _series_from_points() passes coverage_status; build_performance_series() accepts
+  full_universe_curve_result and top_n_curve_result optional kwargs — uses pre-built
+  StockCurveResult if provided, falls back to null-provider path for backward compat.
+  Phase G: build_replay_evidence_summary() and write_replay_evidence_summary()
+  added to replay_engine.py; evidence summary JSON captures all final returns,
+  deltas, coverage status, selected/missing/partial symbols, generated_at_utc.
+  Phase H: UI updated — tryLoadEvidenceSummary(), renderStockCoveragePanel(),
+  renderReturnComparisonTable() added to app.js; Stock Coverage panel (5th meta panel)
+  and #returnComparisonTable section added to index.html; CSS for 5-column meta-grid
+  and return-comparison table styles added.
+  Phase I: foundation_service.py wired — stock_replay_service imported; stock curves
+  built after vehicle returns; passed to build_performance_series(); evidence summary
+  written via build_replay_evidence_summary() + write_replay_evidence_summary();
+  replay_evidence_summary_path added to REPLAY_MATRIX_HEADERS and matrix rows;
+  stock_replay_available and top_n_available flags derived from series_types in
+  performance series; security_prices.csv added to _CURRENT_ATOMIC_OUTPUT_FILES;
+  evidence_summary_path_str initialized to "" before try/except.
+  Phase J: tests/test_wp05d_stock_replay_curves.py created with 22 new tests covering:
+  adjusted-close return calc, symbol classification, coverage status logic, full-universe
+  curve (available/partial/below-threshold/empty), top-N curve, no-lookahead,
+  performance series UI contract, evidence summary structure and disk write,
+  stock validators, frozen dataclass immutability.
+  Phase K: docs/STOCK_REPLAY_CURVE_PHILOSOPHY.md and docs/REPLAY_EVIDENCE_SUMMARY_CONTRACT.md
+  created; navigation_state.yaml updated to WP-05D; wdd_log.md entry added.
+- Result:
+  FULL_UNIVERSE and TOP_N_STRATEGY performance series are now computed from real
+  stock price history. Coverage is tracked per curve and surfaced in the UI via
+  the Stock Coverage panel and Return Comparison table. Evidence summary JSON
+  artifact written to each replay partition. replay_matrix.csv carries
+  replay_evidence_summary_path column. stock_replay_available and top_n_available
+  availability flags now reflect actual data rather than hardcoded False.
+- Drift Assessment:
+  No scope drift detected. All 11 phases delivered as specified. Non-goals remain
+  enforced: no rebalancing, ML ranking, database systems, runtime orchestration,
+  intraday data, options/futures, or portfolio execution.
+
+### Next Action
+
+- Run full test suite (pytest tests/ -q --tb=short) to verify all WP-05D tests
+  pass alongside existing 94 tests. Validate architecture consistency.
+  Do not commit until validation passes.

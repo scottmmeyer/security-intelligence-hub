@@ -1,13 +1,13 @@
-"""Deterministic replay selection and performance-series scaffolding for WP-04/WP-05A."""
+"""Deterministic replay selection and performance-series scaffolding for WP-04/WP-05A/WP-05D."""
 
 from __future__ import annotations
 
 import csv
 import json
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from src.models.analytical_models import (
     AnalyticalUniverseRow,
@@ -50,6 +50,7 @@ PERFORMANCE_SERIES_HEADERS = [
     "value",
     "cumulative_return",
     "source",
+    "coverage_status",
 ]
 
 
@@ -171,6 +172,7 @@ def _series_from_points(
     series_type: PerformanceSeriesType,
     points: Sequence[PricePoint],
     source: str,
+    coverage_status: str = "AVAILABLE",
 ) -> List[PerformanceSeries]:
     if not points:
         return []
@@ -192,6 +194,7 @@ def _series_from_points(
                 value=round(float(point.value), 8),
                 cumulative_return=round(float(cumulative), 8),
                 source=source,
+                coverage_status=coverage_status,
             )
         )
     return output
@@ -206,8 +209,16 @@ def build_performance_series(
     security_price_provider: SecurityPriceHistoryProvider | None = None,
     benchmark_provider: BenchmarkHistoryProvider | None = None,
     vehicle_provider: InvestableVehicleHistoryProvider | None = None,
+    full_universe_curve_result: Any | None = None,
+    top_n_curve_result: Any | None = None,
 ) -> List[PerformanceSeries]:
-    """Build replay performance series lines using provider interfaces or null stubs."""
+    """Build replay performance series lines using provider interfaces or null stubs.
+
+    WP-05D: If ``full_universe_curve_result`` or ``top_n_curve_result`` are
+    provided (StockCurveResult instances from stock_replay_service), their
+    pre-built points are used directly and the security_price_provider is not
+    called for those series.
+    """
 
     security_provider = security_price_provider or NullSecurityPriceHistoryProvider()
     benchmark_history = benchmark_provider or NullBenchmarkHistoryProvider()
@@ -220,21 +231,6 @@ def build_performance_series(
         investable_vehicle_symbol, selection.start_date, selection.end_date
     )
 
-    universe_symbols = sorted({row.symbol for row in full_universe_rows})
-    top_n_symbols = list(selection.selected_symbols)
-
-    universe_symbol_series: Dict[str, Sequence[PricePoint]] = {
-        symbol: security_provider.get_symbol_series(symbol, selection.start_date, selection.end_date)
-        for symbol in universe_symbols
-    }
-    top_n_symbol_series: Dict[str, Sequence[PricePoint]] = {
-        symbol: security_provider.get_symbol_series(symbol, selection.start_date, selection.end_date)
-        for symbol in top_n_symbols
-    }
-
-    full_universe_points = equal_weighted_mean_series(universe_symbol_series)
-    top_n_points = equal_weighted_mean_series(top_n_symbol_series)
-
     series: List[PerformanceSeries] = []
     series.extend(
         _series_from_points(
@@ -243,6 +239,7 @@ def build_performance_series(
             series_type=PerformanceSeriesType.BENCHMARK,
             points=benchmark_points,
             source="benchmark_history_provider",
+            coverage_status="AVAILABLE",
         )
     )
     series.extend(
@@ -252,26 +249,69 @@ def build_performance_series(
             series_type=PerformanceSeriesType.INVESTABLE_VEHICLE,
             points=vehicle_points,
             source="investable_vehicle_history_provider",
+            coverage_status="AVAILABLE",
         )
     )
-    series.extend(
-        _series_from_points(
-            series_id=f"{selection.replay_id}:FULL_UNIVERSE",
-            replay_id=selection.replay_id,
-            series_type=PerformanceSeriesType.FULL_UNIVERSE,
-            points=full_universe_points,
-            source="security_price_history_provider:equal_weighted",
+
+    # FULL_UNIVERSE — prefer pre-built stock curve result
+    if full_universe_curve_result is not None and full_universe_curve_result.points:
+        series.extend(
+            _series_from_points(
+                series_id=f"{selection.replay_id}:FULL_UNIVERSE",
+                replay_id=selection.replay_id,
+                series_type=PerformanceSeriesType.FULL_UNIVERSE,
+                points=list(full_universe_curve_result.points),
+                source="stock_replay_service:equal_weighted",
+                coverage_status=full_universe_curve_result.coverage_status,
+            )
         )
-    )
-    series.extend(
-        _series_from_points(
-            series_id=f"{selection.replay_id}:TOP_N_STRATEGY",
-            replay_id=selection.replay_id,
-            series_type=PerformanceSeriesType.TOP_N_STRATEGY,
-            points=top_n_points,
-            source="security_price_history_provider:equal_weighted_hold",
+    else:
+        universe_symbols = sorted({row.symbol for row in full_universe_rows})
+        universe_symbol_series: Dict[str, Sequence[PricePoint]] = {
+            symbol: security_provider.get_symbol_series(symbol, selection.start_date, selection.end_date)
+            for symbol in universe_symbols
+        }
+        full_universe_points = equal_weighted_mean_series(universe_symbol_series)
+        series.extend(
+            _series_from_points(
+                series_id=f"{selection.replay_id}:FULL_UNIVERSE",
+                replay_id=selection.replay_id,
+                series_type=PerformanceSeriesType.FULL_UNIVERSE,
+                points=full_universe_points,
+                source="security_price_history_provider:equal_weighted",
+                coverage_status="AVAILABLE",
+            )
         )
-    )
+
+    # TOP_N_STRATEGY — prefer pre-built stock curve result
+    top_n_symbols = list(selection.selected_symbols)
+    if top_n_curve_result is not None and top_n_curve_result.points:
+        series.extend(
+            _series_from_points(
+                series_id=f"{selection.replay_id}:TOP_N_STRATEGY",
+                replay_id=selection.replay_id,
+                series_type=PerformanceSeriesType.TOP_N_STRATEGY,
+                points=list(top_n_curve_result.points),
+                source="stock_replay_service:equal_weighted_hold",
+                coverage_status=top_n_curve_result.coverage_status,
+            )
+        )
+    else:
+        top_n_symbol_series: Dict[str, Sequence[PricePoint]] = {
+            symbol: security_provider.get_symbol_series(symbol, selection.start_date, selection.end_date)
+            for symbol in top_n_symbols
+        }
+        top_n_points = equal_weighted_mean_series(top_n_symbol_series)
+        series.extend(
+            _series_from_points(
+                series_id=f"{selection.replay_id}:TOP_N_STRATEGY",
+                replay_id=selection.replay_id,
+                series_type=PerformanceSeriesType.TOP_N_STRATEGY,
+                points=top_n_points,
+                source="security_price_history_provider:equal_weighted_hold",
+                coverage_status="AVAILABLE",
+            )
+        )
 
     return sorted(series, key=lambda item: (item.series_type, item.date, item.series_id))
 
@@ -367,7 +407,7 @@ def persist_replay_outputs(
                 f"Selected symbols: {', '.join(selection.selected_symbols) if selection.selected_symbols else 'NONE'}",
                 f"Performance rows written: {len(series_rows)}",
                 "",
-                "WP-05C status: benchmark and ETF/fund curves available; stock-derived curves pending.",
+                "WP-05D: stock-derived FULL_UNIVERSE and TOP_N_STRATEGY curves enabled.",
             ]
         ),
         encoding="utf-8",
@@ -381,3 +421,99 @@ def persist_replay_outputs(
         "replay_metadata_path": str(replay_metadata_path),
         "replay_report_path": str(replay_report_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase G — Replay evidence summary (WP-05D)
+# ---------------------------------------------------------------------------
+
+def build_replay_evidence_summary(
+    *,
+    selection: ReplaySelection,
+    benchmark_symbol: str,
+    investable_vehicle_symbol: str,
+    full_universe_symbol_count: int,
+    full_universe_curve_result: Any | None,
+    top_n_curve_result: Any | None,
+    performance_series: Sequence[PerformanceSeries],
+) -> Dict[str, Any]:
+    """Build the replay_evidence_summary.json payload.
+
+    Captures all quantitative outcomes and coverage metadata in one artifact so
+    downstream consumers can understand strategy vs benchmark/vehicle performance
+    without parsing the full performance series CSV.
+
+    Returns a dict suitable for json.dumps().
+    """
+
+    def _last_cumulative_return(series_type: str) -> float | None:
+        rows = [r for r in performance_series if r.series_type == series_type]
+        if not rows:
+            return None
+        ordered = sorted(rows, key=lambda r: r.date)
+        return round(float(ordered[-1].cumulative_return), 8)
+
+    benchmark_final = _last_cumulative_return("BENCHMARK")
+    vehicle_final = _last_cumulative_return("INVESTABLE_VEHICLE")
+    universe_final = _last_cumulative_return("FULL_UNIVERSE")
+    top_n_final = _last_cumulative_return("TOP_N_STRATEGY")
+
+    def _delta(a: float | None, b: float | None) -> float | None:
+        if a is None or b is None:
+            return None
+        return round(a - b, 8)
+
+    # Aggregate coverage status across both stock curves
+    fu_status = full_universe_curve_result.coverage_status if full_universe_curve_result else "FAILED"
+    tn_status = top_n_curve_result.coverage_status if top_n_curve_result else "FAILED"
+
+    statuses = {fu_status, tn_status}
+    if "FAILED" in statuses or "MISSING_MARKET_DATA" in statuses:
+        overall_coverage = "FAILED"
+    elif "PARTIAL" in statuses or "INSUFFICIENT_HISTORY" in statuses:
+        overall_coverage = "PARTIAL"
+    else:
+        overall_coverage = "AVAILABLE"
+
+    summary: Dict[str, Any] = {
+        "replay_id": selection.replay_id,
+        "replay_mode": selection.replay_mode,
+        "start_date": selection.start_date,
+        "end_date": selection.end_date,
+        "geography": selection.filter_geography,
+        "market_cap_bucket": selection.filter_market_cap_bucket,
+        "industry": selection.filter_industry,
+        "benchmark_symbol": benchmark_symbol,
+        "investable_vehicle_symbol": investable_vehicle_symbol,
+        "full_universe_symbol_count": full_universe_symbol_count,
+        "top_n": selection.top_n,
+        "selected_symbols": list(selection.selected_symbols),
+        "missing_price_symbols": list(
+            (full_universe_curve_result.symbols_missing if full_universe_curve_result else [])
+        ),
+        "partial_price_symbols": list(
+            (full_universe_curve_result.symbols_insufficient if full_universe_curve_result else [])
+        ),
+        "benchmark_final_return": benchmark_final,
+        "investable_vehicle_final_return": vehicle_final,
+        "full_universe_final_return": universe_final,
+        "top_n_strategy_final_return": top_n_final,
+        "strategy_vs_benchmark_delta": _delta(top_n_final, benchmark_final),
+        "strategy_vs_vehicle_delta": _delta(top_n_final, vehicle_final),
+        "full_universe_coverage_status": fu_status,
+        "top_n_coverage_status": tn_status,
+        "coverage_status": overall_coverage,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    return summary
+
+
+def write_replay_evidence_summary(
+    *,
+    replay_dir: Path,
+    summary: Dict[str, Any],
+) -> Path:
+    """Write replay_evidence_summary.json into the replay partition directory."""
+    evidence_path = replay_dir / "replay_evidence_summary.json"
+    evidence_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return evidence_path

@@ -1,4 +1,4 @@
-"""WP-05A orchestration service for benchmark and ETF historical curve foundations."""
+"""WP-05A/WP-05D orchestration service for benchmark, ETF and stock historical curve foundations."""
 
 from __future__ import annotations
 
@@ -42,8 +42,16 @@ from src.replay.replay_engine import (
     PERFORMANCE_SERIES_HEADERS,
     REPLAY_SELECTION_HEADERS,
     build_performance_series,
+    build_replay_evidence_summary,
     persist_replay_outputs,
     select_top_n_replay,
+    write_replay_evidence_summary,
+)
+from src.replay.stock_replay_service import (
+    FULL_UNIVERSE_COVERAGE_THRESHOLD,
+    TOP_N_COVERAGE_THRESHOLD,
+    build_full_universe_curve,
+    build_top_n_curve,
 )
 from src.validation.replay_validator import (
     validate_analytical_universe_required_fields,
@@ -97,6 +105,7 @@ REPLAY_MATRIX_HEADERS = [
     "replay_series_path",
     "replay_metadata_path",
     "replay_availability_path",
+    "replay_evidence_summary_path",
     "generated_at_utc",
 ]
 
@@ -133,6 +142,7 @@ _CURRENT_ATOMIC_OUTPUT_FILES = [
     "replay_matrix.csv",
     "replay_inputs.csv",
     "replay_performance_series.csv",
+    "security_prices.csv",
 ]
 
 # Phase B: snapshot registry headers
@@ -439,6 +449,36 @@ def build_wp04_foundation(
         raise ValueError("WP-05 foundation blocked by vehicle return errors: " + "; ".join(vehicle_errors))
     vehicle_return_persistence = persist_investable_vehicle_returns(rows=vehicle_return_rows)
 
+    # Phase D/E: Build stock curves (WP-05D)
+    # Wrapped in try/except: stock curve failures must NOT prevent BENCHMARK and
+    # INVESTABLE_VEHICLE series from being written.  Any exception degrades the
+    # stock curve to None (null-provider fallback) and records a warning.
+    full_universe_curve_result = None
+    top_n_curve_result = None
+    if include_stock_curves:
+        try:
+            full_universe_curve_result = build_full_universe_curve(
+                universe_rows=filtered_rows,
+                start_date=replay_start,
+                end_date=replay_end,
+                provider=shared_historical_provider,
+                filter_geography=selection.filter_geography,
+                filter_market_cap_bucket=selection.filter_market_cap_bucket,
+                filter_industry=selection.filter_industry,
+                coverage_threshold=FULL_UNIVERSE_COVERAGE_THRESHOLD,
+                max_symbols=500,
+            )
+        except Exception as _fu_exc:
+            coverage_warnings.append(f"FULL_UNIVERSE curve build failed (degraded to null): {_fu_exc}")
+        try:
+            top_n_curve_result = build_top_n_curve(
+                selection=selection,
+                provider=shared_historical_provider,
+                coverage_threshold=TOP_N_COVERAGE_THRESHOLD,
+            )
+        except Exception as _tn_exc:
+            coverage_warnings.append(f"TOP_N_STRATEGY curve build failed (degraded to null): {_tn_exc}")
+
     performance_rows = build_performance_series(
         selection=selection,
         full_universe_rows=filtered_rows,
@@ -447,6 +487,8 @@ def build_wp04_foundation(
         security_price_provider=resolved_security_provider,
         benchmark_provider=resolved_benchmark_provider,
         vehicle_provider=resolved_vehicle_provider,
+        full_universe_curve_result=full_universe_curve_result if include_stock_curves else None,
+        top_n_curve_result=top_n_curve_result if include_stock_curves else None,
     )
 
     performance_errors = validate_performance_series_shape(
@@ -473,6 +515,20 @@ def build_wp04_foundation(
         investable_vehicle_symbol=vehicle.symbol,
     )
 
+    # Phase G: write evidence summary into the replay partition directory
+    evidence_summary = build_replay_evidence_summary(
+        selection=selection,
+        benchmark_symbol=benchmark.symbol_or_index,
+        investable_vehicle_symbol=vehicle.symbol,
+        full_universe_symbol_count=len({row.symbol for row in filtered_rows}),
+        full_universe_curve_result=full_universe_curve_result if include_stock_curves else None,
+        top_n_curve_result=top_n_curve_result if include_stock_curves else None,
+        performance_series=performance_rows,
+    )
+    replay_dir = Path(str(output_paths["replay_metadata_path"])).parent
+    evidence_path = write_replay_evidence_summary(replay_dir=replay_dir, summary=evidence_summary)
+    output_paths["replay_evidence_summary_path"] = str(evidence_path)
+
     return {
         "written_analytical_universe_rows": written_rows,
         "selection": asdict(selection),
@@ -480,6 +536,10 @@ def build_wp04_foundation(
         "benchmark_id": benchmark.benchmark_id,
         "vehicle_id": vehicle.vehicle_id,
         "coverage_warnings": coverage_warnings,
+        "stock_curves": {
+            "full_universe_status": full_universe_curve_result.coverage_status if include_stock_curves and full_universe_curve_result else "NOT_REQUESTED",
+            "top_n_status": top_n_curve_result.coverage_status if include_stock_curves and top_n_curve_result else "NOT_REQUESTED",
+        },
         "market_data_persistence": {
             "security_prices": security_price_persistence,
             "benchmark_returns": benchmark_return_persistence,
@@ -555,6 +615,8 @@ def build_wp05b_replay_matrix(
             replay_generated = False
             cat_replay_id = ""
             cat_replay_mode = "HISTORICAL_VALIDATION"
+            stock_replay_available_flag = False
+            top_n_available_flag = False
 
             try:
                 benchmark, vehicle = resolve_category_mapping(
@@ -596,7 +658,7 @@ def build_wp05b_replay_matrix(
                         historical_price_provider=historical_price_provider,
                         benchmark_return_provider=benchmark_return_provider,
                         investable_vehicle_return_provider=investable_vehicle_return_provider,
-                        include_stock_curves=False,
+                        include_stock_curves=True,
                     )
 
                     output_paths = result["output_paths"]
@@ -610,6 +672,8 @@ def build_wp05b_replay_matrix(
                     series_types = {str(row.get("series_type", "")).upper() for row in replay_series_rows}
                     benchmark_available = "BENCHMARK" in series_types
                     vehicle_available = "INVESTABLE_VEHICLE" in series_types
+                    stock_replay_available_flag = "FULL_UNIVERSE" in series_types
+                    top_n_available_flag = "TOP_N_STRATEGY" in series_types
                     replay_generated = bool(replay_series_rows)
 
                     if replay_generated and benchmark_available and vehicle_available:
@@ -623,7 +687,12 @@ def build_wp05b_replay_matrix(
                         missing_deps.append("Benchmark curve unavailable.")
                     if not vehicle_available:
                         missing_deps.append("ETF/fund curve unavailable.")
+                    if not stock_replay_available_flag:
+                        missing_deps.append("Full-universe stock curve unavailable.")
+                    if not top_n_available_flag:
+                        missing_deps.append("Top-N strategy curve unavailable.")
 
+                    evidence_summary_path_str = output_paths.get("replay_evidence_summary_path", "")
                     replay_dir = Path(str(output_paths["replay_metadata_path"])).parent
                     replay_availability_payload = {
                         "replay_id": cat_replay_id,
@@ -632,8 +701,8 @@ def build_wp05b_replay_matrix(
                         "industry": industry,
                         "benchmark_available": benchmark_available,
                         "vehicle_available": vehicle_available,
-                        "stock_replay_available": False,
-                        "top_n_available": False,
+                        "stock_replay_available": stock_replay_available_flag,
+                        "top_n_available": top_n_available_flag,
                         "replay_generated": replay_generated,
                         "replay_status": cat_status,
                         "missing_dependencies": " | ".join(missing_deps),
@@ -659,12 +728,14 @@ def build_wp05b_replay_matrix(
                             "replay_series_path": output_paths["replay_series_path"],
                             "replay_metadata_path": output_paths["replay_metadata_path"],
                             "replay_availability_path": str(replay_availability_path),
+                            "replay_evidence_summary_path": evidence_summary_path_str,
                             "generated_at_utc": generated_at,
                         }
                     )
                 except Exception as exc:
                     cat_status = _classify_replay_failure(str(exc))
                     missing_deps.append(str(exc))
+                    evidence_summary_path_str = ""
 
             availability_rows.append(
                 {
@@ -677,8 +748,8 @@ def build_wp05b_replay_matrix(
                     "vehicle_available": _as_bool_text(
                         vehicle_mapped and cat_status in {"AVAILABLE", "PARTIAL"}
                     ),
-                    "stock_replay_available": _as_bool_text(False),
-                    "top_n_available": _as_bool_text(False),
+                    "stock_replay_available": _as_bool_text(stock_replay_available_flag if replay_generated else False),
+                    "top_n_available": _as_bool_text(top_n_available_flag if replay_generated else False),
                     "replay_generated": _as_bool_text(replay_generated),
                     "replay_status": cat_status,
                     "missing_dependencies": " | ".join(missing_deps),
@@ -703,8 +774,8 @@ def build_wp05b_replay_matrix(
                         "vehicle_available": _as_bool_text(
                             vehicle_mapped and cat_status in {"AVAILABLE", "PARTIAL"}
                         ),
-                        "stock_replay_available": _as_bool_text(False),
-                        "top_n_available": _as_bool_text(False),
+                        "stock_replay_available": _as_bool_text(stock_replay_available_flag if replay_generated else False),
+                        "top_n_available": _as_bool_text(top_n_available_flag if replay_generated else False),
                         "replay_status": cat_status,
                         "replay_mode": cat_replay_mode,
                         "generated_at_utc": generated_at,

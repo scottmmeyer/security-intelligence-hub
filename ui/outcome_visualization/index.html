@@ -165,8 +165,34 @@
       .meta-grid {
         margin-top: 14px;
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
         gap: 12px;
+      }
+
+      .return-comparison-section {
+        margin-top: 14px;
+      }
+
+      table.return-comparison {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+
+      table.return-comparison th,
+      table.return-comparison td {
+        border: 1px solid #d9cfc5;
+        padding: 6px 10px;
+        text-align: left;
+      }
+
+      table.return-comparison thead th {
+        background: #f3ede4;
+        font-weight: 600;
+      }
+
+      table.return-comparison tbody tr:nth-child(even) {
+        background: #faf7f3;
       }
 
       pre {
@@ -187,7 +213,7 @@
         }
 
         .meta-grid {
-          grid-template-columns: 1fr;
+          grid-template-columns: 1fr 1fr;
         }
       }
     </style>
@@ -262,6 +288,8 @@
           <div id="statusBox" class="status">Loading replay contracts...</div>
         </div>
 
+        <div id="returnComparisonTable" class="return-comparison-section"></div>
+
         <div class="meta-grid">
           <div class="panel">
             <h3 style="margin-top: 0; margin-bottom: 8px">Snapshot Freshness</h3>
@@ -278,6 +306,10 @@
           <div class="panel">
             <h3 style="margin-top: 0; margin-bottom: 8px">Registry Snapshot</h3>
             <pre id="registryMeta"></pre>
+          </div>
+          <div class="panel">
+            <h3 style="margin-top: 0; margin-bottom: 8px">Stock Coverage</h3>
+            <pre id="stockCoverageMeta"></pre>
           </div>
         </div>
       </section>

@@ -484,6 +484,75 @@ async function tryLoadReplayMetadata(replayId) {
   }
 }
 
+async function tryLoadEvidenceSummary(matrixRow) {
+  if (!matrixRow) return null;
+  const rawPath = matrixRow.replay_evidence_summary_path;
+  if (!rawPath) return null;
+  const path = rawPath.replace(/^\/?(.*)/,  "/" + "$1");
+  try {
+    const text = await fetchText(path);
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function renderStockCoveragePanel(evidenceSummary) {
+  const panel = document.getElementById("stockCoverageMeta");
+  if (!panel) return;
+  if (!evidenceSummary) {
+    panel.textContent = "Stock coverage data not available.";
+    return;
+  }
+  const selected = Array.isArray(evidenceSummary.selected_symbols)
+    ? evidenceSummary.selected_symbols.join(", ") || "None"
+    : "—";
+  const missing = Array.isArray(evidenceSummary.missing_price_symbols) && evidenceSummary.missing_price_symbols.length
+    ? evidenceSummary.missing_price_symbols.join(", ")
+    : "None";
+  const partial = Array.isArray(evidenceSummary.partial_price_symbols) && evidenceSummary.partial_price_symbols.length
+    ? evidenceSummary.partial_price_symbols.join(", ")
+    : "None";
+  panel.textContent = [
+    `Coverage Status : ${evidenceSummary.coverage_status || "—"}`,
+    `Full-Universe : ${evidenceSummary.full_universe_coverage_status || "—"}`,
+    `Top-N : ${evidenceSummary.top_n_coverage_status || "—"}`,
+    `Universe Size  : ${evidenceSummary.full_universe_symbol_count ?? "—"}`,
+    `Top N          : ${evidenceSummary.top_n ?? "—"}`,
+    `Selected       : ${selected}`,
+    `Missing Prices : ${missing}`,
+    `Partial Prices : ${partial}`,
+  ].join("\n");
+}
+
+function renderReturnComparisonTable(evidenceSummary) {
+  const container = document.getElementById("returnComparisonTable");
+  if (!container) return;
+  if (!evidenceSummary) {
+    container.innerHTML = "<p>Return comparison unavailable — evidence summary not found.</p>";
+    return;
+  }
+  const fmt = (v) => (v === null || v === undefined) ? "—" : (Number(v) * 100).toFixed(2) + "%";
+  const rows = [
+    ["Benchmark", fmt(evidenceSummary.benchmark_final_return), "—"],
+    ["ETF / Fund (Vehicle)", fmt(evidenceSummary.investable_vehicle_final_return), "—"],
+    ["Full Universe (Equal Weight)", fmt(evidenceSummary.full_universe_final_return), "—"],
+    [
+      `Top-N Strategy (N=${evidenceSummary.top_n ?? "?"})`,
+      fmt(evidenceSummary.top_n_strategy_final_return),
+      fmt(evidenceSummary.strategy_vs_benchmark_delta) + " vs Benchmark"
+        + (evidenceSummary.strategy_vs_vehicle_delta != null
+          ? " / " + fmt(evidenceSummary.strategy_vs_vehicle_delta) + " vs Vehicle"
+          : ""),
+    ],
+  ];
+  const thead = `<thead><tr><th>Series</th><th>Cumulative Return</th><th>Delta</th></tr></thead>`;
+  const tbody = "<tbody>" + rows.map(([name, ret, delta]) =>
+    `<tr><td>${name}</td><td>${ret}</td><td>${delta}</td></tr>`
+  ).join("") + "</tbody>";
+  container.innerHTML = `<table class="return-comparison">${thead}${tbody}</table>`;
+}
+
 async function render() {
   const renderId = ++state.renderEpoch;
   const isStale = () => renderId !== state.renderEpoch;
@@ -574,6 +643,20 @@ async function render() {
   if (isStale()) {
     return;
   }
+
+  // Phase H (WP-05D): load replay_evidence_summary.json from partition dir.
+  // Wrapped defensively: evidence summary failures must never block chart rendering.
+  let evidenceSummary = null;
+  try {
+    evidenceSummary = await tryLoadEvidenceSummary(replayMatrixRow);
+    if (isStale()) {
+      return;
+    }
+  } catch {
+    // ignore — evidence summary is enhancement-only
+  }
+  try { renderStockCoveragePanel(evidenceSummary); } catch { /* non-fatal */ }
+  try { renderReturnComparisonTable(evidenceSummary); } catch { /* non-fatal */ }
   // Phase F: extract replay_mode from replay_inputs row
   const replayInputRow = state.replayInputs.find((r) => String(r.replay_id || "") === replayId);
   const replayMode = String(

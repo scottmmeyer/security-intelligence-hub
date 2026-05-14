@@ -111,13 +111,19 @@ class NullInvestableVehicleHistoryProvider:
 
 
 class YahooHistoricalPriceProvider(HistoricalPriceProvider, SecurityPriceHistoryProvider):
-    """Yahoo-style daily history provider with deterministic row conversion."""
+    """Yahoo-style daily history provider with deterministic row conversion.
+
+    Supports both single-symbol and multi-symbol (batch) price retrieval.
+    Batch download is preferred for FULL_UNIVERSE and TOP_N_STRATEGY curve
+    building to minimise round-trips to Yahoo Finance.
+    """
 
     SOURCE_PROVIDER = "YAHOO_FINANCE"
 
     def __init__(self) -> None:
         self._series_cache: Dict[tuple[str, str, str], List[PricePoint]] = {}
         self._price_cache: Dict[tuple[str, str, str, str], List[HistoricalPriceRow]] = {}
+        self._batch_cache: Dict[tuple[tuple[str, ...], str, str], Dict[str, List[PricePoint]]] = {}
 
     def get_symbol_series(self, symbol: str, start_date: str, end_date: str) -> Sequence[PricePoint]:
         cache_key = (symbol.upper(), start_date, end_date)
@@ -254,6 +260,123 @@ class YahooHistoricalPriceProvider(HistoricalPriceProvider, SecurityPriceHistory
             )
 
         return rows
+
+    def get_batch_prices(
+        self,
+        symbols: Sequence[str],
+        start_date: str,
+        end_date: str,
+    ) -> Dict[str, List[PricePoint]]:
+        """Download adjusted-close series for multiple symbols in one call.
+
+        Preferred over calling get_symbol_series() in a loop for FULL_UNIVERSE
+        and TOP_N_STRATEGY curve building.  Missing or invalid symbols return an
+        empty list — no exception is raised for individual symbol failures.
+        """
+        if not symbols:
+            return {}
+
+        symbols_upper = tuple(sorted(s.upper() for s in symbols))
+        cache_key = (symbols_upper, start_date, end_date)
+        if cache_key in self._batch_cache:
+            return {s.upper(): list(self._batch_cache[cache_key].get(s.upper(), [])) for s in symbols}
+
+        result = self._download_batch(
+            symbols=[s.upper() for s in symbols],
+            start_date=start_date,
+            end_date=end_date,
+        )
+        self._batch_cache[cache_key] = result
+        # Back-fill per-symbol cache so subsequent get_symbol_series() calls are instant
+        for sym, pts in result.items():
+            self._series_cache[(sym, start_date, end_date)] = pts
+        return {s.upper(): list(result.get(s.upper(), [])) for s in symbols}
+
+    def _download_batch(
+        self,
+        *,
+        symbols: Sequence[str],
+        start_date: str,
+        end_date: str,
+    ) -> Dict[str, List[PricePoint]]:
+        """Internal: yfinance multi-ticker download. Returns {SYMBOL: [PricePoint]}."""
+        try:
+            import yfinance as yf
+        except Exception:
+            return {s: [] for s in symbols}
+
+        start = date.fromisoformat(start_date)
+        end_dt = date.fromisoformat(end_date) + timedelta(days=1)
+
+        try:
+            frame = yf.download(
+                tickers=list(symbols),
+                start=start.isoformat(),
+                end=end_dt.isoformat(),
+                interval="1d",
+                auto_adjust=True,
+                actions=True,
+                progress=False,
+                threads=False,
+                group_by="ticker",
+            )
+        except Exception:
+            return {s: [] for s in symbols}
+
+        if frame is None or len(frame.index) == 0:
+            return {s: [] for s in symbols}
+
+        def _coerce_scalar(value: object, default: float) -> float:
+            if value is None:
+                return default
+            if hasattr(value, "iloc"):
+                try:
+                    if len(value) == 0:
+                        return default
+                    value = value.iloc[0]
+                except Exception:
+                    return default
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return default
+            if numeric != numeric:
+                return default
+            return numeric
+
+        # yfinance batch layout depends on version; try group_by="ticker" (top-level=sym)
+        # then fall back to xs-based slicing.
+        nlevels = getattr(frame.columns, "nlevels", 1)
+        result: Dict[str, List[PricePoint]] = {}
+
+        for sym in symbols:
+            pts: List[PricePoint] = []
+            try:
+                if nlevels > 1:
+                    try:
+                        sym_frame = frame[sym]
+                    except KeyError:
+                        try:
+                            sym_frame = frame.xs(sym, axis=1, level=0)
+                        except Exception:
+                            try:
+                                sym_frame = frame.xs(sym, axis=1, level=1)
+                            except Exception:
+                                result[sym] = []
+                                continue
+                else:
+                    sym_frame = frame
+
+                for index, row in sym_frame.iterrows():
+                    close = _coerce_scalar(row.get("Close"), 0.0)
+                    if close == 0.0:
+                        continue
+                    pts.append(PricePoint(date=index.date().isoformat(), value=float(close)))
+            except Exception:
+                pts = []
+            result[sym] = pts
+
+        return result
 
 
 def _to_cumulative_rows(*, values: Sequence[PricePoint], row_factory):

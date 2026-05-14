@@ -113,6 +113,7 @@ class PerformanceSeries:
     value: float
     cumulative_return: float
     source: str
+    coverage_status: str = "AVAILABLE"
 
 
 def validate_series_type(series_type: str) -> str:

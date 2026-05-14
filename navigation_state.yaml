@@ -1,25 +1,25 @@
-current_waypoint: WP-05C
+current_waypoint: WP-05D
 current_objective: >
-  Establish temporal snapshot architecture and foundational hardening: atomic
-  current publication, snapshot registries, single-source registry governance,
-  temporal validation hardening, replay mode detection, expanded coverage states,
-  and freshness metadata.
+  Implement Stock Historical Replay Curve Foundation: stock price provider batch
+  layer, history storage, full-universe and top-N equal-weight curves, coverage
+  tracking, extended performance series output, replay evidence summary, UI
+  stock coverage panel and return comparison table, safety limits, tests, and
+  governance documentation.
 
 in_scope_items:
-  - Phase A: snapshot_date-partitioned replay history directories
-  - Phase B: analytical_snapshot_registry.csv and replay_snapshot_registry.csv append registries
-  - Phase C: atomic current publication via os.replace() with .tmp/ staging and cleanup
-  - Phase D: single-source YAML registry governance — WP05B_REQUIRED_* constants removed; providers derive from registry
-  - Phase E: temporal validation hardening — 5 new validators (duplicate registry, partial publication, freshness, mode consistency, history sync)
-  - Phase F: ReplayMode enum (HISTORICAL_VALIDATION, CURRENT_RECOMMENDATION, FORWARD_SIMULATION); detect_replay_mode(); replay_mode in ReplaySelection, headers, and CSVs
-  - Phase G: FAILED and STALE added to REPLAY_STATUS_ENUM
-  - Phase H: current_snapshot_metadata.json freshness metadata written to data/current/
-  - Phase I: test_wp05c_temporal_snapshot.py — 23 new tests (94 total, up from 71)
-  - Phase J: governance docs updated (navigation_state.yaml, wdd_log.md)
-  - UI: Snapshot Freshness panel added; replay_mode badge in status line; Phase A history path resolution
+  - Phase A: YahooHistoricalPriceProvider.get_batch_prices() and _download_batch() (multi-ticker yfinance)
+  - Phase B: history_providers.py PricePoint normalization; _batch_cache
+  - Phase C: 5 stock coverage validators in market_data_validator.py
+  - Phase D: build_full_universe_curve() in stock_replay_service.py — equal-weight composite with coverage tracking
+  - Phase E: build_top_n_curve() in stock_replay_service.py — frozen basket TOP_N_STRATEGY curve
+  - Phase F: PerformanceSeries.coverage_status field; PERFORMANCE_SERIES_HEADERS extended
+  - Phase G: build_replay_evidence_summary() and write_replay_evidence_summary() in replay_engine.py
+  - Phase H: UI integration — tryLoadEvidenceSummary, renderStockCoveragePanel, renderReturnComparisonTable in app.js; Stock Coverage panel and return comparison table in index.html
+  - Phase I: foundation_service.py wired — build_full_universe_curve + build_top_n_curve called; evidence summary written; stock_replay_available + top_n_available flags set from series types; replay_evidence_summary_path in matrix rows
+  - Phase J: tests/test_wp05d_stock_replay_curves.py — 22 new tests
+  - Phase K: STOCK_REPLAY_CURVE_PHILOSOPHY.md, REPLAY_EVIDENCE_SUMMARY_CONTRACT.md, master_plan.md, navigation_state.yaml, wdd_log.md
 
 out_of_scope_items:
-  - Full-universe and top-N stock return replay curves
   - Rebalance logic, ML ranking, database systems, and workflow orchestration
   - Intraday market-data ingestion, options, futures, or non-daily frequencies
   - Polished production dashboard implementation or design-system work
@@ -30,8 +30,8 @@ out_of_scope_items:
   - Autonomous runtime governance or recursive control loops
 
 next_action: >
-  Plan WP-05D stock replay curve integration and top-N availability activation
-  while preserving WP-05C temporal snapshot governance contracts.
+  Run full test suite (pytest tests/ -q --tb=short) and validate architecture
+  consistency. Do not commit — validation is the final gate for WP-05D.
 
 architectural_boundaries:
   platform_boundary: >
