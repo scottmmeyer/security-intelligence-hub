@@ -1,0 +1,120 @@
+version: 1
+description: >
+  Security type policy: maps security type strings (from yfinance, ESS, and manual entry)
+  to canonical classification and per-type eligibility flags.
+
+  Eligibility semantics:
+    replay_eligible:     Include symbol in top-N and full-universe replay baskets.
+    scoring_eligible:    Apply composite score signals (ESS, Zacks, Yahoo, Danelfin)
+                         to this security. ETFs and funds are NOT scored.
+    allocation_eligible: May appear in portfolio position tracking. All security types
+                         that are legitimately held receive true.
+
+  ETFs and mutual funds are "exposure containers" — they represent market exposure,
+  not individual security-picking candidates. They are tracked for portfolio exposure
+  analysis but excluded from the signal scoring and replay ranking systems.
+
+# Canonical class eligibility defaults
+canonical_classes:
+  EQUITY:
+    replay_eligible: true
+    scoring_eligible: true
+    allocation_eligible: true
+
+  ETF:
+    replay_eligible: false
+    scoring_eligible: false
+    allocation_eligible: true
+
+  MUTUAL_FUND:
+    replay_eligible: false
+    scoring_eligible: false
+    allocation_eligible: true
+
+  BOND:
+    replay_eligible: false
+    scoring_eligible: false
+    allocation_eligible: false
+
+  DIGITAL_ASSET:
+    # Crypto/digital assets held in portfolio (FBTC, FETH, FSOL) are exposure
+    # containers via ETPs. Direct holdings (XRP) are not equity-scorable.
+    replay_eligible: false
+    scoring_eligible: false
+    allocation_eligible: true
+
+  UNKNOWN:
+    # Conservative default: allow but flag via audit. Treat as potentially equity.
+    replay_eligible: true
+    scoring_eligible: true
+    allocation_eligible: true
+
+# Maps raw security_type string values (case-insensitive) to canonical_class.
+# First exact match wins; unmatched strings fall back to UNKNOWN canonical class.
+type_mappings:
+  # ── Equity variants ────────────────────────────────────────────────────────
+  - raw: "Common Stock"
+    canonical_class: EQUITY
+  - raw: "Common Stock (REIT)"
+    canonical_class: EQUITY   # REITs are equity; sector benchmark (VNQ) handled in Phase 2
+  - raw: "Equity"
+    canonical_class: EQUITY
+  - raw: "EQUITY"
+    canonical_class: EQUITY
+  - raw: "Ordinary Shares"
+    canonical_class: EQUITY
+  - raw: "ADR"
+    canonical_class: EQUITY  # geography resolver will set INTERNATIONAL
+  - raw: "Depository Receipt"
+    canonical_class: EQUITY  # ADR/GDR shares; geography resolver sets INTERNATIONAL via quote_type
+
+  # ── ETF variants ───────────────────────────────────────────────────────────
+  - raw: "ETF"
+    canonical_class: ETF
+  - raw: "Exchange Traded Fund"
+    canonical_class: ETF
+  - raw: "Exchange-Traded Fund"
+    canonical_class: ETF
+  - raw: "ETP"
+    canonical_class: ETF
+
+  # ── Mutual Fund variants ───────────────────────────────────────────────────
+  - raw: "Mutual Fund"
+    canonical_class: MUTUAL_FUND
+  - raw: "MUTUALFUND"
+    canonical_class: MUTUAL_FUND
+  - raw: "Open-End Fund"
+    canonical_class: MUTUAL_FUND
+  - raw: "Open End Fund"
+    canonical_class: MUTUAL_FUND
+  - raw: "Closed-End Fund"
+    canonical_class: MUTUAL_FUND
+  - raw: "Closed End Fund"
+    canonical_class: MUTUAL_FUND
+  - raw: "Unit Trust Fund"
+    canonical_class: EQUITY  # yfinance classifies US MLPs/LPs as "Unit Trust Fund";
+    # they are equity-like publicly-traded partnership units (EPD, ET, MPLX, PAA, etc.)
+  - raw: "Fund"
+    canonical_class: MUTUAL_FUND
+
+  # ── Bond / Fixed Income variants ───────────────────────────────────────────
+  - raw: "Bond"
+    canonical_class: BOND
+  - raw: "BOND"
+    canonical_class: BOND
+  - raw: "Fixed Income"
+    canonical_class: BOND
+  - raw: "Corporate Bond"
+    canonical_class: BOND
+  - raw: "Government Bond"
+    canonical_class: BOND
+
+  # ── Digital Asset variants ─────────────────────────────────────────────────
+  - raw: "CRYPTOCURRENCY"
+    canonical_class: DIGITAL_ASSET
+  - raw: "Cryptocurrency"
+    canonical_class: DIGITAL_ASSET
+  - raw: "Digital Currency"
+    canonical_class: DIGITAL_ASSET
+  - raw: "Digital Asset"
+    canonical_class: DIGITAL_ASSET

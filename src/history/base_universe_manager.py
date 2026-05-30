@@ -17,6 +17,7 @@ BASE_UNIVERSE_HEADERS = [
     "market_cap_bucket",
     "coverage_domain",
     "starmine_ess_text",
+    "starmine_ess_raw_score",
     "zacks_rating",
     "ess_zacks_rating",
     "provider",

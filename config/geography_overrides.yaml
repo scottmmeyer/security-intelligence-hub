@@ -1,0 +1,17 @@
+version: 1
+description: >
+  Manual geography overrides. Entries here take precedence over all automated
+  geography resolution logic (yfinance country lookup, ADR detection, exchange
+  heuristics).
+
+  Use sparingly — prefer improving adr_domicile_policy.yaml or fixing the
+  underlying metadata. Manual overrides are the last resort for edge cases where
+  automated resolution produces a confirmed wrong result.
+
+  geography must be one of: US | INTERNATIONAL
+
+  To add an override:
+    overrides:
+      TICKER: INTERNATIONAL   # or US
+
+overrides: {}

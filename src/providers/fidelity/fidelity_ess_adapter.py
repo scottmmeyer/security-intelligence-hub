@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 from src.providers.fidelity.fidelity_column_mapping import FIDELITY_TO_CANONICAL_COLUMN_MAPPING
 from src.providers.fidelity.fidelity_schema_contract import (
+    FIDELITY_COLUMN_ALIASES,
     FIDELITY_SCHEMA_VERSION,
     FidelitySchemaEvaluation,
     evaluate_fidelity_schema,
@@ -35,14 +36,54 @@ class FidelityAdapterResult:
 
 _TICKER_PATTERN = re.compile(r"[A-Z0-9./-]+")
 
+# ESS cell format from the screener export: numeric score and text label are
+# placed in the same cell separated by whitespace / newlines, e.g.:
+#   "7\nNeutral"  or  "9\nBullish"  or just  "Bullish" (text-only older exports)
+_ESS_NUMERIC_RE = re.compile(r"""(?x)
+    ^\s*
+    (?P<num>[0-9]+(?:\.[0-9]+)?)   # leading numeric part (the 0.1–10.0 score)
+    [\s\n,]+                        # whitespace / newline separator
+    (?P<text>[A-Za-z][A-Za-z_ ]+)  # trailing text label
+    \s*$
+""")
+
+
+def _parse_ess_cell(raw: str) -> tuple[float | None, str | None]:
+    """Parse a combined ESS cell value into (raw_score_0_10, ess_text_label).
+
+    Handles three observed Fidelity export formats:
+      - ``"7\\nNeutral"``   → (7.0, "Neutral")
+      - ``"9\\nBullish"``  → (9.0, "Bullish")
+      - ``"Bullish"``      → (None, "Bullish")   (text-only, older exports)
+    """
+    cleaned = (raw or "").strip()
+    if not cleaned:
+        return None, None
+    m = _ESS_NUMERIC_RE.match(cleaned)
+    if m:
+        try:
+            num = float(m.group("num"))
+            raw_score = num if 0.0 <= num <= 10.0 else None
+        except ValueError:
+            raw_score = None
+        return raw_score, m.group("text").strip()
+    # No numeric prefix — treat entire value as text label only
+    return None, cleaned
+
 
 def _load_provider_csv(file_path: str | Path) -> tuple[List[str], List[Dict[str, str]]]:
     csv_path = Path(file_path)
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        headers = reader.fieldnames or []
-        rows = [dict(row) for row in reader]
-    return headers, rows
+        raw_headers: List[str] = list(reader.fieldnames or [])
+        # Normalize abbreviated column names to canonical equivalents so the
+        # rest of the pipeline sees a consistent schema regardless of export source.
+        canonical_headers = [FIDELITY_COLUMN_ALIASES.get(h.strip(), h.strip()) for h in raw_headers]
+        rows: List[Dict[str, str]] = []
+        for row in reader:
+            normalized_row = {FIDELITY_COLUMN_ALIASES.get(k.strip(), k.strip()): v for k, v in row.items()}
+            rows.append(normalized_row)
+    return canonical_headers, rows
 
 
 def adapt_fidelity_ess_file(
@@ -99,7 +140,18 @@ def adapt_fidelity_ess_file(
         for provider_column, canonical_target in FIDELITY_TO_CANONICAL_COLUMN_MAPPING.items():
             if provider_column not in header_set:
                 continue
-            canonical_row[canonical_target] = (row.get(provider_column) or "").strip()
+            raw_value = (row.get(provider_column) or "").strip()
+
+            # The ESS column in Fidelity's screener export contains both a
+            # 0.1–10.0 numeric score and a text label in one cell (e.g. "7\nNeutral").
+            # Parse them out so we preserve the precision that the text label loses.
+            if canonical_target == "starmine_ess_text":
+                raw_score, ess_text = _parse_ess_cell(raw_value)
+                canonical_row["starmine_ess_text"] = ess_text or ""
+                if raw_score is not None:
+                    canonical_row["starmine_ess_raw_score"] = str(raw_score)
+            else:
+                canonical_row[canonical_target] = raw_value
 
         adapted_rows.append(canonical_row)
 

@@ -262,15 +262,23 @@ def fetch_zacks_scores_for_symbols(
     latest_path = output_dir / "latest_zacks.csv"
 
     symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    archived_rows = _load_rows_by_symbol(output_path)
+    latest_rows = _load_rows_by_symbol(latest_path)
+    pending_symbols = [symbol for symbol in symbol_list if symbol not in archived_rows]
 
-    rows: list[dict[str, str]] = []
-    for i, symbol in enumerate(symbol_list, start=1):
+    if verbose and archived_rows:
+        print(
+            f"[resume] Zacks: skipping {len(symbol_list) - len(pending_symbols)} already checkpointed "
+            f"symbols from {output_path.name}."
+        )
+
+    for i, symbol in enumerate(pending_symbols, start=1):
         if verbose:
-            print(f"[{i}/{len(symbol_list)}] Fetching Zacks data for {symbol}...", end=" ", flush=True)
+            print(f"[{i}/{len(pending_symbols)}] Fetching Zacks data for {symbol}...", end=" ", flush=True)
         rank, score, abr, price_target, eps_growth = fetch_zacks_data(
             symbol, delay_min=delay_min, delay_max=delay_max
         )
-        rows.append({
+        row = {
             "symbol": symbol,
             "zacks_rank": str(rank) if rank is not None else "",
             "zacks_score": str(score) if score is not None else "",
@@ -278,7 +286,11 @@ def fetch_zacks_scores_for_symbols(
             "price_target": str(price_target) if price_target is not None else "",
             "eps_growth": str(eps_growth) if eps_growth is not None else "",
             "sourced_date": today,
-        })
+        }
+        archived_rows[symbol] = row
+        latest_rows[symbol] = row
+        _write_csv(output_path, list(archived_rows.values()))
+        _write_csv(latest_path, list(latest_rows.values()))
         if verbose:
             if rank is not None:
                 extras = ""
@@ -290,14 +302,47 @@ def fetch_zacks_scores_for_symbols(
             else:
                 print("no data")
 
-    _write_csv(output_path, rows)
-    _write_csv(latest_path, rows)
+    rows = list(archived_rows.values())
 
     if verbose:
         found = sum(1 for r in rows if r["zacks_rank"])
         print(f"\nZacks fetch complete: {found}/{len(rows)} symbols with data → {output_path}")
 
     return output_path
+
+
+def _merge_into_latest(latest_path: Path, new_rows: list[dict[str, str]]) -> None:
+    """Upsert *new_rows* into *latest_path*, preserving all previously-known symbols.
+
+    The dated archive (output_path) is a point-in-time snapshot of just this
+    batch, but latest_zacks.csv is the cumulative best-known score per symbol.
+    Symbols in *new_rows* overwrite any existing entry; all other symbols are kept.
+    """
+    existing: dict[str, dict[str, str]] = {}
+    if latest_path.exists():
+        with latest_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                sym = str(row.get("symbol", "")).strip().upper()
+                if sym:
+                    existing[sym] = dict(row)
+    # Upsert — new rows win
+    for row in new_rows:
+        sym = str(row.get("symbol", "")).strip().upper()
+        if sym:
+            existing[sym] = row
+    _write_csv(latest_path, list(existing.values()))
+
+
+def _load_rows_by_symbol(path: Path) -> dict[str, dict[str, str]]:
+    rows_by_symbol: dict[str, dict[str, str]] = {}
+    if not path.exists():
+        return rows_by_symbol
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sym = str(row.get("symbol", "")).strip().upper()
+            if sym:
+                rows_by_symbol[sym] = dict(row)
+    return rows_by_symbol
 
 
 def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:

@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Security Intelligence Hub - Allocation Intelligence</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <style>
+      :root {
+        --bg: #f3efe6;
+        --panel: #fffaf2;
+        --text: #1b1b1b;
+        --muted: #575043;
+        --accent: #0d5c63;
+        --accent-2: #f28f3b;
+        --border: #d9ceb8;
+
+        /* Asset class palette */
+        --c-equities:     #1d3557;
+        --c-fixed:        #2a9d8f;
+        --c-digital:      #8d5a97;
+        --c-commodities:  #e76f51;
+        --c-cash:         #6b8e77;
+
+        /* Status colors */
+        --pass: #2a9d8f;
+        --fail: #e63946;
+        --warn: #f28f3b;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 12% 10%, #fff8ea 0%, transparent 38%),
+          radial-gradient(circle at 90% 0%, #d9ecf2 0%, transparent 30%),
+          var(--bg);
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 20px 40px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.35rem, 2.4vw, 2rem);
+        letter-spacing: 0.02em;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      /* ── Nav ── */
+      .page-nav {
+        display: flex;
+        gap: 8px;
+        margin: 14px 0 0;
+        flex-wrap: wrap;
+      }
+
+      .nav-link {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        text-decoration: none;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        background: #fff;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .nav-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .nav-link-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+      /* ── Card / Panel ── */
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px 20px;
+        box-shadow: 0 6px 18px rgba(20,20,20,0.05);
+        margin-top: 16px;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        user-select: none;
+        gap: 10px;
+      }
+
+      .card-header h2 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      .card-body { margin-top: 14px; }
+      .card-body.collapsed { display: none; }
+
+      .toggle-btn {
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        padding: 3px 9px;
+        font-size: 0.82rem;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
+      /* ── Asset class pill ── */
+      .ac-pill {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 12px;
+        letter-spacing: 0.04em;
+        color: #fff;
+      }
+
+      .ac-pill.EQUITIES    { background: var(--c-equities); }
+      .ac-pill.FIXED_INCOME { background: var(--c-fixed); }
+      .ac-pill.DIGITAL     { background: var(--c-digital); }
+      .ac-pill.COMMODITIES { background: var(--c-commodities); }
+      .ac-pill.CASH        { background: var(--c-cash); }
+
+      /* ── Status badge ── */
+      .badge {
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 10px;
+        letter-spacing: 0.03em;
+      }
+      .badge.pass { background: #d8f3f0; color: #2a9d8f; }
+      .badge.fail { background: #fde8e8; color: #c62828; }
+      .badge.warn { background: #fff3cd; color: #b45309; }
+
+      /* ── Tables ── */
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+      }
+      .data-table th {
+        background: var(--bg);
+        color: var(--muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        padding: 7px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .data-table td {
+        padding: 7px 10px;
+        border-bottom: 1px solid #f0ebe0;
+        vertical-align: middle;
+      }
+      .data-table tr:last-child td { border-bottom: none; }
+      .data-table tr:hover td { background: #faf6ee; }
+
+      /* ── Allocation bar ── */
+      .alloc-bar-bg {
+        background: #e8e3d8;
+        border-radius: 6px;
+        height: 8px;
+        min-width: 80px;
+        overflow: hidden;
+      }
+      .alloc-bar-fill {
+        height: 100%;
+        border-radius: 6px;
+        transition: width 0.4s ease;
+      }
+
+      /* ── Delta chip ── */
+      .delta {
+        font-size: 0.78rem;
+        font-weight: 600;
+      }
+      .delta.pos { color: var(--pass); }
+      .delta.neg { color: var(--fail); }
+      .delta.neu { color: var(--muted); }
+
+      /* ── Sunburst container ── */
+      #sunburst-container {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+
+      #sunburst-svg-wrap {
+        flex: 0 0 auto;
+        width: min(480px, 90vw);
+      }
+
+      #sunburst-legend {
+        flex: 1 1 180px;
+        padding-top: 16px;
+        font-size: 0.85rem;
+      }
+
+      .sun-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        cursor: pointer;
+      }
+      .sun-legend-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+      .sun-legend-label { font-size: 0.82rem; }
+      .sun-legend-pct   { font-weight: 700; font-size: 0.82rem; color: var(--accent); margin-left: auto; }
+
+      /* ── Validator grid ── */
+      .validator-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 10px;
+      }
+
+      .validator-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 0.85rem;
+      }
+      .validator-icon { font-size: 1.1rem; line-height: 1; flex-shrink: 0; }
+      .validator-name { font-weight: 600; font-size: 0.82rem; }
+      .validator-errors { color: var(--fail); font-size: 0.78rem; margin-top: 3px; }
+
+      /* ── Policy limits grid ── */
+      .policy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
+      }
+
+      .policy-item {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 14px;
+      }
+      .policy-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .policy-value { font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-top: 3px; }
+
+      /* ── Chart wrapper ── */
+      .chart-wrap {
+        position: relative;
+        width: 100%;
+        max-width: 700px;
+        height: 280px;
+      }
+
+      /* ── Empty state ── */
+      .empty-state {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 30px 0;
+      }
+
+      /* ── Snapshot meta ── */
+      .meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        font-size: 0.84rem;
+        color: var(--muted);
+        margin-top: 10px;
+      }
+      .meta-row strong { color: var(--text); }
+
+      /* ── Recalc action ── */
+      .recalc-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .btn {
+        padding: 8px 18px;
+        border-radius: 10px;
+        font-size: 0.88rem;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        transition: opacity 0.15s;
+      }
+      .btn:hover { opacity: 0.85; }
+      .btn.secondary { background: #fff; color: var(--accent); }
+
+      /* ── Scrollable table container ── */
+      .table-scroll { overflow-x: auto; }
+
+      @media (max-width: 600px) {
+        .filters { grid-template-columns: 1fr 1fr; }
+        .policy-grid { grid-template-columns: 1fr 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <h1>Allocation Intelligence</h1>
+      <p class="subtitle">Asset-class-first hierarchical strategic allocation — policy-governed, evidence-driven.</p>
+
+      <!-- ─── Mandate Selector ─── -->
+      <div style="display:flex;align-items:center;gap:12px;margin:14px 0;flex-wrap:wrap;">
+        <label for="archetypeSelect" style="font-size:0.88rem;color:var(--muted);font-weight:600;">Investment Mandate:</label>
+        <select id="archetypeSelect" onchange="onMandateChange()"
+          style="padding:7px 14px;border:1px solid var(--border);border-radius:8px;font-size:0.9rem;background:#fff;cursor:pointer;">
+          <option value="BALANCED">Balanced</option>
+          <option value="GROWTH">Growth</option>
+          <option value="DEFENSIVE">Defensive</option>
+          <option value="INCOME">Income</option>
+          <option value="CONCENTRATED_ALPHA" selected>Concentrated Alpha</option>
+        </select>
+        <span id="archetypeActiveBadge"
+          style="display:none;padding:4px 12px;border-radius:20px;background:var(--accent);color:#fff;font-size:0.82rem;font-weight:700;letter-spacing:0.03em;"></span>
+      </div>
+      <!-- Active archetype philosophy summary -->
+      <div id="archetypePhilosophy" style="display:none;padding:10px 14px;background:#f0f7f4;border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:0.84rem;color:#2d5a4e;line-height:1.6;margin-bottom:14px;"></div>
+
+      <nav class="page-nav">
+        <a href="/ui/outcome_visualization/" class="nav-link">Outcome Visualization</a>
+        <a href="/ui/allocation_intelligence/" class="nav-link nav-link-active">Allocation Intelligence</a>
+        <a href="/ui/portfolio_alignment/" class="nav-link">Portfolio Alignment</a>
+      </nav>
+
+      <!-- Loading indicator -->
+      <div id="loading-bar" class="panel" style="margin-top:16px;">
+        <span style="color:var(--muted);font-size:0.9rem;">Loading allocation data…</span>
+      </div>
+
+      <!-- ─── Section 1: Structural Policy Guardrails ─── -->
+      <div class="panel" id="section-policy" style="display:none;">
+        <div class="card-header" onclick="toggleCard('policy-body','policy-toggle')">
+          <h2>Structural Policy Guardrails</h2>
+          <button class="toggle-btn" id="policy-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="policy-body">
+          <div class="policy-grid" id="policy-limits-grid"></div>
+          <div id="policy-ac-table" style="margin-top:16px;"></div>
+        </div>
+      </div>
+
+      <!-- ─── Section 2: Hierarchy Sunburst ─── -->
+      <div class="panel" id="section-sunburst" style="display:none;">
+        <div class="card-header" onclick="toggleCard('sunburst-body','sunburst-toggle')">
+          <h2>Allocation Hierarchy — 4-Ring Sunburst</h2>
+          <button class="toggle-btn" id="sunburst-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="sunburst-body">
+          <div id="sunburst-container">
+            <div id="sunburst-svg-wrap"></div>
+            <div id="sunburst-legend"></div>
+          </div>
+          <p style="font-size:0.8rem;color:var(--muted);margin-top:8px;text-align:center;">
+            Hover segments for details. Inner ring = asset class (L1) → outer rings = geography, cap tier, mega subtier (L4).
+          </p>
+        </div>
+      </div>
+
+      <!-- ─── Section 3: Recalculation Panel ─── -->
+      <div class="panel" id="section-recalc" style="display:none;">
+        <div class="card-header" onclick="toggleCard('recalc-body','recalc-toggle')">
+          <h2>Recalculation Status &amp; Validators</h2>
+          <button class="toggle-btn" id="recalc-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="recalc-body">
+          <div id="snapshot-meta" class="meta-row"></div>
+          <div id="change-summary" style="margin-top:12px;"></div>
+          <div id="validator-grid" class="validator-grid" style="margin-top:14px;"></div>
+          <div class="recalc-actions">
+            <span style="font-size:0.82rem;color:var(--muted);">
+              Run: <code>PYTHONPATH=. .venv/bin/python scripts/recalculate_allocation_targets.py [--commit]</code>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Section 4: Overlay Panel ─── -->
+      <div class="panel" id="section-overlay" style="display:none;">
+        <div class="card-header" onclick="toggleCard('overlay-body','overlay-toggle')">
+          <h2>Tactical Momentum Overlays</h2>
+          <button class="toggle-btn" id="overlay-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="overlay-body">
+          <div class="table-scroll"><table class="data-table" id="overlay-table"></table></div>
+          <p id="overlay-empty" class="empty-state" style="display:none;">No active tactical overlays.</p>
+        </div>
+      </div>
+
+      <!-- ─── Section 5: Strategic Allocation Targets ─── -->
+      <div class="panel" id="section-targets" style="display:none;">
+        <div class="card-header" onclick="toggleCard('targets-body','targets-toggle')">
+          <h2>Strategic Allocation Targets</h2>
+          <button class="toggle-btn" id="targets-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="targets-body">
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+            <select id="filter-asset-class" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.88rem;background:#fff;">
+              <option value="">All Asset Classes</option>
+              <option value="EQUITIES">Equities</option>
+              <option value="FIXED_INCOME">Fixed Income</option>
+              <option value="DIGITAL">Digital</option>
+              <option value="COMMODITIES">Commodities</option>
+              <option value="CASH">Cash</option>
+            </select>
+            <select id="filter-depth" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.88rem;background:#fff;">
+              <option value="">All Levels</option>
+              <option value="1">L1 — Asset Class</option>
+              <option value="2">L2 — Geography</option>
+              <option value="3">L3 — Market Cap</option>
+              <option value="4">L4 — Mega Subtier</option>
+            </select>
+          </div>
+          <div class="table-scroll"><table class="data-table" id="targets-table"></table></div>
+        </div>
+      </div>
+
+      <!-- ─── Section 6: Concentration Risk ─── -->
+      <div class="panel" id="section-concentration" style="display:none;">
+        <div class="card-header" onclick="toggleCard('concentration-body','concentration-toggle')">
+          <h2>Concentration Risk</h2>
+          <button class="toggle-btn" id="concentration-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="concentration-body">
+          <div id="concentration-bars"></div>
+        </div>
+      </div>
+
+      <!-- ─── Section 7: Allocation Recommendation ─── -->
+      <div class="panel" id="section-recommendation" style="display:none;">
+        <div class="card-header" onclick="toggleCard('recommendation-body','recommendation-toggle')">
+          <h2>Effective Allocation Recommendation</h2>
+          <button class="toggle-btn" id="recommendation-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="recommendation-body">
+          <div class="chart-wrap"><canvas id="recommendation-chart"></canvas></div>
+          <div class="table-scroll" style="margin-top:14px;">
+            <table class="data-table" id="recommendation-table"></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Section 8: Historical Evolution ─── -->
+      <div class="panel" id="section-history" style="display:none;">
+        <div class="card-header" onclick="toggleCard('history-body','history-toggle')">
+          <h2>Historical Recalculation Log</h2>
+          <button class="toggle-btn" id="history-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="history-body">
+          <div class="table-scroll"><table class="data-table" id="history-table"></table></div>
+          <p id="history-empty" class="empty-state" style="display:none;">No historical snapshots yet.</p>
+        </div>
+      </div>
+
+      <!-- ─── Section 9: Architecture Notes ─── -->
+      <div class="panel" id="section-arch" style="display:none;">
+        <div class="card-header" onclick="toggleCard('arch-body','arch-toggle')">
+          <h2>Architecture &amp; Philosophy</h2>
+          <button class="toggle-btn" id="arch-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="arch-body">
+          <ul style="font-size:0.9rem;line-height:1.8;color:var(--muted);padding-left:20px;">
+            <li><strong>Asset-class-first hierarchy</strong> — EQUITIES / FIXED_INCOME / DIGITAL / COMMODITIES / CASH are Level 1.</li>
+            <li><strong>Dot-notation keys</strong> — e.g. <code>EQUITIES.US.MEGA.HYPER_MEGA</code></li>
+            <li><strong>Propagation formula</strong> — target_pct_of_total = ∏(target_pct_of_parent across ancestry chain)</li>
+            <li><strong>Replay sophistication</strong> — HIGH (equity nodes), LOW (fixed income), NONE (digital/commodities/cash)</li>
+            <li><strong>Semi-automated recalculation</strong> — engine proposes, human runs <code>--commit</code></li>
+            <li><strong>Sum invariant</strong> — each parent's children sum to 100.0 ±0.01</li>
+            <li><strong>8 validators</strong> — hierarchy_sums, policy_bounds, tactical_overflow, overlay_staleness, recalculation_churn, evidence_alignment, concentration_ceilings, lineage_completeness</li>
+            <li>Governance docs: <code>docs/ALLOCATION_INTELLIGENCE_PHILOSOPHY.md</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

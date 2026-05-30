@@ -27,6 +27,9 @@ class SecurityMaster:
     market_cap_snapshot_date: Optional[date] = None
     currency: str = "USD"
     is_active: bool = True
+    # Analytical subtier scaffold — populated at snapshot time when available.
+    analytical_market_cap_subtier: Optional[str] = None
+    classification_policy_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

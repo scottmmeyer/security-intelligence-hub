@@ -1,0 +1,45 @@
+version: 1
+policy_id: DYNAMIC_MEGA_THIRDS_V1
+methodology_type: DYNAMIC_RANK_BASED
+partitioning_strategy: MEGA_ONLY
+ranking_basis: MARKET_CAP_DESCENDING
+tie_break_rule: SYMBOL_ASCENDING
+
+partition_rules:
+  - label: HYPER_MEGA
+    description: Top third of Fidelity MEGA cohort by market cap (rounded up on remainder)
+  - label: ULTRA_MEGA
+    description: Middle third of Fidelity MEGA cohort by market cap
+  - label: EXTENDED_MEGA
+    description: Bottom third of Fidelity MEGA cohort by market cap
+
+non_mega_passthrough: true
+# Non-MEGA rows receive analytical_market_cap_subtier = their Fidelity market_cap_bucket value.
+# This ensures every row in the analytical universe always has a non-empty subtier.
+
+concentration_scaffold:
+  enabled: false
+  tiers:
+    - DOMINANT
+    - HIGH
+    - MODERATE
+    - LOW
+  notes: Allocation computation logic not yet implemented. Fields reserved for future use.
+
+created_at_utc: "2026-05-15T00:00:00Z"
+
+rationale: >
+  Fidelity MEGA is a single flat bucket covering companies from ~$565B to multi-trillion dollar
+  capitalizations. As of 2026, this spans an order-of-magnitude range in actual scale (e.g., a
+  $600B company vs. a $3T company). Static dollar sub-thresholds calibrated today will silently
+  misclassify as market structure evolves. Rank-based thirds dynamically adapt to the actual
+  distribution of MEGA-tier companies at each snapshot, making analytical positioning
+  self-correcting across market cycles.
+
+notes:
+  - policy_id is immutable. Any change to partitioning methodology requires a new policy_id and a
+    new version of this file.
+  - Historical subtier assignments reference this policy_id; do NOT modify existing assignments.
+  - To extend subtiering to non-MEGA buckets (e.g., LARGE into UPPER_LARGE/LOWER_LARGE), create a
+    new policy with partitioning_strategy set to ALL_BUCKETS or LARGE_ONLY.
+  - Thirds partitioning: base = N // 3, rem = N % 3. Hyper gets +1 if rem > 0, Ultra gets +1 if rem > 1. Remainder distributed top-down.

@@ -1,0 +1,77 @@
+version: 1
+policy_id: ALLOCATION_POLICY_V1
+effective_date: "2026-05-20"
+
+structural_policy:
+  cash_floor_pct: 2.0
+  max_micro_cap_pct: 5.0
+  max_digital_assets_pct: 8.0
+  max_single_sector_pct: 20.0
+  max_mega_concentration_pct: 50.0
+  min_international_pct: 10.0
+  max_leverage_pct: 0.0
+  max_single_asset_class_pct: 80.0
+
+asset_class_governance:
+  EQUITIES:
+    max_pct: 80.0
+    min_pct: 40.0
+    replay_sophistication: HIGH
+    tactical_overlays_supported: true
+    notes: >
+      Primary growth engine. Full replay intelligence, market-cap subtier analysis,
+      and tactical sector overlays supported.
+  FIXED_INCOME:
+    max_pct: 40.0
+    min_pct: 5.0
+    replay_sophistication: LOW
+    tactical_overlays_supported: false
+    notes: >
+      Structural stabilization layer. Methodology-baseline targets only initially.
+      Replay sophistication will increase in future waypoints.
+  DIGITAL:
+    max_pct: 8.0
+    min_pct: 0.0
+    replay_sophistication: NONE
+    tactical_overlays_supported: false
+    notes: >
+      Supranational asset class. Architecture scaffold. Hard governance cap enforced.
+      No replay or tactical overlay support in current waypoint.
+  COMMODITIES:
+    max_pct: 10.0
+    min_pct: 0.0
+    replay_sophistication: NONE
+    tactical_overlays_supported: false
+    notes: >
+      Macro and inflation-sensitive diversifier. Architecture scaffold.
+      No replay or tactical overlay support in current waypoint.
+  CASH:
+    max_pct: 20.0
+    min_pct: 2.0
+    replay_sophistication: NONE
+    tactical_overlays_supported: false
+    notes: >
+      Global liquidity reserve. Structural floor enforced.
+      Not geography-partitioned. No replay or overlay support.
+
+recalculation_governance:
+  max_single_recalculation_delta_pct: 3.0
+  min_recalculation_interval_days: 14
+  min_meaningful_change_pct: 0.5
+  confidence_threshold: 0.65
+  replay_min_periods: 3
+  churn_warning_threshold: 5
+  notes: >
+    Recalculation is bounded by max_single_recalculation_delta_pct per node per cycle.
+    Only nodes with replay_sophistication=HIGH are eligible for evidence-driven adjustment.
+    Nodes with LOW or NONE sophistication preserve methodology baseline unchanged.
+    Sibling normalization preserves parent sum = 100% after any single-node adjustment.
+
+governance_notes:
+  - "SIH produces allocation intelligence recommendations only. Portfolio consumers own execution."
+  - "All recalculations are explainable and fully traceable to replay evidence or methodology basis."
+  - "Target allocations are periodically recalculated — they are not static constants."
+  - "No autonomous trading, rebalancing, or portfolio mutation is performed by SIH."
+  - "Historical snapshots in data/allocation/recalculation_snapshots/ are append-only and immutable."
+  - "Any change to recalculation_governance or structural_policy requires a policy version increment."
+  - "Tactical overlays are bounded by max_single_sector_pct and expire unless explicitly renewed."

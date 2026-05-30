@@ -1,0 +1,70 @@
+version: 1
+description: >
+  Maps yfinance country field values to geography classification for ADR domicile
+  resolution and international security classification.
+
+  Categories:
+    US:                     United States listed and domiciled companies
+    DEVELOPED_INTERNATIONAL: MSCI World ex-US developed market countries
+    EMERGING_MARKETS:       MSCI Emerging Markets countries
+
+  When a security has quote_type=ADR (or is otherwise known to be non-US),
+  the country field from yfinance is resolved through this map to determine
+  the correct geography for benchmark assignment.
+
+  Countries not in this map resolve to geography=INTERNATIONAL with
+  benchmark_confidence=LOW.
+
+country_geography_map:
+  # ── United States ──────────────────────────────────────────────────────────
+  United States: US
+
+  # ── MSCI Developed Markets (ex-US) ────────────────────────────────────────
+  Australia: DEVELOPED_INTERNATIONAL
+  Austria: DEVELOPED_INTERNATIONAL
+  Belgium: DEVELOPED_INTERNATIONAL
+  Canada: DEVELOPED_INTERNATIONAL
+  Denmark: DEVELOPED_INTERNATIONAL
+  Finland: DEVELOPED_INTERNATIONAL
+  France: DEVELOPED_INTERNATIONAL
+  Germany: DEVELOPED_INTERNATIONAL
+  Hong Kong: DEVELOPED_INTERNATIONAL
+  Ireland: DEVELOPED_INTERNATIONAL
+  Israel: DEVELOPED_INTERNATIONAL
+  Italy: DEVELOPED_INTERNATIONAL
+  Japan: DEVELOPED_INTERNATIONAL
+  Netherlands: DEVELOPED_INTERNATIONAL
+  New Zealand: DEVELOPED_INTERNATIONAL
+  Norway: DEVELOPED_INTERNATIONAL
+  Portugal: DEVELOPED_INTERNATIONAL
+  Singapore: DEVELOPED_INTERNATIONAL
+  Spain: DEVELOPED_INTERNATIONAL
+  Sweden: DEVELOPED_INTERNATIONAL
+  Switzerland: DEVELOPED_INTERNATIONAL
+  United Kingdom: DEVELOPED_INTERNATIONAL
+
+  # ── MSCI Emerging Markets ──────────────────────────────────────────────────
+  Brazil: EMERGING_MARKETS
+  Chile: EMERGING_MARKETS
+  China: EMERGING_MARKETS
+  Colombia: EMERGING_MARKETS
+  Czech Republic: EMERGING_MARKETS
+  Egypt: EMERGING_MARKETS
+  Greece: EMERGING_MARKETS
+  Hungary: EMERGING_MARKETS
+  India: EMERGING_MARKETS
+  Indonesia: EMERGING_MARKETS
+  Kuwait: EMERGING_MARKETS
+  Malaysia: EMERGING_MARKETS
+  Mexico: EMERGING_MARKETS
+  Peru: EMERGING_MARKETS
+  Philippines: EMERGING_MARKETS
+  Poland: EMERGING_MARKETS
+  Qatar: EMERGING_MARKETS
+  Saudi Arabia: EMERGING_MARKETS
+  South Africa: EMERGING_MARKETS
+  South Korea: EMERGING_MARKETS
+  Taiwan: EMERGING_MARKETS
+  Thailand: EMERGING_MARKETS
+  Turkey: EMERGING_MARKETS
+  United Arab Emirates: EMERGING_MARKETS

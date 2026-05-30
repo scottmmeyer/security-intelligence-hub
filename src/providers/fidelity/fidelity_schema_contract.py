@@ -7,6 +7,14 @@ from typing import Sequence
 
 FIDELITY_SCHEMA_VERSION = "FIDELITY_ESS_EXPORT_V1"
 
+# Fidelity's screener export uses an abbreviated column header for the ESS field.
+# This maps known abbreviations to the canonical full-length column name so the
+# rest of the pipeline sees a consistent header regardless of export source.
+FIDELITY_COLUMN_ALIASES: dict[str, str] = {
+    "ESS from LSEG StarMine": "Equity Summary Score (ESS) from LSEG StarMine",
+    "Fwd EPS LTG (3-5 Yrs)": "Forward EPS Long Term Growth (3-5 Yrs)",
+}
+
 FIDELITY_KNOWN_COLUMNS: tuple[str, ...] = (
     "Symbol",
     "Company Name",
@@ -72,13 +80,18 @@ def _sanitize_headers(headers: Sequence[str]) -> tuple[str, ...]:
     return tuple((item or "").strip() for item in headers if (item or "").strip())
 
 
+def _normalize_column_name(name: str) -> str:
+    """Resolve abbreviated Fidelity column names to their canonical equivalents."""
+    return FIDELITY_COLUMN_ALIASES.get(name, name)
+
+
 def evaluate_fidelity_schema(headers: Sequence[str], universe: str) -> FidelitySchemaEvaluation:
     """Evaluate provider-native schema shape without mutating source structure."""
 
     if universe not in UNIVERSE_REQUIRED_PROVIDER_COLUMNS:
         raise ValueError(f"Unsupported fidelity universe {universe!r}.")
 
-    sanitized_headers = _sanitize_headers(headers)
+    sanitized_headers = tuple(_normalize_column_name(h) for h in _sanitize_headers(headers))
     header_set = set(sanitized_headers)
     required_columns = UNIVERSE_REQUIRED_PROVIDER_COLUMNS[universe]
     optional_columns = UNIVERSE_OPTIONAL_PROVIDER_COLUMNS[universe]

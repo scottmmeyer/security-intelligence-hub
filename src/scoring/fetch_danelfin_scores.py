@@ -125,11 +125,19 @@ def fetch_danelfin_scores_for_symbols(
     latest_path = output_dir / "latest_danelfin.csv"
 
     symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    archived_rows = _load_rows_by_symbol(output_path)
+    latest_rows = _load_rows_by_symbol(latest_path)
+    pending_symbols = [symbol for symbol in symbol_list if symbol not in archived_rows]
 
-    rows: list[dict[str, str]] = []
-    for i, sym in enumerate(symbol_list, start=1):
+    if verbose and archived_rows:
+        print(
+            f"[resume] Danelfin: skipping {len(symbol_list) - len(pending_symbols)} already checkpointed "
+            f"symbols from {output_path.name}."
+        )
+
+    for i, sym in enumerate(pending_symbols, start=1):
         if verbose:
-            print(f"[{i}/{len(symbol_list)}] {sym}...", end=" ", flush=True)
+            print(f"[{i}/{len(pending_symbols)}] {sym}...", end=" ", flush=True)
 
         danelfin_raw, danelfin_score = fetch_danelfin_score(sym)
 
@@ -139,7 +147,10 @@ def fetch_danelfin_scores_for_symbols(
             "danelfin_score": f"{danelfin_score:.4f}" if danelfin_score is not None else "",
             "sourced_date": today,
         }
-        rows.append(row)
+        archived_rows[sym] = row
+        latest_rows[sym] = row
+        _write_csv(output_path, list(archived_rows.values()))
+        _write_csv(latest_path, list(latest_rows.values()))
 
         if verbose:
             if danelfin_raw is not None:
@@ -147,11 +158,10 @@ def fetch_danelfin_scores_for_symbols(
             else:
                 print("no data")
 
-        if i < len(symbol_list):
+        if i < len(pending_symbols):
             time.sleep(random.uniform(delay_min, delay_max))
 
-    _write_csv(output_path, rows)
-    _write_csv(latest_path, rows)
+    rows = list(archived_rows.values())
 
     if verbose:
         with_score = sum(1 for r in rows if r["danelfin_score"])
@@ -194,6 +204,34 @@ def load_latest_danelfin_scores(
 # ---------------------------------------------------------------------------
 # Internal CSV writer
 # ---------------------------------------------------------------------------
+
+def _merge_into_latest(latest_path: Path, new_rows: list[dict[str, str]]) -> None:
+    """Upsert *new_rows* into *latest_path*, preserving all previously-known symbols."""
+    existing: dict[str, dict[str, str]] = {}
+    if latest_path.exists():
+        with latest_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                sym = str(row.get("symbol", "")).strip().upper()
+                if sym:
+                    existing[sym] = dict(row)
+    for row in new_rows:
+        sym = str(row.get("symbol", "")).strip().upper()
+        if sym:
+            existing[sym] = row
+    _write_csv(latest_path, list(existing.values()))
+
+
+def _load_rows_by_symbol(path: Path) -> dict[str, dict[str, str]]:
+    rows_by_symbol: dict[str, dict[str, str]] = {}
+    if not path.exists():
+        return rows_by_symbol
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sym = str(row.get("symbol", "")).strip().upper()
+            if sym:
+                rows_by_symbol[sym] = dict(row)
+    return rows_by_symbol
+
 
 def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:

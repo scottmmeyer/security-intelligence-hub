@@ -1,0 +1,384 @@
+version: 1
+description: >
+  Canonical allocation hierarchy definition for SIH Allocation Intelligence.
+  Asset Class is the primary (Level 1) dimension, following institutional portfolio
+  construction practice. Each node defines its replay filter mapping, replay
+  sophistication level, and dimension metadata.
+
+  Key scheme: dot-notation — EQUITIES.US.MEGA.HYPER_MEGA
+  Propagation: target_pct_of_total = product(target_pct_of_parent across ancestry chain)
+  Sum invariant: each parent's children target_pct_of_parent must sum to 100.0 ±0.01
+
+nodes:
+
+  # ─── LEVEL 1: ASSET CLASSES ────────────────────────────────────────────────
+
+  - key: EQUITIES
+    label: "Equities"
+    parent_key: null
+    dimension_type: ASSET_CLASS
+    allocation_category_type: EQUITY
+    hierarchy_level: 1
+    children:
+      - EQUITIES.US
+      - EQUITIES.INTERNATIONAL
+      - EQUITIES.EMERGING_MARKETS
+    replay_filter_mapping: {}
+    replay_sophistication: HIGH
+
+  - key: FIXED_INCOME
+    label: "Fixed Income"
+    parent_key: null
+    dimension_type: ASSET_CLASS
+    allocation_category_type: FIXED_INCOME
+    hierarchy_level: 1
+    children:
+      - FIXED_INCOME.US
+      - FIXED_INCOME.INTERNATIONAL
+      - FIXED_INCOME.INFLATION_PROTECTED
+    replay_filter_mapping: {}
+    replay_sophistication: LOW
+
+  - key: DIGITAL
+    label: "Digital Assets"
+    parent_key: null
+    dimension_type: ASSET_CLASS
+    allocation_category_type: DIGITAL
+    hierarchy_level: 1
+    children:
+      - DIGITAL.BITCOIN
+      - DIGITAL.ETHEREUM
+      - DIGITAL.OTHER
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: COMMODITIES
+    label: "Commodities"
+    parent_key: null
+    dimension_type: ASSET_CLASS
+    allocation_category_type: COMMODITY
+    hierarchy_level: 1
+    children:
+      - COMMODITIES.GOLD
+      - COMMODITIES.ENERGY
+      - COMMODITIES.BROAD_BASKET
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: CASH
+    label: "Cash"
+    parent_key: null
+    dimension_type: ASSET_CLASS
+    allocation_category_type: CASH
+    hierarchy_level: 1
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  # ─── LEVEL 2: GEOGRAPHY (EQUITIES) ─────────────────────────────────────────
+
+  - key: EQUITIES.US
+    label: "US Equities"
+    parent_key: EQUITIES
+    dimension_type: GEOGRAPHY
+    allocation_category_type: EQUITY
+    hierarchy_level: 2
+    children:
+      - EQUITIES.US.MEGA
+      - EQUITIES.US.LARGE
+      - EQUITIES.US.MID
+      - EQUITIES.US.SMALL
+      - EQUITIES.US.MICRO
+    replay_filter_mapping:
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL
+    label: "International Developed Equities"
+    parent_key: EQUITIES
+    dimension_type: GEOGRAPHY
+    allocation_category_type: EQUITY
+    hierarchy_level: 2
+    children:
+      - EQUITIES.INTERNATIONAL.MEGA
+      - EQUITIES.INTERNATIONAL.LARGE
+      - EQUITIES.INTERNATIONAL.MID
+      - EQUITIES.INTERNATIONAL.SMALL
+      - EQUITIES.INTERNATIONAL.MICRO
+    replay_filter_mapping:
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.EMERGING_MARKETS
+    label: "Emerging Markets Equities"
+    parent_key: EQUITIES
+    dimension_type: GEOGRAPHY
+    allocation_category_type: EQUITY
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  # ─── LEVEL 2: SUB-ASSETS (FIXED INCOME — geography partition) ────────────
+
+  - key: FIXED_INCOME.US
+    label: "US Fixed Income"
+    parent_key: FIXED_INCOME
+    dimension_type: GEOGRAPHY
+    allocation_category_type: FIXED_INCOME
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: LOW
+
+  - key: FIXED_INCOME.INTERNATIONAL
+    label: "International Fixed Income"
+    parent_key: FIXED_INCOME
+    dimension_type: GEOGRAPHY
+    allocation_category_type: FIXED_INCOME
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: LOW
+
+  - key: FIXED_INCOME.INFLATION_PROTECTED
+    label: "Inflation-Protected Fixed Income"
+    parent_key: FIXED_INCOME
+    dimension_type: GEOGRAPHY
+    allocation_category_type: FIXED_INCOME
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: LOW
+
+  # ─── LEVEL 2: SUB-ASSETS (DIGITAL — not geography-partitioned) ───────────
+
+  - key: DIGITAL.BITCOIN
+    label: "Bitcoin"
+    parent_key: DIGITAL
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: DIGITAL
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: DIGITAL.ETHEREUM
+    label: "Ethereum"
+    parent_key: DIGITAL
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: DIGITAL
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: DIGITAL.OTHER
+    label: "Other Digital Assets"
+    parent_key: DIGITAL
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: DIGITAL
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  # ─── LEVEL 2: SUB-ASSETS (COMMODITIES — not geography-partitioned) ────────
+
+  - key: COMMODITIES.GOLD
+    label: "Gold"
+    parent_key: COMMODITIES
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: COMMODITY
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: COMMODITIES.ENERGY
+    label: "Energy Commodities"
+    parent_key: COMMODITIES
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: COMMODITY
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  - key: COMMODITIES.BROAD_BASKET
+    label: "Broad Commodity Basket"
+    parent_key: COMMODITIES
+    dimension_type: ASSET_SUBTYPE
+    allocation_category_type: COMMODITY
+    hierarchy_level: 2
+    children: []
+    replay_filter_mapping: {}
+    replay_sophistication: NONE
+
+  # ─── LEVEL 3: MARKET CAP (US EQUITIES) ──────────────────────────────────
+
+  - key: EQUITIES.US.MEGA
+    label: "US Mega Cap"
+    parent_key: EQUITIES.US
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children:
+      - EQUITIES.US.MEGA.HYPER_MEGA
+      - EQUITIES.US.MEGA.ULTRA_MEGA
+      - EQUITIES.US.MEGA.EXTENDED_MEGA
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.LARGE
+    label: "US Large Cap"
+    parent_key: EQUITIES.US
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: LARGE
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.MID
+    label: "US Mid Cap"
+    parent_key: EQUITIES.US
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MID
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.SMALL
+    label: "US Small Cap"
+    parent_key: EQUITIES.US
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: SMALL
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.MICRO
+    label: "US Micro Cap"
+    parent_key: EQUITIES.US
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MICRO
+      filter_geography: US
+    replay_sophistication: HIGH
+
+  # ─── LEVEL 3: MARKET CAP (INTERNATIONAL EQUITIES) ──────────────────────
+
+  - key: EQUITIES.INTERNATIONAL.MEGA
+    label: "International Mega Cap"
+    parent_key: EQUITIES.INTERNATIONAL
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.LARGE
+    label: "International Large Cap"
+    parent_key: EQUITIES.INTERNATIONAL
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: LARGE
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.MID
+    label: "International Mid Cap"
+    parent_key: EQUITIES.INTERNATIONAL
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MID
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.SMALL
+    label: "International Small Cap"
+    parent_key: EQUITIES.INTERNATIONAL
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: SMALL
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.MICRO
+    label: "International Micro Cap"
+    parent_key: EQUITIES.INTERNATIONAL
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MICRO
+      filter_geography: INTERNATIONAL
+    replay_sophistication: HIGH
+
+  # ─── LEVEL 4: MEGA SUBTIERS (US EQUITIES ONLY) ──────────────────────────
+
+  - key: EQUITIES.US.MEGA.HYPER_MEGA
+    label: "Hyper Mega (Top Tercile)"
+    parent_key: EQUITIES.US.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: US
+      filter_analytical_subtier: HYPER_MEGA
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.MEGA.ULTRA_MEGA
+    label: "Ultra Mega (Middle Tercile)"
+    parent_key: EQUITIES.US.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: US
+      filter_analytical_subtier: ULTRA_MEGA
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.US.MEGA.EXTENDED_MEGA
+    label: "Extended Mega (Bottom Tercile)"
+    parent_key: EQUITIES.US.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: US
+      filter_analytical_subtier: EXTENDED_MEGA
+    replay_sophistication: HIGH

@@ -1,0 +1,46 @@
+mandate_type: GROWTH
+display_name: "Growth"
+philosophy: >
+  Equity-first orientation with reduced fixed income. Tilts toward small/mid cap
+  for higher long-term growth potential. Emerging markets and international
+  exposure increased relative to Balanced. Digital allocation doubled to reflect
+  asymmetric growth potential. Drift tolerances are moderate with upside bias.
+
+nodes:
+  # Asset class level (depth 1) — must sum to 100.0
+  EQUITIES: 78.0
+  FIXED_INCOME: 12.0
+  DIGITAL: 3.0
+  COMMODITIES: 4.0
+  CASH: 3.0
+
+  # Geography level (depth 2)
+  EQUITIES.US: 52.0
+  EQUITIES.INTERNATIONAL: 16.0
+  EQUITIES.EMERGING_MARKETS: 10.0
+  FIXED_INCOME.US: 7.0
+  FIXED_INCOME.INTERNATIONAL: 3.0
+  FIXED_INCOME.INFLATION_PROTECTED: 2.0
+  DIGITAL.BITCOIN: 1.8
+  DIGITAL.ETHEREUM: 0.8
+  DIGITAL.OTHER: 0.4
+  COMMODITIES.GOLD: 2.0
+  COMMODITIES.ENERGY: 1.5
+  COMMODITIES.BROAD_BASKET: 0.5
+
+  # Market cap level (depth 3)
+  EQUITIES.US.MEGA: 21.0
+  EQUITIES.US.LARGE: 15.0
+  EQUITIES.US.MID: 10.0
+  EQUITIES.US.SMALL: 4.5
+  EQUITIES.US.MICRO: 1.5
+  EQUITIES.INTERNATIONAL.MEGA: 5.0
+  EQUITIES.INTERNATIONAL.LARGE: 5.5
+  EQUITIES.INTERNATIONAL.MID: 3.5
+  EQUITIES.INTERNATIONAL.SMALL: 1.5
+  EQUITIES.INTERNATIONAL.MICRO: 0.5
+
+  # Mega subtier level (depth 4)
+  EQUITIES.US.MEGA.HYPER_MEGA: 7.35
+  EQUITIES.US.MEGA.ULTRA_MEGA: 7.35
+  EQUITIES.US.MEGA.EXTENDED_MEGA: 6.3

@@ -1,0 +1,49 @@
+mandate_type: CONCENTRATED_ALPHA
+display_name: "Concentrated Alpha"
+philosophy: >
+  Replay-driven, signal-driven, conviction-driven. High asymmetry tolerated.
+  Small/mid/micro cap concentration tolerated — these are the return engines.
+  Cash treated as dry powder, not idle drag. Fixed income optional; currently
+  minimal. Mega cap targets reduced to reflect conviction in undervalued tiers.
+  Emerging markets reduced in favor of domestic signal-rich opportunities.
+  Drift tolerances are wide and asymmetric — overweight small/mid/micro is
+  acceptable under this mandate.
+
+nodes:
+  # Asset class level (depth 1) — must sum to 100.0
+  EQUITIES: 88.0
+  FIXED_INCOME: 2.0
+  DIGITAL: 1.0
+  COMMODITIES: 2.0
+  CASH: 7.0
+
+  # Geography level (depth 2)
+  EQUITIES.US: 72.0
+  EQUITIES.INTERNATIONAL: 12.0
+  EQUITIES.EMERGING_MARKETS: 4.0
+  FIXED_INCOME.US: 1.0
+  FIXED_INCOME.INTERNATIONAL: 0.5
+  FIXED_INCOME.INFLATION_PROTECTED: 0.5
+  DIGITAL.BITCOIN: 0.6
+  DIGITAL.ETHEREUM: 0.25
+  DIGITAL.OTHER: 0.15
+  COMMODITIES.GOLD: 1.0
+  COMMODITIES.ENERGY: 0.7
+  COMMODITIES.BROAD_BASKET: 0.3
+
+  # Market cap level (depth 3) — heavy small/mid/micro tilt
+  EQUITIES.US.MEGA: 18.0
+  EQUITIES.US.LARGE: 14.0
+  EQUITIES.US.MID: 20.0
+  EQUITIES.US.SMALL: 14.0
+  EQUITIES.US.MICRO: 6.0
+  EQUITIES.INTERNATIONAL.MEGA: 3.0
+  EQUITIES.INTERNATIONAL.LARGE: 4.0
+  EQUITIES.INTERNATIONAL.MID: 3.0
+  EQUITIES.INTERNATIONAL.SMALL: 1.5
+  EQUITIES.INTERNATIONAL.MICRO: 0.5
+
+  # Mega subtier level (depth 4)
+  EQUITIES.US.MEGA.HYPER_MEGA: 6.3
+  EQUITIES.US.MEGA.ULTRA_MEGA: 6.3
+  EQUITIES.US.MEGA.EXTENDED_MEGA: 5.4

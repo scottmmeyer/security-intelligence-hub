@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
-from typing import Sequence
+from typing import Optional, Sequence
 
 
 class PerformanceSeriesType(str, Enum):
@@ -55,6 +55,46 @@ class AnalyticalUniverseRow:
     investable_vehicle_id: str
     price_at_snapshot: str
     provider_lineage: str
+    # Analytical market-structure fields — computed at snapshot time, then frozen.
+    analytical_market_cap_subtier: str = ""
+    classification_policy_id: str = ""
+    classification_snapshot_date: str = ""
+    # Eligibility flags — set by security type policy at universe build time.
+    replay_eligible: bool = True
+    scoring_eligible: bool = True
+    allocation_eligible: bool = True
+    # Benchmark integrity fields — set by benchmark assignment engine.
+    benchmark_confidence: str = ""
+    """Confidence in primary_benchmark assignment: HIGH | MEDIUM | LOW | UNRESOLVABLE."""
+    sector_benchmark_id: str = ""
+    """Sector-specific benchmark overlay (Phase 2). Empty in Phase 1."""
+    classification_method: str = ""
+    """How benchmark was assigned: EQUITY_CAP_TIER | ADR_DOMICILE | FUND_REGISTRY | etc."""
+    # ---------------------------------------------------------------------------
+    # Factor research and governance fields — Phase 2+: composite versioning.
+    # These are additive and NEVER overwrite composite_score (v1 production).
+    # ---------------------------------------------------------------------------
+    yahoo_abr_normalized: str = ""
+    """Normalized Yahoo ABR score: 6 - abr, clipped to [1.0, 5.0]. Empty if no ABR data."""
+    composite_v2_yahoo: str = ""
+    """Experimental composite score v2: includes Yahoo ABR at ~10% weight. Empty until generate_v2_scores runs."""
+    composite_version: str = "v1"
+    """Version tag for the production composite_score formula. Immutable per row once written."""
+    score_generation_timestamp: str = ""
+    """ISO 8601 UTC timestamp when composite scores were last computed for this row."""
+
+
+@dataclass(frozen=True)
+class ConcentrationScaffold:
+    """Scaffold for future portfolio concentration analytics.
+
+    All fields default to None — computation logic is NOT yet implemented.
+    This dataclass exists purely to reserve the contract shape.
+    """
+
+    portfolio_weight_percent: Optional[float] = None
+    concentration_rank: Optional[int] = None
+    concentration_tier: Optional[str] = None  # DOMINANT | HIGH | MODERATE | LOW
 
 
 @dataclass(frozen=True)
@@ -100,6 +140,7 @@ class ReplaySelection:
     selected_symbols: Sequence[str] = field(default_factory=tuple)
     composite_score_snapshot_date: str = ""
     replay_mode: str = ReplayMode.HISTORICAL_VALIDATION.value
+    filter_analytical_subtier: str = ""
 
 
 @dataclass(frozen=True)

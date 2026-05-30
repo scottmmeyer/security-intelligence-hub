@@ -11,10 +11,20 @@ from src.models.analytical_models import AnalyticalUniverseRow
 from src.replay.registry_loader import resolve_category_mapping
 from src.scoring.fetch_danelfin_scores import load_latest_danelfin_scores
 from src.scoring.fetch_zacks_scores import load_latest_zacks_scores
+from src.scoring.market_cap_subtier_classifier import classify_analytical_subtiers, load_subtier_policy
+from src.classification.security_type_policy import load_security_type_policy
+from src.classification.geography_resolver import (
+    load_adr_domicile_policy,
+    load_geography_overrides,
+    resolve_geography,
+)
+from src.classification.benchmark_assignment_engine import assign_benchmarks
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_WATCHLIST_PATH = _REPO_ROOT / "data" / "supplemental" / "watchlist.csv"
 _DEFAULT_PORTFOLIO_VEHICLES_PATH = _REPO_ROOT / "data" / "supplemental" / "portfolio_vehicles.csv"
+_DEFAULT_SUBTIER_POLICY_PATH = _REPO_ROOT / "config" / "market_cap_subtier_policy.yaml"
+_DEFAULT_SECURITY_METADATA_PATH = _REPO_ROOT / "data" / "signals" / "security_metadata" / "latest_security_metadata.csv"
 
 ANALYTICAL_UNIVERSE_HEADERS = [
     "security_id",
@@ -36,6 +46,24 @@ ANALYTICAL_UNIVERSE_HEADERS = [
     "investable_vehicle_id",
     "price_at_snapshot",
     "provider_lineage",
+    "analytical_market_cap_subtier",
+    "classification_policy_id",
+    "classification_snapshot_date",
+    # Phase 1 classification integrity fields
+    "replay_eligible",
+    "scoring_eligible",
+    "allocation_eligible",
+    "benchmark_confidence",
+    "sector_benchmark_id",
+    "classification_method",
+    # ---------------------------------------------------------------------------
+    # Factor research and governance fields — Phase 2+: composite versioning.
+    # Additive only; composite_score (v1) is never overwritten by these fields.
+    # ---------------------------------------------------------------------------
+    "yahoo_abr_normalized",
+    "composite_v2_yahoo",
+    "composite_version",
+    "score_generation_timestamp",
 ]
 
 _ESS_TEXT_SCORE_MAP = {
@@ -65,6 +93,100 @@ _ZACKS_TEXT_SCORE_MAP = {
     "STRONG_SELL": 1.0,
 }
 
+# ---------------------------------------------------------------------------
+# Composite v2 — Yahoo ABR experimental research weights
+# ---------------------------------------------------------------------------
+# v1 (production):  ESS=0.55, Zacks=0.25, Yahoo=0.10 (unused), Danelfin=0.10
+# v2 (research):    ESS=0.50, Zacks=0.225, Danelfin=0.175, Yahoo=0.10
+#
+# ESS reduced slightly to accommodate Yahoo.  Danelfin upweighted reflecting
+# improved coverage.  Renormalization over available signals still applies.
+# These weights are intentionally conservative for initial validation.
+_V2_YAHOO_WEIGHTS: dict = {
+    "ess":      0.500,
+    "zacks":    0.225,
+    "danelfin": 0.175,
+    "yahoo":    0.100,
+}
+_COMPOSITE_V2_VERSION_TAG = "v2_yahoo_exp_20260522"
+
+
+def normalize_yahoo_abr(abr_raw: str | float) -> float:
+    """Convert Yahoo analyst-buy-rating (1=Strong Buy … 5=Strong Sell) to 1–5 ascending.
+
+    Returns ``6.0 - abr`` clipped to [1.0, 5.0], or 0.0 if no valid ABR present.
+    ABR=1.0 (Strong Buy) → 5.0; ABR=5.0 (Strong Sell) → 1.0.
+    """
+    try:
+        abr = float(str(abr_raw or "").strip())
+    except (ValueError, TypeError):
+        return 0.0
+    if not (1.0 <= abr <= 5.0):
+        return 0.0
+    return round(max(1.0, min(5.0, 6.0 - abr)), 6)
+
+
+def score_composite_v2_yahoo(
+    ess_score_text: str,
+    zacks_rating: str,
+    ess_zacks_rating: str,
+    yahoo_abr_normalized: str,
+    danelfin_score: str,
+) -> float:
+    """Compute experimental composite_v2_yahoo score.
+
+    Identical flow to ``_score_from_inputs`` but uses ``_V2_YAHOO_WEIGHTS`` and
+    treats ``yahoo_abr_normalized`` (already on 1–5 ascending scale) as the Yahoo
+    factor.  Renormalizes over available signals only.
+    """
+    def _to_float(raw: str) -> float:
+        value = str(raw or "").strip()
+        if not value:
+            return 0.0
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+
+    ess_text = str(ess_score_text or "").strip().upper()
+    ess_available = ess_text in _ESS_TEXT_SCORE_MAP
+    ess_score = _ESS_TEXT_SCORE_MAP.get(ess_text, 0.0)
+
+    zacks_key = str(zacks_rating or "").strip()
+    zacks_score_raw = _to_float(zacks_key)
+    if zacks_score_raw and 1.0 <= zacks_score_raw <= 5.0:
+        zacks_score = zacks_score_raw
+        zacks_available = True
+    elif zacks_key.upper() in _ZACKS_TEXT_SCORE_MAP:
+        zacks_score = _ZACKS_TEXT_SCORE_MAP[zacks_key.upper()]
+        zacks_available = True
+    else:
+        ess_zacks_raw = _to_float(str(ess_zacks_rating or "").strip())
+        if ess_zacks_raw and 1.0 <= ess_zacks_raw <= 5.0:
+            zacks_score = round(6.0 - ess_zacks_raw, 2)
+            zacks_available = True
+        else:
+            zacks_score = 3.0
+            zacks_available = False
+
+    yahoo_val = _to_float(yahoo_abr_normalized)
+    danelfin_val = _to_float(danelfin_score)
+
+    w = _V2_YAHOO_WEIGHTS
+    signals = [
+        (ess_score,    w["ess"],      ess_available),
+        (zacks_score,  w["zacks"],    zacks_available),
+        (yahoo_val,    w["yahoo"],    yahoo_val > 0.0),
+        (danelfin_val, w["danelfin"], danelfin_val > 0.0),
+    ]
+    total_weight = sum(wt for _, wt, avail in signals if avail)
+    if total_weight == 0.0:
+        return 3.0
+    return round(
+        sum(score * wt for score, wt, avail in signals if avail) / total_weight,
+        6,
+    )
+
 
 @dataclass(frozen=True)
 class AnalyticalUniverseStoragePaths:
@@ -78,6 +200,43 @@ def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
         return []
     with path.open("r", encoding="utf-8", newline="") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _load_security_metadata(
+    metadata_path: Path | str = _DEFAULT_SECURITY_METADATA_PATH,
+) -> Dict[str, str]:
+    """Load symbol → sector mapping from security metadata cache.
+
+    Returns a dict mapping uppercase symbol to uppercase sector name.
+    Symbols not in the cache will not appear; callers should default to "ALL".
+    """
+    path = Path(metadata_path)
+    if not path.exists():
+        return {}
+    sector_map: Dict[str, str] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            symbol = str(row.get("symbol", "")).strip().upper()
+            sector = str(row.get("sector", "")).strip()
+            if symbol and sector:
+                sector_map[symbol] = sector.upper()
+    return sector_map
+
+
+def _load_full_security_metadata(
+    metadata_path: Path | str = _DEFAULT_SECURITY_METADATA_PATH,
+) -> Dict[str, Dict[str, str]]:
+    """Load symbol → full metadata dict (country, quote_type, sector, industry) from cache."""
+    path = Path(metadata_path)
+    if not path.exists():
+        return {}
+    result: Dict[str, Dict[str, str]] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            sym = str(row.get("symbol", "")).strip().upper()
+            if sym:
+                result[sym] = dict(row)
+    return result
 
 
 def _load_watchlist_rows(
@@ -167,15 +326,22 @@ def _ensure_file_with_headers(path: Path, headers: list[str]) -> None:
         _write_csv_rows(path, headers, [])
         return
 
-    if existing != headers:
+    if existing == headers:
+        return
+
+    # Additive schema evolution: existing columns may be a subset of expected.
+    # Reject if the file has columns not present in the expected schema (schema divergence).
+    headers_set = set(headers)
+    unknown_cols = [h for h in existing if h not in headers_set]
+    if unknown_cols:
         raise ValueError(
-            f"Analytical universe header mismatch for {path}: expected {headers}, observed {existing}."
+            f"Analytical universe has unrecognized columns in {path}: {unknown_cols}. "
+            f"Expected schema: {headers}."
         )
+    # Existing file has fewer columns — additive evolution is OK; caller will overwrite.
 
 
 def _score_from_inputs(ess_score_text: str, zacks_rating: str, ess_zacks_rating: str, yahoo_score: str, danelfin_score: str) -> float:
-    ess_score = _ESS_TEXT_SCORE_MAP.get(str(ess_score_text or "").strip().upper(), 0.0)
-
     def _to_float(raw: str) -> float:
         value = str(raw or "").strip()
         if not value:
@@ -185,28 +351,51 @@ def _score_from_inputs(ess_score_text: str, zacks_rating: str, ess_zacks_rating:
         except ValueError:
             return 0.0
 
+    ess_text = str(ess_score_text or "").strip().upper()
+    ess_available = ess_text in _ESS_TEXT_SCORE_MAP
+    ess_score = _ESS_TEXT_SCORE_MAP.get(ess_text, 0.0)
+
     # zacks_rating is a numeric score (1.0–5.0, already inverted) from internet fetch,
     # or a text token from a legacy/fallback source.
     zacks_key = str(zacks_rating or "").strip()
     zacks_score_raw = _to_float(zacks_key)
     if zacks_score_raw and 1.0 <= zacks_score_raw <= 5.0:
         zacks_score = zacks_score_raw
+        zacks_available = True
     elif zacks_key.upper() in _ZACKS_TEXT_SCORE_MAP:
         zacks_score = _ZACKS_TEXT_SCORE_MAP[zacks_key.upper()]
+        zacks_available = True
     else:
         # No internet fetch yet — fall back to ESS file's Zacks rank (stored as rank 1–5,
         # must be inverted to ascending score: score = 6 - rank).
         ess_zacks_raw = _to_float(str(ess_zacks_rating or "").strip())
         if ess_zacks_raw and 1.0 <= ess_zacks_raw <= 5.0:
             zacks_score = round(6.0 - ess_zacks_raw, 2)
+            zacks_available = True
         else:
             zacks_score = 3.0  # true last-resort NEUTRAL
+            zacks_available = False
+
+    yahoo_val = _to_float(yahoo_score)
+    danelfin_val = _to_float(danelfin_score)
+
+    # Compute a weighted average using only signals that are actually present.
+    # Missing signals (especially ESS, which carries 55% of the base weight) are
+    # excluded from both numerator and denominator rather than defaulting to 0.0,
+    # which would unfairly penalise securities without full coverage (e.g. international
+    # or watchlist names that lack StarMine data).
+    signals = [
+        (ess_score,    0.55, ess_available),
+        (zacks_score,  0.25, zacks_available),
+        (yahoo_val,    0.10, yahoo_val > 0.0),
+        (danelfin_val, 0.10, danelfin_val > 0.0),
+    ]
+    total_weight = sum(w for _, w, avail in signals if avail)
+    if total_weight == 0.0:
+        return 3.0  # no signals available → neutral
 
     return round(
-        (ess_score * 0.55)
-        + (zacks_score * 0.25)
-        + (_to_float(yahoo_score) * 0.10)
-        + (_to_float(danelfin_score) * 0.10),
+        sum(score * w for score, w, avail in signals if avail) / total_weight,
         6,
     )
 
@@ -247,10 +436,13 @@ def build_analytical_universe_rows_from_current(
     zacks_signals_dir: str | Path = "data/signals/zacks",
     danelfin_signals_dir: str | Path = "data/signals/danelfin",
     watchlist_path: str | Path = _DEFAULT_WATCHLIST_PATH,
+    subtier_policy_path: str | Path = _DEFAULT_SUBTIER_POLICY_PATH,
+    security_metadata_path: str | Path = _DEFAULT_SECURITY_METADATA_PATH,
 ) -> List[AnalyticalUniverseRow]:
     """Build analytical universe rows by merging current base universe and signal outputs."""
 
     current_root_path = Path(current_root)
+    sector_by_symbol = _load_security_metadata(security_metadata_path)
     base_rows = _read_csv_rows(current_root_path / "base_equity_universe.csv")
 
     # Merge watchlist symbols — ESS symbols always win on conflict
@@ -259,6 +451,16 @@ def build_analytical_universe_rows_from_current(
     for wrow in watchlist_rows:
         if wrow["symbol"] not in ess_symbols:
             base_rows.append(wrow)
+
+    # Build symbol → raw market cap map for subtier classification (needs raw USD values).
+    base_raw_map: Dict[str, int] = {}
+    for r in base_rows:
+        sym = str(r.get("symbol", "")).strip().upper()
+        raw = r.get("market_cap_raw_usd", "")
+        try:
+            base_raw_map[sym] = int(raw) if raw not in ("", None) else 0
+        except (ValueError, TypeError):
+            base_raw_map[sym] = 0
 
     signal_rows = _read_csv_rows(current_root_path / "signal_snapshot.csv")
     signal_by_symbol = {
@@ -270,6 +472,12 @@ def build_analytical_universe_rows_from_current(
     zacks_scores_by_symbol = load_latest_zacks_scores(zacks_signals_dir)
     danelfin_scores_by_symbol = load_latest_danelfin_scores(danelfin_signals_dir)
 
+    # --- load classification policy data once (reused across all rows) ---
+    type_policy = load_security_type_policy()
+    domicile_map = load_adr_domicile_policy()
+    geo_overrides = load_geography_overrides()
+    full_metadata = _load_full_security_metadata(security_metadata_path)
+
     analytical_rows: List[AnalyticalUniverseRow] = []
     for base_row in sorted(base_rows, key=lambda row: str(row.get("symbol", ""))):
         symbol = str(base_row.get("symbol", "")).strip().upper()
@@ -277,8 +485,7 @@ def build_analytical_universe_rows_from_current(
             continue
 
         signal_row = signal_by_symbol.get(symbol, {})
-        raw_geography = str(base_row.get("geography", "")).strip().upper()
-        geography = raw_geography if raw_geography in {"US", "INTERNATIONAL"} else "US"
+        meta = full_metadata.get(symbol, {})
 
         raw_market_cap = str(base_row.get("market_cap_bucket", "")).strip().upper()
         market_cap_bucket = (
@@ -287,20 +494,55 @@ def build_analytical_universe_rows_from_current(
             else "LARGE"
         )
 
-        benchmark_id = "UNMAPPED"
+        raw_security_type = str(base_row.get("security_type", "UNKNOWN")).strip() or "UNKNOWN"
+        type_info = type_policy.get_type_info(raw_security_type)
+
+        # Geography resolution — replaces the prior "US or default to US" heuristic.
+        geo_resolution = resolve_geography(
+            symbol=symbol,
+            security_type=raw_security_type,
+            country=meta.get("country", ""),
+            quote_type=meta.get("quote_type", ""),
+            existing_geography=str(base_row.get("geography", "")).strip().upper(),
+            domicile_map=domicile_map,
+            overrides=geo_overrides,
+        )
+        geography = geo_resolution.geography
+        # Use UNKNOWN as the stored geography (not silently defaulting to US);
+        # the audit script (V01) will flag equities with geography=UNKNOWN.
+
+        # Country: use yfinance metadata if available; otherwise derive from geography.
+        resolved_country = meta.get("country", "").strip()
+        if not resolved_country:
+            resolved_country = "US" if geography == "US" else "UNKNOWN"
+
+        # Benchmark assignment — uses classification engine for confidence + method.
+        bm_assignment = assign_benchmarks(
+            symbol=symbol,
+            security_type_info=type_info,
+            geography_resolution=geo_resolution,
+            market_cap_bucket=market_cap_bucket,
+            benchmark_registry=benchmark_registry,
+            vehicle_registry=vehicle_registry,
+        )
+        benchmark_id = bm_assignment.primary_benchmark_id
+        # NOT_APPLICABLE (for ETFs/funds/bonds) → preserve as UNMAPPED for UI compat
+        if benchmark_id == "NOT_APPLICABLE":
+            benchmark_id = "UNMAPPED"
+
+        # Vehicle ID — direct lookup from registry (benchmark_assignment_engine doesn't expose this)
         vehicle_id = "UNMAPPED"
+        lookup_geo = geography if geography in {"US", "INTERNATIONAL"} else "US"
         try:
-            benchmark, vehicle = resolve_category_mapping(
-                geography=geography,
+            _bm, vehicle = resolve_category_mapping(
+                geography=lookup_geo,
                 market_cap_bucket=market_cap_bucket,
                 industry_scope="ALL",
                 benchmark_registry=benchmark_registry,
                 vehicle_registry=vehicle_registry,
             )
-            benchmark_id = benchmark.benchmark_id
             vehicle_id = vehicle.vehicle_id
         except ValueError:
-            benchmark_id = "UNMAPPED"
             vehicle_id = "UNMAPPED"
 
         ess_score_text = str(signal_row.get("starmine_ess_text") or base_row.get("starmine_ess_text") or "").strip()
@@ -321,14 +563,14 @@ def build_analytical_universe_rows_from_current(
             AnalyticalUniverseRow(
                 security_id=f"{str(base_row.get('provider', 'UNKNOWN')).strip().upper()}:{symbol}",
                 symbol=symbol,
-                security_type=str(base_row.get("security_type", "UNKNOWN")).strip() or "UNKNOWN",
+                security_type=raw_security_type,
                 snapshot_date=snapshot_date,
                 run_id=run_id,
                 market_cap_bucket=market_cap_bucket,
                 geography=geography,
-                country="US" if geography == "US" else "UNKNOWN",
-                industry=str(base_row.get("industry", "ALL")).strip() or "ALL",
-                sector=str(base_row.get("sector", "ALL")).strip() or "ALL",
+                country=resolved_country,
+                industry=sector_by_symbol.get(symbol, str(base_row.get("industry", "")).strip().upper() or "ALL"),
+                sector=sector_by_symbol.get(symbol, str(base_row.get("sector", "")).strip().upper() or "ALL"),
                 composite_score=_score_from_inputs(ess_score_text, zacks_rating, ess_zacks_rating, yahoo_score, danelfin_score),
                 ess_score_text=ess_score_text,
                 zacks_rating=zacks_rating,
@@ -341,10 +583,79 @@ def build_analytical_universe_rows_from_current(
                     f"provider={str(base_row.get('provider', '')).strip()};"
                     f"source_file={str(base_row.get('source_file', '')).strip()}"
                 ),
+                # Subtier fields injected below via classifier; placeholders here.
+                analytical_market_cap_subtier="",
+                classification_policy_id="",
+                classification_snapshot_date="",
+                # Phase 1 eligibility flags from security type policy
+                replay_eligible=type_info.replay_eligible,
+                scoring_eligible=type_info.scoring_eligible,
+                allocation_eligible=type_info.allocation_eligible,
+                # Phase 1 benchmark integrity fields
+                benchmark_confidence=bm_assignment.benchmark_confidence,
+                sector_benchmark_id=bm_assignment.sector_benchmark_id,
+                classification_method=bm_assignment.classification_method,
             )
         )
 
-    return analytical_rows
+    # --- inject dynamic analytical subtiers ---
+    policy = load_subtier_policy(subtier_policy_path)
+    row_dicts = [
+        {
+            "symbol": r.symbol,
+            "market_cap_bucket": r.market_cap_bucket,
+            "market_cap_raw_usd": str(base_raw_map.get(r.symbol, "")),
+        }
+        for r in analytical_rows
+    ]
+    enriched_dicts = classify_analytical_subtiers(row_dicts, policy, snapshot_date)
+    subtier_by_symbol = {
+        d["symbol"]: (
+            d["analytical_market_cap_subtier"],
+            d["classification_policy_id"],
+            d["classification_snapshot_date"],
+        )
+        for d in enriched_dicts
+    }
+
+    final_rows: List[AnalyticalUniverseRow] = []
+    for row in analytical_rows:
+        sub, pid, csd = subtier_by_symbol.get(row.symbol, ("", "", ""))
+        final_rows.append(
+            AnalyticalUniverseRow(
+                security_id=row.security_id,
+                symbol=row.symbol,
+                security_type=row.security_type,
+                snapshot_date=row.snapshot_date,
+                run_id=row.run_id,
+                market_cap_bucket=row.market_cap_bucket,
+                geography=row.geography,
+                country=row.country,
+                industry=row.industry,
+                sector=row.sector,
+                composite_score=row.composite_score,
+                ess_score_text=row.ess_score_text,
+                zacks_rating=row.zacks_rating,
+                yahoo_score=row.yahoo_score,
+                danelfin_score=row.danelfin_score,
+                benchmark_id=row.benchmark_id,
+                investable_vehicle_id=row.investable_vehicle_id,
+                price_at_snapshot=row.price_at_snapshot,
+                provider_lineage=row.provider_lineage,
+                analytical_market_cap_subtier=sub,
+                classification_policy_id=pid,
+                classification_snapshot_date=csd,
+                # Propagate Phase 1 eligibility and benchmark integrity fields unchanged
+                replay_eligible=row.replay_eligible,
+                scoring_eligible=row.scoring_eligible,
+                allocation_eligible=row.allocation_eligible,
+                benchmark_confidence=row.benchmark_confidence,
+                sector_benchmark_id=row.sector_benchmark_id,
+                classification_method=row.classification_method,
+            )
+        )
+
+    return final_rows
 
 
 def write_analytical_universe_rows(
@@ -410,6 +721,19 @@ def write_analytical_universe_rows(
                 "investable_vehicle_id": row.investable_vehicle_id,
                 "price_at_snapshot": row.price_at_snapshot,
                 "provider_lineage": row.provider_lineage,
+                "analytical_market_cap_subtier": row.analytical_market_cap_subtier,
+                "classification_policy_id": row.classification_policy_id,
+                "classification_snapshot_date": row.classification_snapshot_date,
+                "replay_eligible": row.replay_eligible,
+                "scoring_eligible": row.scoring_eligible,
+                "allocation_eligible": row.allocation_eligible,
+                "benchmark_confidence": row.benchmark_confidence,
+                "sector_benchmark_id": row.sector_benchmark_id,
+                "classification_method": row.classification_method,
+                "yahoo_abr_normalized": row.yahoo_abr_normalized,
+                "composite_v2_yahoo": row.composite_v2_yahoo,
+                "composite_version": row.composite_version,
+                "score_generation_timestamp": row.score_generation_timestamp,
             }
         )
 

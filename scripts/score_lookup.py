@@ -173,6 +173,19 @@ def lookup(symbols: list[str], fetch_fresh: bool = False, show_formula: bool = F
             danelfin = _to_float(analytical_row.get("danelfin_score", "")) or 0.0
             zacks_val = _to_float(zacks_rating) or 0.0
             source = "analytical_universe (pipeline)"
+
+            # If the pipeline has no Zacks data, check the live cache — the universe
+            # may have been built before the symbol's Zacks score was fetched.
+            if not zacks_val:
+                zacks_cache_row = zacks_cache.get(sym)
+                if zacks_cache_row:
+                    cached_raw = _to_float(zacks_cache_row.get("zacks_score", ""))
+                    if cached_raw is not None and 1.0 <= cached_raw <= 5.0:
+                        zacks_val = cached_raw
+                        sourced = zacks_cache_row.get("sourced_date", "")
+                        rank_raw = zacks_cache_row.get("zacks_rank", "")
+                        composite = _compute_composite(ess_score, zacks_val, yahoo, danelfin)
+                        source = f"analytical_universe + zacks cache ({sourced}, rank={rank_raw})"
         else:
             # Not in pipeline — compute on-the-fly from available data
             base_row = base.get(sym, {})

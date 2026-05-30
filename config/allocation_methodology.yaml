@@ -1,0 +1,472 @@
+version: 1
+methodology_id: v1_2026_05
+created_at: "2026-05-20"
+description: >
+  Investment Policy Statement (IPS)-equivalent rationale for all allocation targets.
+  Each node's baseline_target_pct_of_parent is derived from historical evidence,
+  risk analysis, and institutional best practices. This document explains WHY each
+  percentage exists. The allocation_dimensions.yaml defines the hierarchy structure;
+  this file provides the methodology backing each seed target.
+
+  These baselines reflect a growth-oriented institutional portfolio philosophy,
+  broadly consistent with what a fee-only financial advisor would recommend for
+  a 10+ year investment horizon with moderate-to-high risk tolerance.
+
+nodes:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 1 — ASSET CLASSES
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: EQUITIES
+    label: "Equities"
+    baseline_target_pct_of_parent: 70.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Equity risk premium has averaged approximately 5.0% annualized over T-bills
+        from 1928–2025 (Damodaran NYU equity risk premium dataset).
+      - >
+        The S&P 500 has delivered approximately 10.5% nominal CAGR from 1957–2025,
+        compounding wealth far in excess of bonds or inflation.
+      - >
+        Time-diversification: equity return volatility decreases substantially over
+        10+ year horizons, justifying high allocation for long-horizon portfolios.
+      - >
+        Equity allocations of 60–80% are standard in growth-oriented institutional
+        portfolios (NACUBO endowment survey average equity allocation ~57% including
+        private equity; public equity ~40–50%).
+      - >
+        Vanguard model portfolios: 80/20 (equity/bond) is recommended for growth;
+        70/30 is the typical balanced growth benchmark referenced by major advisors.
+    risk_factors:
+      - "Short-term volatility significantly higher than fixed income (annual std dev ~15–20%)"
+      - "Drawdown risk: S&P 500 peak-to-trough losses of 50%+ in 2000–02 and 2008–09"
+      - "Equity concentration in MEGA tier creates idiosyncratic mega-cap risk"
+      - "Emerging market equity adds currency and geopolitical risk"
+
+  - key: FIXED_INCOME
+    label: "Fixed Income"
+    baseline_target_pct_of_parent: 20.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Fixed income reduces portfolio volatility by approximately 25–35% in equity
+        drawdown periods (2000–2002, 2008–2009, 2020 data; Bloomberg Barclays Aggregate).
+      - >
+        60/40 portfolio (equity/bond) has delivered Sharpe ratio ~0.45 historically,
+        superior to pure equity on a risk-adjusted basis over most 10-year windows.
+      - >
+        Duration-matched bonds provide predictable cash flow and portfolio rebalancing
+        reserve, enabling buy-low rebalancing during equity drawdowns.
+      - >
+        20% allocation preserves meaningful equity upside while providing meaningful
+        volatility dampening — consistent with growth-tilted institutional mandates.
+    risk_factors:
+      - "Duration risk: bond prices fall when rates rise (2022 drawdown: AGG -13%)"
+      - "Inflation erosion of real returns in extended high-inflation regimes"
+      - "Lower replay sophistication in current SIH waypoint — targets less dynamically adaptive"
+
+  - key: DIGITAL
+    label: "Digital Assets"
+    baseline_target_pct_of_parent: 4.0
+    confidence_level: LOW
+    evidence_basis:
+      - >
+        Bitcoin and Ethereum have delivered significant positive asymmetric returns
+        in adoption cycles (2019-2021 cycle: BTC +1,300%, ETH +6,800%).
+      - >
+        Small allocation (2–5%) captures asymmetric upside while containing downside
+        portfolio impact within tolerable bounds.
+      - >
+        Institutional adoption increasing: Fidelity, BlackRock (iShares Bitcoin ETF),
+        and major pension funds have established digital asset exposure.
+      - >
+        Diversification benefit: Bitcoin correlation to S&P 500 has been inconsistent,
+        offering periodic non-correlated return episodes.
+    risk_factors:
+      - "Extreme volatility: Bitcoin drawdowns exceeding 70–80% in bear cycles (2018, 2022)"
+      - "Regulatory uncertainty across major jurisdictions"
+      - "Liquidity fragmentation and custody risk"
+      - "Hard governance cap of 8% enforced; current target 4% provides ample buffer"
+
+  - key: COMMODITIES
+    label: "Commodities"
+    baseline_target_pct_of_parent: 4.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        Gold has a long-term negative correlation with the USD and serves as an
+        inflation hedge in extended commodity supercycle periods.
+      - >
+        GSCI commodity index delivered positive returns in the 2000s commodity
+        supercycle and provides inflation protection unavailable in equity/bond mix.
+      - >
+        Small commodity allocation (3–5%) improves portfolio Sharpe ratio in
+        inflationary regimes (PIMCO commodity diversification research).
+      - >
+        Energy exposure provides indirect hedge against oil-price-driven inflation.
+    risk_factors:
+      - "Contango in futures-based commodity funds erodes returns vs spot"
+      - "High volatility in energy commodities"
+      - "Low or negative real returns in deflationary regimes"
+
+  - key: CASH
+    label: "Cash"
+    baseline_target_pct_of_parent: 2.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Minimum liquidity reserve for tactical rebalancing and opportunistic deployment
+        during market dislocations.
+      - >
+        2% cash floor is the structural minimum enforced by governance policy.
+      - >
+        At current T-bill yields (4–5%), cash drag is partially offset by money market
+        returns, making a 2% floor relatively low-cost in the current rate environment.
+    risk_factors:
+      - "Cash drag in bull markets reduces compound returns"
+      - "Inflation erosion in extended low-rate environments"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 2 — GEOGRAPHY (EQUITIES)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: EQUITIES.US
+    label: "US Equities"
+    baseline_target_pct_of_parent: 72.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        US equities outperformed MSCI EAFE by approximately 2.1% annualized from
+        1970–2025 (MSCI data; includes dividends reinvested).
+      - >
+        US market represents ~60% of global equity market capitalization (MSCI ACWI
+        weighting as of 2025), justifying overweight for USD-denominated portfolios.
+      - >
+        US corporate earnings quality, accounting transparency, and shareholder
+        return culture (buybacks + dividends) superior to most international peers.
+      - >
+        SIH replay data is most sophisticated for US equities — highest replay
+        coverage and confidence.
+    risk_factors:
+      - "Home-country bias concentration risk"
+      - "US valuation premium vs international (S&P 500 P/E ~22 vs EAFE ~14 historically)"
+      - "USD strength risk in international portfolio context"
+
+  - key: EQUITIES.INTERNATIONAL
+    label: "International Developed Equities"
+    baseline_target_pct_of_parent: 20.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        International diversification reduces portfolio volatility via non-perfect
+        correlation (US-EAFE rolling 3-year correlation ~0.75-0.85).
+      - >
+        Valuation discount: International developed markets trade at significant
+        P/E and P/B discount to US, historically mean-reverting.
+      - >
+        Currency diversification benefit in non-USD economic cycles.
+    risk_factors:
+      - "Structural underperformance vs US in the 2010-2025 decade"
+      - "Currency risk (hedged vs unhedged debate)"
+      - "Lower SIH replay coverage vs US universe"
+
+  - key: EQUITIES.EMERGING_MARKETS
+    label: "Emerging Markets Equities"
+    baseline_target_pct_of_parent: 8.0
+    confidence_level: LOW
+    evidence_basis:
+      - >
+        Emerging market equities represent ~12% of global market cap (MSCI ACWI);
+        8% allocation reflects a slight underweight acknowledging higher risk.
+      - >
+        Long-term growth premium: EM GDP growth historically 2–3x developed markets,
+        providing higher return potential over 10+ year horizons.
+      - >
+        Diversification: EM factors include demographics, commodity producer exposure,
+        and policy cycles not correlated with developed market cycles.
+    risk_factors:
+      - "Political and regulatory risk; capital controls"
+      - "Currency volatility substantially higher than developed markets"
+      - "No SIH replay coverage in current waypoint (methodology baseline only)"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 2 — GEOGRAPHY (FIXED INCOME)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: FIXED_INCOME.US
+    label: "US Fixed Income"
+    baseline_target_pct_of_parent: 60.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        USD-denominated bonds eliminate currency risk for USD investors; core
+        stabilization role is most reliable in domestic currency.
+      - >
+        US Treasury market is the deepest, most liquid sovereign bond market globally,
+        providing reliable safe-haven performance in equity crises.
+    risk_factors:
+      - "Duration risk in rising rate environment"
+
+  - key: FIXED_INCOME.INTERNATIONAL
+    label: "International Fixed Income"
+    baseline_target_pct_of_parent: 25.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        International bond diversification provides exposure to different rate cycles
+        and yield differentials, improving risk-adjusted returns.
+      - >
+        Developed market sovereign bonds (Germany, Japan, UK) provide low-correlation
+        returns vs US Treasuries.
+    risk_factors:
+      - "Currency risk unless hedged; hedging cost reduces yield advantage"
+      - "Negative nominal yields in some markets reduce appeal"
+
+  - key: FIXED_INCOME.INFLATION_PROTECTED
+    label: "Inflation-Protected Fixed Income"
+    baseline_target_pct_of_parent: 15.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        TIPS (Treasury Inflation-Protected Securities) delivered positive real returns
+        in the 2021–2022 inflation spike when nominal bonds fell sharply.
+      - >
+        Inflation protection fills a specific gap that neither equities nor nominal
+        bonds reliably cover in all regimes.
+    risk_factors:
+      - "Lower real yield than nominal bonds in low-inflation regimes"
+      - "Liquidity slightly lower than nominal Treasuries"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 2 — SUB-ASSETS (DIGITAL, COMMODITIES — not geography-partitioned)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: DIGITAL.BITCOIN
+    label: "Bitcoin"
+    baseline_target_pct_of_parent: 60.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Bitcoin dominates digital asset market (~50-60% of total crypto market cap)"
+      - "Most liquid, regulated, and institutionally-accepted digital asset"
+      - "Largest ETF AUM (iShares IBIT, Fidelity FBTC) confirms institutional accessibility"
+    risk_factors:
+      - "70-80% drawdowns in bear cycles; extreme volatility"
+
+  - key: DIGITAL.ETHEREUM
+    label: "Ethereum"
+    baseline_target_pct_of_parent: 25.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Second largest digital asset; dominant smart contract platform"
+      - "Staking yield provides income component absent in Bitcoin"
+    risk_factors:
+      - "Smart contract risk; protocol upgrade risk; competitive risk from L2s"
+
+  - key: DIGITAL.OTHER
+    label: "Other Digital Assets"
+    baseline_target_pct_of_parent: 15.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Residual exposure to alternative digital assets for optionality"
+    risk_factors:
+      - "Highest risk within digital class; lower liquidity; regulatory uncertainty"
+
+  - key: COMMODITIES.GOLD
+    label: "Gold"
+    baseline_target_pct_of_parent: 50.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        Gold has served as a crisis hedge and USD-negative hedge for centuries;
+        negative correlation with USD in most regimes.
+      - "Gold delivered +25% returns in 2022 when both equities and bonds fell"
+    risk_factors:
+      - "No income; opportunity cost vs dividend-paying assets"
+
+  - key: COMMODITIES.ENERGY
+    label: "Energy Commodities"
+    baseline_target_pct_of_parent: 30.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - "Energy inflation directly hedged; oil price spikes hurt equity portfolios"
+      - "Energy sector supply/demand cycles produce uncorrelated return episodes"
+    risk_factors:
+      - "High volatility; energy transition structural headwinds"
+
+  - key: COMMODITIES.BROAD_BASKET
+    label: "Broad Commodity Basket"
+    baseline_target_pct_of_parent: 20.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Broad exposure (agriculture, metals, energy) provides full commodity cycle benefit"
+    risk_factors:
+      - "Contango cost in futures-based ETFs (VXX-style roll decay)"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 3 — MARKET CAP (US EQUITIES)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: EQUITIES.US.MEGA
+    label: "US Mega Cap"
+    baseline_target_pct_of_parent: 45.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Mega-cap US equities (≥$565B) represent approximately 45–55% of the
+        S&P 500 by market weight as of 2025, reflecting genuine economic dominance.
+      - >
+        Mega-cap quality factor: strong free cash flow, moat-protected margins,
+        and pricing power deliver superior risk-adjusted returns over full cycles.
+      - >
+        Lower drawdowns: in 2022 bear market, S&P 100 (mega-cap proxy) fell ~19%
+        vs S&P 500 -19.4% and Russell 2000 -21.6%; in 2020 COVID crash, recovery
+        was faster for mega vs small cap.
+      - "Full replay chain available in SIH — highest confidence evidence source."
+    risk_factors:
+      - "High concentration: top 10 stocks = ~34% of S&P 500 as of 2025"
+      - "Valuation premium; mean-reversion risk if earnings disappoint"
+
+  - key: EQUITIES.US.LARGE
+    label: "US Large Cap"
+    baseline_target_pct_of_parent: 30.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Large cap US equities ($85B–$565B) represent the S&P 400/500 ex-mega
+        composition; proven track record of steady compounding.
+      - "Lower single-stock concentration risk vs mega tier"
+    risk_factors:
+      - "Lower growth ceiling than small/mid; lower alpha opportunity"
+
+  - key: EQUITIES.US.MID
+    label: "US Mid Cap"
+    baseline_target_pct_of_parent: 15.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        Mid-cap US equities have historically outperformed both large and small cap
+        on a risk-adjusted basis over 20-year periods (S&P MidCap 400 CAGR vs S&P 500).
+      - "Sweet spot: established business models + meaningful growth runway"
+    risk_factors:
+      - "Higher beta than large cap; harder hit in risk-off environments"
+
+  - key: EQUITIES.US.SMALL
+    label: "US Small Cap"
+    baseline_target_pct_of_parent: 7.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - >
+        Fama-French size premium: small-cap stocks have delivered a positive size
+        premium over large cap historically (~2% annualized over long periods).
+      - "Greater diversification benefit — lower correlation to mega/large cap"
+    risk_factors:
+      - "Higher volatility; wider bid-ask spreads; less institutional coverage"
+      - "Size premium has been intermittent — absent for stretches of 5-10 years"
+
+  - key: EQUITIES.US.MICRO
+    label: "US Micro Cap"
+    baseline_target_pct_of_parent: 3.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Governance cap of 5% limits downside; 3% provides optionality on outsized gains"
+      - "Small allocation captures micro-cap growth cycles without outsized risk"
+    risk_factors:
+      - "Illiquidity; high idiosyncratic risk; limited institutional analyst coverage"
+      - "Governance cap: max_micro_cap_pct enforced at 5% of total"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 3 — MARKET CAP (INTERNATIONAL EQUITIES)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: EQUITIES.INTERNATIONAL.MEGA
+    label: "International Mega Cap"
+    baseline_target_pct_of_parent: 30.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - "International mega caps (ASML, Nestle, Samsung class) — quality moat globally"
+      - "Lower volatility than international small/mid; more liquid"
+    risk_factors:
+      - "No Mega subtier replay coverage in current SIH waypoint (methodology baseline)"
+
+  - key: EQUITIES.INTERNATIONAL.LARGE
+    label: "International Large Cap"
+    baseline_target_pct_of_parent: 35.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - "Core international exposure; MSCI EAFE is predominantly large-cap companies"
+    risk_factors:
+      - "Currency risk; lower accounting transparency vs US"
+
+  - key: EQUITIES.INTERNATIONAL.MID
+    label: "International Mid Cap"
+    baseline_target_pct_of_parent: 20.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Diversification benefit; access to regional champions not in EAFE"
+    risk_factors:
+      - "Lower liquidity; limited SIH replay coverage"
+
+  - key: EQUITIES.INTERNATIONAL.SMALL
+    label: "International Small Cap"
+    baseline_target_pct_of_parent: 10.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Small-cap premium potential in international context"
+    risk_factors:
+      - "Illiquidity; high currency/political risk; limited SIH replay coverage"
+
+  - key: EQUITIES.INTERNATIONAL.MICRO
+    label: "International Micro Cap"
+    baseline_target_pct_of_parent: 5.0
+    confidence_level: LOW
+    evidence_basis:
+      - "Minimal allocation; governance-bounded; architecture scaffold"
+    risk_factors:
+      - "Extreme illiquidity; highest risk tier; minimal institutional access"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LEVEL 4 — MEGA SUBTIERS (US EQUITIES ONLY)
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  - key: EQUITIES.US.MEGA.HYPER_MEGA
+    label: "Hyper Mega (Top Tercile)"
+    baseline_target_pct_of_parent: 35.0
+    confidence_level: HIGH
+    evidence_basis:
+      - >
+        Top-tercile mega-cap (NVDA, AAPL, MSFT, GOOGL, AMZN class) has compounded at
+        approximately 1.4x the broader mega-cap cohort over rolling 5-year windows
+        (SIH replay analysis, 2025 cohort).
+      - >
+        Hyper mega companies benefit from network effects, AI infrastructure moats,
+        and free cash flow generational compounding that smaller companies cannot replicate.
+      - "Full SIH replay evidence available via filter_analytical_subtier=HYPER_MEGA"
+    risk_factors:
+      - "Extreme concentration risk: single-name dominance (NVDA ~10% of S&P 500 in 2025)"
+      - "Regulatory overhang (antitrust, AI regulation)"
+      - "Governance cap: max_mega_concentration_pct applies to the full MEGA subtree"
+
+  - key: EQUITIES.US.MEGA.ULTRA_MEGA
+    label: "Ultra Mega (Middle Tercile)"
+    baseline_target_pct_of_parent: 35.0
+    confidence_level: HIGH
+    evidence_basis:
+      - "Middle tercile mega provides quality-moat diversification away from single-name risk"
+      - "Consistent outperformance vs extended mega tier in most 3-year windows"
+      - "Full SIH replay evidence available via filter_analytical_subtier=ULTRA_MEGA"
+    risk_factors:
+      - "Less differentiated alpha vs HYPER_MEGA in strong-momentum environments"
+
+  - key: EQUITIES.US.MEGA.EXTENDED_MEGA
+    label: "Extended Mega (Bottom Tercile)"
+    baseline_target_pct_of_parent: 30.0
+    confidence_level: MEDIUM
+    evidence_basis:
+      - "Transitional tier: companies that may graduate to Ultra/Hyper or fall to Large"
+      - "Lowest volatility within mega tier; benefits from mega quality floor"
+      - "Full SIH replay evidence available via filter_analytical_subtier=EXTENDED_MEGA"
+    risk_factors:
+      - "Lowest growth momentum within mega tier; subject to downward reclassification"
+      - "Closer to Large cap in return/risk profile"

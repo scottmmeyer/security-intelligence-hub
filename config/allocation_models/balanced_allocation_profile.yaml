@@ -1,0 +1,45 @@
+mandate_type: BALANCED
+display_name: "Balanced"
+philosophy: >
+  Risk-managed diversification across equities, fixed income, and alternatives.
+  Targets a ~60/30 equity/fixed-income split with modest digital and commodity
+  exposure. Drift tolerances are symmetric and moderate.
+
+nodes:
+  # Asset class level (depth 1) — must sum to 100.0
+  EQUITIES: 60.0
+  FIXED_INCOME: 30.0
+  DIGITAL: 1.0
+  COMMODITIES: 4.0
+  CASH: 5.0
+
+  # Geography level (depth 2)
+  EQUITIES.US: 40.0
+  EQUITIES.INTERNATIONAL: 14.0
+  EQUITIES.EMERGING_MARKETS: 6.0
+  FIXED_INCOME.US: 18.0
+  FIXED_INCOME.INTERNATIONAL: 7.0
+  FIXED_INCOME.INFLATION_PROTECTED: 5.0
+  DIGITAL.BITCOIN: 0.6
+  DIGITAL.ETHEREUM: 0.25
+  DIGITAL.OTHER: 0.15
+  COMMODITIES.GOLD: 2.5
+  COMMODITIES.ENERGY: 1.0
+  COMMODITIES.BROAD_BASKET: 0.5
+
+  # Market cap level (depth 3)
+  EQUITIES.US.MEGA: 16.0
+  EQUITIES.US.LARGE: 12.0
+  EQUITIES.US.MID: 8.0
+  EQUITIES.US.SMALL: 3.0
+  EQUITIES.US.MICRO: 1.0
+  EQUITIES.INTERNATIONAL.MEGA: 4.0
+  EQUITIES.INTERNATIONAL.LARGE: 5.0
+  EQUITIES.INTERNATIONAL.MID: 3.0
+  EQUITIES.INTERNATIONAL.SMALL: 1.5
+  EQUITIES.INTERNATIONAL.MICRO: 0.5
+
+  # Mega subtier level (depth 4)
+  EQUITIES.US.MEGA.HYPER_MEGA: 5.6
+  EQUITIES.US.MEGA.ULTRA_MEGA: 5.6
+  EQUITIES.US.MEGA.EXTENDED_MEGA: 4.8

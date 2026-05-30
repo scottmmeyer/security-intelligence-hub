@@ -29,6 +29,9 @@ class NormalizedEssRecord:
     starmine_ess_numeric: float | None
     starmine_ess_numeric_estimated: bool
     starmine_ess_source_type: str
+    # Raw 0.1–10.0 Fidelity ESS score, present only when the provider export
+    # includes a dedicated numeric-score column (vs. text-label only).
+    starmine_ess_raw_score: float | None
 
 
 def normalize_symbol(raw_symbol: str) -> str:
@@ -101,6 +104,15 @@ def normalize_ess_rows(
         source_type_hint = (row.get("starmine_ess_source_type") or "").strip()
         direct_numeric_raw = (row.get("starmine_ess_numeric") or "").strip()
         source_type = _resolve_source_type(row=row, numeric_value=float(direct_numeric_raw) if direct_numeric_raw else None)
+        # Raw 0.1–10.0 score: present when provider exports a separate numeric column
+        raw_score_str = (row.get("starmine_ess_raw_score") or "").strip()
+        ess_raw_score: float | None = None
+        if raw_score_str:
+            try:
+                v = float(raw_score_str)
+                ess_raw_score = v if 0.0 <= v <= 10.0 else None
+            except ValueError:
+                pass
         starmine_numeric, estimated, resolved_source_type = _resolve_numeric_mapping(
             ess_text=ess_text,
             direct_numeric_raw=direct_numeric_raw,
@@ -127,6 +139,7 @@ def normalize_ess_rows(
             starmine_ess_numeric=starmine_numeric,
             starmine_ess_numeric_estimated=estimated,
             starmine_ess_source_type=resolved_source_type,
+            starmine_ess_raw_score=ess_raw_score,
         )
         normalized.append(asdict(normalized_record))
 
