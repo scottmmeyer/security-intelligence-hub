@@ -1,0 +1,875 @@
+version: 1
+decomposition_version: etf-exposure-decomp-v1
+
+default:
+  decomposition_method: HEURISTIC_FALLBACK
+  decomposition_confidence: 0.35
+
+symbols:
+  # ── Broad US Market ──────────────────────────────────────────────────────
+  #
+  # Subtier notes: mega_subtier_mix values are normalized to 100 WITHIN the
+  # MEGA share.  Multiply by the MEGA weight to get effective total exposure.
+  # Example: QQQ MEGA=95%, HYPER subtier=50.53% → effective HYPER = 48%.
+
+  QQQ:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.72
+    strategic_role: AGGRESSIVE_GROWTH_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 95
+      LARGE: 5
+    # Effective: HYPER 48%, ULTRA 35%, EXTENDED 12% (95% MEGA × subtier pcts)
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 50.5263
+      ULTRA_MEGA: 36.8421
+      EXTENDED_MEGA: 12.6316
+    exposure_sector_mix:
+      TECHNOLOGY: 45
+      COMMUNICATION_SERVICES: 20
+      CONSUMER_DISCRETIONARY: 15
+      HEALTHCARE: 10
+      FINANCIALS: 5
+      INDUSTRIALS: 5
+    exposure_style_mix:
+      GROWTH: 70
+      CORE: 30
+    exposure_thematic_mix:
+      AI_INFRA: 65
+      MEGA_TECH_CONCENTRATION: 95
+      GROWTH_MOMENTUM: 85
+
+  VOO:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.78
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 85
+      LARGE: 15
+    # Effective: HYPER 30%, ULTRA 30%, EXTENDED 25%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 35.2941
+      ULTRA_MEGA: 35.2941
+      EXTENDED_MEGA: 29.4118
+    exposure_sector_mix:
+      TECHNOLOGY: 28
+      FINANCIALS: 13
+      HEALTHCARE: 12
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 9
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 6
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 3
+      MATERIALS: 2
+      OTHER: 2
+    exposure_style_mix:
+      CORE: 100
+
+  IVV:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.78
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 85
+      LARGE: 15
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 35.2941
+      ULTRA_MEGA: 35.2941
+      EXTENDED_MEGA: 29.4118
+    exposure_sector_mix:
+      TECHNOLOGY: 28
+      FINANCIALS: 13
+      HEALTHCARE: 12
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 9
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 6
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 3
+      MATERIALS: 2
+      OTHER: 2
+    exposure_style_mix:
+      CORE: 100
+
+  SPY:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.75
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 85
+      LARGE: 15
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 35.2941
+      ULTRA_MEGA: 35.2941
+      EXTENDED_MEGA: 29.4118
+    exposure_sector_mix:
+      TECHNOLOGY: 28
+      FINANCIALS: 13
+      HEALTHCARE: 12
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 9
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 6
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 3
+      MATERIALS: 2
+      OTHER: 2
+    exposure_style_mix:
+      CORE: 100
+
+  # Fidelity 500 Index Fund — same S&P 500 composition as VOO/IVV/SPY
+  FXAIX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.78
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 85
+      LARGE: 15
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 35.2941
+      ULTRA_MEGA: 35.2941
+      EXTENDED_MEGA: 29.4118
+    exposure_sector_mix:
+      TECHNOLOGY: 28
+      FINANCIALS: 13
+      HEALTHCARE: 12
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 9
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 6
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 3
+      MATERIALS: 2
+      OTHER: 2
+    exposure_style_mix:
+      CORE: 100
+
+  # Schwab U.S. Broad Market ETF — tracks Dow Jones U.S. Broad Stock Market Index
+  # Very similar composition to VTI; both cover ~2,500 US equities.
+  SCHB:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 55
+      LARGE: 25
+      MID: 15
+      SMALL: 5
+    # Effective: HYPER 14%, ULTRA 16%, EXTENDED 25% (55% MEGA × subtier pcts)
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 25.4545
+      ULTRA_MEGA: 29.0909
+      EXTENDED_MEGA: 45.4545
+    exposure_sector_mix:
+      TECHNOLOGY: 30
+      FINANCIALS: 12
+      HEALTHCARE: 11
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 10
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 7
+      ENERGY: 5
+      UTILITIES: 4
+      MATERIALS: 2
+      REAL_ESTATE: 1
+    exposure_style_mix:
+      CORE: 100
+
+  VTI:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 55
+      LARGE: 25
+      MID: 15
+      SMALL: 5
+    # Effective: HYPER 14%, ULTRA 16%, EXTENDED 25% (55% MEGA × subtier pcts)
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 25.4545
+      ULTRA_MEGA: 29.0909
+      EXTENDED_MEGA: 45.4545
+    exposure_sector_mix:
+      TECHNOLOGY: 30
+      FINANCIALS: 12
+      HEALTHCARE: 11
+      CONSUMER_DISCRETIONARY: 10
+      COMMUNICATION_SERVICES: 10
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 7
+      ENERGY: 5
+      UTILITIES: 4
+      MATERIALS: 2
+      REAL_ESTATE: 1
+    exposure_style_mix:
+      CORE: 100
+
+  VB:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.68
+    strategic_role: SYSTEMATIC_SMALL_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      SMALL: 80
+      MICRO: 20
+    exposure_sector_mix:
+      INDUSTRIALS: 16
+      TECHNOLOGY: 15
+      FINANCIALS: 14
+      CONSUMER_DISCRETIONARY: 13
+      HEALTHCARE: 10
+      COMMUNICATION_SERVICES: 8
+      ENERGY: 8
+      MATERIALS: 6
+      REAL_ESTATE: 5
+      UTILITIES: 3
+      CONSUMER_STAPLES: 2
+    exposure_style_mix:
+      CORE: 55
+      GROWTH: 25
+      VALUE: 20
+
+  VXUS:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.64
+    strategic_role: INTERNATIONAL_DIVERSIFICATION
+    exposure_geography_mix:
+      INTERNATIONAL: 80
+      EMERGING_MARKETS: 20
+    exposure_market_cap_mix:
+      MEGA: 15
+      LARGE: 40
+      MID: 30
+      SMALL: 15
+    # Effective: HYPER 5%, ULTRA 5%, EXTENDED 5% (15% MEGA × subtier pcts)
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 33.3333
+      ULTRA_MEGA: 33.3333
+      EXTENDED_MEGA: 33.3333
+    exposure_sector_mix:
+      FINANCIALS: 18
+      TECHNOLOGY: 17
+      INDUSTRIALS: 13
+      CONSUMER_DISCRETIONARY: 11
+      HEALTHCARE: 10
+      COMMUNICATION_SERVICES: 8
+      CONSUMER_STAPLES: 8
+      MATERIALS: 7
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 1
+    exposure_style_mix:
+      CORE: 70
+      VALUE: 30
+    exposure_thematic_mix:
+      INTERNATIONAL_DIVERSIFICATION: 100
+
+  # ── S&P 100 (pure mega-cap) ───────────────────────────────────────────────
+
+  OEF:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.78
+    strategic_role: CORE_BROAD_US
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 100
+    # All MEGA, so subtier = full portfolio effective %
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 45
+      ULTRA_MEGA: 35
+      EXTENDED_MEGA: 20
+    exposure_sector_mix:
+      TECHNOLOGY: 32
+      FINANCIALS: 12
+      HEALTHCARE: 11
+      CONSUMER_DISCRETIONARY: 11
+      COMMUNICATION_SERVICES: 10
+      INDUSTRIALS: 8
+      CONSUMER_STAPLES: 6
+      ENERGY: 4
+      UTILITIES: 3
+      REAL_ESTATE: 2
+      MATERIALS: 1
+    exposure_style_mix:
+      CORE: 85
+      GROWTH: 15
+
+  # ── Growth / Technology ───────────────────────────────────────────────────
+
+  XLK:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.73
+    strategic_role: SECTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 75
+      LARGE: 25
+    # Effective: HYPER 40%, ULTRA 25%, EXTENDED 10%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 53.3333
+      ULTRA_MEGA: 33.3333
+      EXTENDED_MEGA: 13.3333
+    exposure_sector_mix:
+      TECHNOLOGY: 85
+      COMMUNICATION_SERVICES: 15
+    exposure_style_mix:
+      GROWTH: 75
+      CORE: 25
+    exposure_thematic_mix:
+      AI_INFRA: 40
+      MEGA_TECH_CONCENTRATION: 90
+      GROWTH_MOMENTUM: 65
+
+  SMH:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: SEMICONDUCTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 90
+      INTERNATIONAL: 10
+    exposure_market_cap_mix:
+      MEGA: 65
+      LARGE: 35
+    # Effective: HYPER 45%, ULTRA 15%, EXTENDED 5%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 69.2308
+      ULTRA_MEGA: 23.0769
+      EXTENDED_MEGA: 7.6923
+    exposure_sector_mix:
+      TECHNOLOGY: 100
+    exposure_style_mix:
+      GROWTH: 70
+      CORE: 30
+    exposure_thematic_mix:
+      SEMICONDUCTOR_CONCENTRATION: 100
+      AI_INFRA: 70
+      GROWTH_MOMENTUM: 60
+
+  SOXX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: SEMICONDUCTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 85
+      INTERNATIONAL: 15
+    exposure_market_cap_mix:
+      MEGA: 55
+      LARGE: 45
+    # Effective: HYPER 35%, ULTRA 15%, EXTENDED 5%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 63.6364
+      ULTRA_MEGA: 27.2727
+      EXTENDED_MEGA: 9.0909
+    exposure_sector_mix:
+      TECHNOLOGY: 100
+    exposure_style_mix:
+      GROWTH: 70
+      CORE: 30
+    exposure_thematic_mix:
+      SEMICONDUCTOR_CONCENTRATION: 100
+      AI_INFRA: 65
+      GROWTH_MOMENTUM: 60
+
+  # ── Small / Mid Cap ───────────────────────────────────────────────────────
+
+  IWM:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: SYSTEMATIC_SMALL_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      SMALL: 95
+      MICRO: 5
+    exposure_sector_mix:
+      FINANCIALS: 16
+      HEALTHCARE: 15
+      TECHNOLOGY: 14
+      INDUSTRIALS: 13
+      CONSUMER_DISCRETIONARY: 12
+      ENERGY: 7
+      REAL_ESTATE: 7
+      MATERIALS: 5
+      UTILITIES: 3
+      COMMUNICATION_SERVICES: 3
+      CONSUMER_STAPLES: 3
+      OTHER: 2
+    exposure_style_mix:
+      CORE: 55
+      GROWTH: 30
+      VALUE: 15
+
+  IJH:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: SYSTEMATIC_MID_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MID: 100
+    exposure_sector_mix:
+      INDUSTRIALS: 20
+      TECHNOLOGY: 18
+      FINANCIALS: 15
+      CONSUMER_DISCRETIONARY: 14
+      HEALTHCARE: 12
+      ENERGY: 6
+      MATERIALS: 5
+      REAL_ESTATE: 4
+      UTILITIES: 3
+      COMMUNICATION_SERVICES: 2
+      CONSUMER_STAPLES: 1
+    exposure_style_mix:
+      CORE: 65
+      GROWTH: 20
+      VALUE: 15
+
+  MDY:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.67
+    strategic_role: SYSTEMATIC_MID_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MID: 100
+    exposure_sector_mix:
+      INDUSTRIALS: 20
+      TECHNOLOGY: 18
+      FINANCIALS: 15
+      CONSUMER_DISCRETIONARY: 14
+      HEALTHCARE: 12
+      ENERGY: 6
+      MATERIALS: 5
+      REAL_ESTATE: 4
+      UTILITIES: 3
+      COMMUNICATION_SERVICES: 2
+      CONSUMER_STAPLES: 1
+    exposure_style_mix:
+      CORE: 65
+      GROWTH: 20
+      VALUE: 15
+
+  VO:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.68
+    strategic_role: SYSTEMATIC_MID_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MID: 100
+    exposure_sector_mix:
+      TECHNOLOGY: 20
+      INDUSTRIALS: 18
+      FINANCIALS: 14
+      CONSUMER_DISCRETIONARY: 13
+      HEALTHCARE: 13
+      MATERIALS: 6
+      ENERGY: 5
+      REAL_ESTATE: 4
+      UTILITIES: 4
+      COMMUNICATION_SERVICES: 2
+      CONSUMER_STAPLES: 1
+    exposure_style_mix:
+      CORE: 65
+      GROWTH: 22
+      VALUE: 13
+
+  IJR:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.68
+    strategic_role: SYSTEMATIC_SMALL_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      SMALL: 95
+      MICRO: 5
+    exposure_sector_mix:
+      FINANCIALS: 17
+      INDUSTRIALS: 16
+      HEALTHCARE: 15
+      TECHNOLOGY: 14
+      CONSUMER_DISCRETIONARY: 12
+      ENERGY: 7
+      REAL_ESTATE: 6
+      MATERIALS: 5
+      UTILITIES: 3
+      COMMUNICATION_SERVICES: 3
+      CONSUMER_STAPLES: 2
+    exposure_style_mix:
+      CORE: 55
+      GROWTH: 25
+      VALUE: 20
+
+  IWC:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.65
+    strategic_role: SYSTEMATIC_MICRO_CAP
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MICRO: 75
+      SMALL: 25
+    exposure_sector_mix:
+      HEALTHCARE: 20
+      TECHNOLOGY: 18
+      FINANCIALS: 16
+      CONSUMER_DISCRETIONARY: 13
+      INDUSTRIALS: 12
+      ENERGY: 8
+      REAL_ESTATE: 5
+      MATERIALS: 4
+      UTILITIES: 2
+      COMMUNICATION_SERVICES: 1
+      CONSUMER_STAPLES: 1
+    exposure_style_mix:
+      CORE: 50
+      GROWTH: 30
+      VALUE: 20
+
+  # ── International ─────────────────────────────────────────────────────────
+
+  EFA:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.65
+    strategic_role: INTERNATIONAL_DIVERSIFICATION
+    exposure_geography_mix:
+      INTERNATIONAL: 100
+    exposure_market_cap_mix:
+      MEGA: 20
+      LARGE: 45
+      MID: 25
+      SMALL: 10
+    # Effective: HYPER 6%, ULTRA 7%, EXTENDED 7%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 30
+      ULTRA_MEGA: 35
+      EXTENDED_MEGA: 35
+    exposure_sector_mix:
+      FINANCIALS: 20
+      INDUSTRIALS: 15
+      HEALTHCARE: 13
+      CONSUMER_DISCRETIONARY: 12
+      TECHNOLOGY: 10
+      CONSUMER_STAPLES: 9
+      MATERIALS: 7
+      ENERGY: 6
+      UTILITIES: 4
+      REAL_ESTATE: 2
+      COMMUNICATION_SERVICES: 2
+    exposure_style_mix:
+      CORE: 70
+      VALUE: 30
+    exposure_thematic_mix:
+      INTERNATIONAL_DIVERSIFICATION: 100
+
+  VEA:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.63
+    strategic_role: INTERNATIONAL_DIVERSIFICATION
+    exposure_geography_mix:
+      INTERNATIONAL: 100
+    exposure_market_cap_mix:
+      MEGA: 20
+      LARGE: 45
+      MID: 25
+      SMALL: 10
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 30
+      ULTRA_MEGA: 35
+      EXTENDED_MEGA: 35
+    exposure_sector_mix:
+      FINANCIALS: 20
+      INDUSTRIALS: 15
+      HEALTHCARE: 13
+      CONSUMER_DISCRETIONARY: 12
+      TECHNOLOGY: 10
+      CONSUMER_STAPLES: 9
+      MATERIALS: 7
+      ENERGY: 6
+      UTILITIES: 4
+      REAL_ESTATE: 2
+      COMMUNICATION_SERVICES: 2
+    exposure_style_mix:
+      CORE: 70
+      VALUE: 30
+    exposure_thematic_mix:
+      INTERNATIONAL_DIVERSIFICATION: 100
+
+  VWO:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.62
+    strategic_role: INTERNATIONAL_DIVERSIFICATION
+    exposure_geography_mix:
+      EMERGING_MARKETS: 100
+    exposure_market_cap_mix:
+      MEGA: 30
+      LARGE: 40
+      MID: 20
+      SMALL: 10
+    # Effective: HYPER 10%, ULTRA 10%, EXTENDED 10%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 33.3333
+      ULTRA_MEGA: 33.3333
+      EXTENDED_MEGA: 33.3333
+    exposure_sector_mix:
+      TECHNOLOGY: 20
+      FINANCIALS: 18
+      CONSUMER_DISCRETIONARY: 14
+      COMMUNICATION_SERVICES: 12
+      ENERGY: 8
+      MATERIALS: 8
+      CONSUMER_STAPLES: 7
+      HEALTHCARE: 7
+      INDUSTRIALS: 4
+      UTILITIES: 2
+    exposure_style_mix:
+      CORE: 55
+      GROWTH: 30
+      VALUE: 15
+    exposure_thematic_mix:
+      EMERGING_MARKETS_GROWTH: 100
+
+  EMXC:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.60
+    strategic_role: INTERNATIONAL_DIVERSIFICATION
+    exposure_geography_mix:
+      EMERGING_MARKETS: 100
+    exposure_market_cap_mix:
+      MEGA: 25
+      LARGE: 40
+      MID: 25
+      SMALL: 10
+    # Effective: HYPER 8%, ULTRA 9%, EXTENDED 8% (ex-China reduces mega concentration)
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 32
+      ULTRA_MEGA: 36
+      EXTENDED_MEGA: 32
+    exposure_sector_mix:
+      FINANCIALS: 20
+      TECHNOLOGY: 14
+      MATERIALS: 12
+      CONSUMER_DISCRETIONARY: 10
+      CONSUMER_STAPLES: 8
+      ENERGY: 10
+      HEALTHCARE: 8
+      INDUSTRIALS: 8
+      COMMUNICATION_SERVICES: 8
+      UTILITIES: 2
+    exposure_style_mix:
+      CORE: 60
+      VALUE: 25
+      GROWTH: 15
+    exposure_thematic_mix:
+      EMERGING_MARKETS_GROWTH: 100
+
+  # ── Sector ETFs ───────────────────────────────────────────────────────────
+
+  XLE:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.72
+    strategic_role: SECTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 60
+      LARGE: 35
+      MID: 5
+    # Effective: HYPER 8%, ULTRA 20%, EXTENDED 32% — dominated by large integrated oils
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 13.3333
+      ULTRA_MEGA: 33.3333
+      EXTENDED_MEGA: 53.3333
+    exposure_sector_mix:
+      ENERGY: 100
+    exposure_style_mix:
+      VALUE: 60
+      CORE: 40
+    exposure_thematic_mix:
+      SECTOR_CONCENTRATION: 100
+      COMMODITY_SENSITIVITY: 80
+      ENERGY_TRANSITION: 20
+
+  XLF:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.72
+    strategic_role: SECTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 55
+      LARGE: 40
+      MID: 5
+    # Effective: HYPER 10%, ULTRA 20%, EXTENDED 25%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 18.1818
+      ULTRA_MEGA: 36.3636
+      EXTENDED_MEGA: 45.4545
+    exposure_sector_mix:
+      FINANCIALS: 100
+    exposure_style_mix:
+      VALUE: 55
+      CORE: 45
+    exposure_thematic_mix:
+      SECTOR_CONCENTRATION: 100
+      RATE_SENSITIVITY: 70
+
+  XLV:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.72
+    strategic_role: SECTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 55
+      LARGE: 35
+      MID: 10
+    # Effective: HYPER 8%, ULTRA 20%, EXTENDED 27%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 14.5455
+      ULTRA_MEGA: 36.3636
+      EXTENDED_MEGA: 49.0909
+    exposure_sector_mix:
+      HEALTHCARE: 100
+    exposure_style_mix:
+      CORE: 60
+      VALUE: 25
+      GROWTH: 15
+    exposure_thematic_mix:
+      SECTOR_CONCENTRATION: 100
+
+  XLI:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.70
+    strategic_role: SECTOR_CONCENTRATION
+    exposure_geography_mix:
+      US: 100
+    exposure_market_cap_mix:
+      MEGA: 30
+      LARGE: 50
+      MID: 20
+    # Effective: HYPER 3%, ULTRA 10%, EXTENDED 17%
+    exposure_mega_subtier_mix:
+      HYPER_MEGA: 10
+      ULTRA_MEGA: 33.3333
+      EXTENDED_MEGA: 56.6667
+    exposure_sector_mix:
+      INDUSTRIALS: 100
+    exposure_style_mix:
+      CORE: 65
+      VALUE: 20
+      GROWTH: 15
+    exposure_thematic_mix:
+      SECTOR_CONCENTRATION: 100
+
+  # ── Fixed Income ──────────────────────────────────────────────────────────
+  #
+  # Bond ETFs: geography/sector provided for operator visibility; cap/subtier
+  # mixes are empty (not applicable for fixed income).  These entries ensure
+  # REGISTRY-source decomposition and correct strategic_role tagging.
+
+  BND:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.80
+    strategic_role: STABILITY_CORE
+    exposure_geography_mix:
+      US: 100
+    exposure_sector_mix:
+      FIXED_INCOME: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      FIXED_INCOME_CORE: 100
+      INTEREST_RATE_SENSITIVITY: 80
+
+  AGG:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.80
+    strategic_role: STABILITY_CORE
+    exposure_geography_mix:
+      US: 100
+    exposure_sector_mix:
+      FIXED_INCOME: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      FIXED_INCOME_CORE: 100
+      INTEREST_RATE_SENSITIVITY: 80
+
+  BNDX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.72
+    strategic_role: STABILITY_CORE
+    exposure_geography_mix:
+      INTERNATIONAL: 100
+    exposure_sector_mix:
+      FIXED_INCOME: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      FIXED_INCOME_CORE: 100
+      INTERNATIONAL_DIVERSIFICATION: 80
+      INTEREST_RATE_SENSITIVITY: 75
+
+  # ── Cash Equivalents ──────────────────────────────────────────────────────
+
+  SPAXX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.90
+    strategic_role: CASH_EQUIVALENT
+    exposure_geography_mix:
+      US: 100
+    exposure_sector_mix:
+      CASH: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      CASH_EQUIVALENT: 100
+
+  VMFXX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.90
+    strategic_role: CASH_EQUIVALENT
+    exposure_geography_mix:
+      US: 100
+    exposure_sector_mix:
+      CASH: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      CASH_EQUIVALENT: 100
+
+  FZFXX:
+    decomposition_method: HEURISTIC_REGISTRY_V1
+    decomposition_confidence: 0.90
+    strategic_role: CASH_EQUIVALENT
+    exposure_geography_mix:
+      US: 100
+    exposure_sector_mix:
+      CASH: 100
+    exposure_style_mix:
+      INCOME: 100
+    exposure_thematic_mix:
+      CASH_EQUIVALENT: 100
