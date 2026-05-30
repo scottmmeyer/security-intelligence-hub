@@ -108,7 +108,71 @@ scripts/diagnostics/debug_*.py
 # Root-level throwaway migration / scratch scripts.
 migrate_zacks.py
 script.py
+solution.py
+top5_analysis.py
+
+# Portfolio ingestion runtime artifacts.
+# All PAR run outputs, normalized forms, archive CSVs, and the ingestion manifest
+# are regenerated from the canonical CSV upload flow — not source-controlled.
+# Scaffold directories are tracked; content is gitignored.
+data/portfolio_ingestion/analysis_runs/
+data/portfolio_ingestion/archive/
+data/portfolio_ingestion/incoming/
+data/portfolio_ingestion/normalized/
+data/portfolio_ingestion/rejected/
+data/portfolio_ingestion/manifest.json
+
+# Incoming portfolio upload landing zone.
+# User-uploaded portfolio CSV files are operational inputs, not architectural source.
+incoming/portfolio/
+
+# Allocation runtime artifacts.
+# proposed/ and recalculation_snapshots/ are regeneratable outputs produced by the
+# recalculation engine. manifest.json and evidence_history/ are append-only lineage
+# records and are tracked alongside benchmark outcomes under data/history/.
+data/allocation/proposed/
+data/allocation/recalculation_snapshots/
+
+# Classification audit runtime outputs.
+# Timestamped audit JSON/TXT/CSV files are regeneratable via run_classification_audit.py.
+data/classification_audit/
 
 # Preserve deterministic test fixtures
 !tests/fixtures/
 !tests/fixtures/**
+
+# UI session state (auto-updated on every navigation; not meaningful to track)
+navigation_state.yaml
+
+# Derived data outputs (regeneratable from signals + run history)
+data/allocation/
+data/derived/
+
+# Temporary diagnostic and debug scripts (prefix convention: scripts/_*.py)
+# Operational scripts are explicitly named without underscore prefix.
+scripts/_*.py
+
+# Auto-generated audit reports (regeneratable from report-generator scripts)
+# Exception: optimizer_ui_validation_report.md is a Phase 7.3B tracked deliverable.
+archetype_validation_report.md
+cash_deployment_report.md
+cash_reconciliation_report.md
+conviction_deployment_report.md
+conviction_model_quality_report.md
+conviction_ranking_report.md
+coverage_denominator_report.md
+coverage_gap_report.md
+coverage_reconciliation_report.md
+l1_allocation_gap_report.md
+overlap_analysis_report.md
+portfolio_philosophy_validation_report.md
+portfolio_reconciliation_report.md
+recommendation_conflict_report.md
+recommendation_explainability_report.md
+replay_alignment_audit.md
+security_vs_etf_report.md
+strategic_narrative_audit.md
+strategic_narrative_validation_report.md
+taxonomy_clean_run_report.md
+taxonomy_reconciliation_report.md
+ui_archetype_consistency_report.md
