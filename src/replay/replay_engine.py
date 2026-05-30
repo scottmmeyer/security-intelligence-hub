@@ -35,6 +35,7 @@ REPLAY_SELECTION_HEADERS = [
     "filter_market_cap_bucket",
     "filter_geography",
     "filter_industry",
+    "filter_analytical_subtier",
     "selection_method",
     "top_n",
     "selected_symbols",
@@ -71,12 +72,15 @@ def _to_replay_id(
     industry: str,
     top_n: int,
     replay_id_suffix: str | None,
+    analytical_subtier: str | None = None,
 ) -> str:
     clean_industry = industry.replace(" ", "_").upper()
     base = (
         f"REPLAY-{start_date}-TO-{end_date}-{geography.upper()}-"
         f"{market_cap_bucket.upper()}-{clean_industry}-TOP{top_n}"
     )
+    if analytical_subtier:
+        base = f"{base}-{analytical_subtier.upper()}"
     if replay_id_suffix:
         return f"{base}-{replay_id_suffix}"
     return base
@@ -109,8 +113,14 @@ def select_top_n_replay(
     top_n: int,
     selection_method: str = "TOP_N_COMPOSITE_AT_START",
     replay_id_suffix: str | None = None,
+    filter_analytical_subtier: str | None = None,
 ) -> tuple[ReplaySelection, List[AnalyticalUniverseRow]]:
-    """Apply point-in-time filters and deterministic top-N selection without lookahead."""
+    """Apply point-in-time filters and deterministic top-N selection without lookahead.
+
+    When ``filter_analytical_subtier`` is provided, an additional filter is applied
+    after the standard bucket/geography/industry filters.  When omitted (default),
+    existing behaviour is preserved — full backward compatibility.
+    """
 
     start = date.fromisoformat(start_date)
     end = date.fromisoformat(end_date)
@@ -120,6 +130,7 @@ def select_top_n_replay(
     market_cap_filter = market_cap_bucket.upper()
     geography_filter = geography.upper()
     industry_filter = industry.upper()
+    subtier_filter = filter_analytical_subtier.upper() if filter_analytical_subtier else None
 
     start_rows = [row for row in analytical_rows if row.snapshot_date == start_date]
     if not start_rows:
@@ -134,10 +145,25 @@ def select_top_n_replay(
         if row.market_cap_bucket.upper() == market_cap_filter
         and row.geography.upper() == geography_filter
         and (industry_filter == "ALL" or row.industry.upper() == industry_filter)
+        and (subtier_filter is None or row.analytical_market_cap_subtier.upper() == subtier_filter)
+        and getattr(row, "replay_eligible", True) is not False
+        and str(getattr(row, "replay_eligible", True)).lower() != "false"
     ]
 
+    # Deterministic ranking: highest composite first, symbol as tie-breaker.
+    # Some snapshots can contain duplicate symbol rows; preserve only the
+    # first occurrence after ranking so Top-N membership is unique by symbol.
     sorted_rows = sorted(filtered_rows, key=lambda item: (-float(item.composite_score), item.symbol))
-    selected_rows = sorted_rows[: max(top_n, 0)]
+    sorted_unique_rows: List[AnalyticalUniverseRow] = []
+    seen_symbols: set[str] = set()
+    for row in sorted_rows:
+        symbol = str(row.symbol or "").upper()
+        if not symbol or symbol in seen_symbols:
+            continue
+        seen_symbols.add(symbol)
+        sorted_unique_rows.append(row)
+
+    selected_rows = sorted_unique_rows[: max(top_n, 0)]
 
     replay_id = _to_replay_id(
         start_date=start_date,
@@ -147,6 +173,7 @@ def select_top_n_replay(
         industry=industry,
         top_n=top_n,
         replay_id_suffix=replay_id_suffix,
+        analytical_subtier=filter_analytical_subtier,
     )
     selection = ReplaySelection(
         replay_id=replay_id,
@@ -155,6 +182,7 @@ def select_top_n_replay(
         filter_market_cap_bucket=market_cap_filter,
         filter_geography=geography_filter,
         filter_industry=industry_filter,
+        filter_analytical_subtier=filter_analytical_subtier or "",
         selection_method=selection_method,
         top_n=top_n,
         selected_symbols=tuple(row.symbol for row in selected_rows),
@@ -162,7 +190,7 @@ def select_top_n_replay(
         replay_mode=detect_replay_mode(start_date, end_date),
     )
 
-    return selection, sorted_rows
+    return selection, sorted_unique_rows
 
 
 def _series_from_points(
@@ -355,6 +383,7 @@ def persist_replay_outputs(
         "filter_market_cap_bucket": selection.filter_market_cap_bucket,
         "filter_geography": selection.filter_geography,
         "filter_industry": selection.filter_industry,
+        "filter_analytical_subtier": selection.filter_analytical_subtier,
         "selection_method": selection.selection_method,
         "top_n": str(selection.top_n),
         "selected_symbols": "|".join(selection.selected_symbols),
@@ -375,8 +404,8 @@ def persist_replay_outputs(
     replay_metadata_path = replay_dir / "replay_metadata.json"
     replay_report_path = replay_dir / "replay_report.md"
 
-    _write_csv(current_inputs_path, REPLAY_SELECTION_HEADERS, [selection_row])
-    _write_csv(current_series_path, PERFORMANCE_SERIES_HEADERS, series_rows)
+    # Note: current/ is NOT written here — the matrix builder (build_wp05b_replay_matrix)
+    # owns current/ via atomic publish and handles merge across sectors.
     _write_csv(replay_selection_path, REPLAY_SELECTION_HEADERS, [selection_row])
     _write_csv(replay_series_path, PERFORMANCE_SERIES_HEADERS, series_rows)
 

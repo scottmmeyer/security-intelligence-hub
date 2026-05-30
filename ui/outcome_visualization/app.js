@@ -104,6 +104,42 @@ function countRegistryEntries(yamlText, keyName) {
   return matches ? matches.length : 0;
 }
 
+function lookupRegistryEntry(yamlText, idKey, idValue) {
+  if (!yamlText || !idValue) return null;
+  const blocks = yamlText.split(/\n(?=\s{2}-\s)/);
+  for (const block of blocks) {
+    const idMatch = block.match(new RegExp(`\\b${idKey}:\\s*(\\S+)`));
+    if (idMatch && idMatch[1].trim() === idValue.trim()) {
+      const nameMatch = block.match(/\bname:\s*(.+)/);
+      const symbolMatch = block.match(/\bsymbol(?:_or_index)?:\s*(\S+)/);
+      return {
+        name: nameMatch ? nameMatch[1].trim() : null,
+        symbol: symbolMatch ? symbolMatch[1].trim() : null,
+      };
+    }
+  }
+  return null;
+}
+
+function updateActiveLegend(replayMatrixRow) {
+  const benchmarkEl = document.getElementById("legendBenchmarkId");
+  const vehicleEl = document.getElementById("legendVehicleId");
+  if (!benchmarkEl || !vehicleEl) return;
+  if (!replayMatrixRow) {
+    benchmarkEl.textContent = "—";
+    vehicleEl.textContent = "—";
+    return;
+  }
+  const bm = lookupRegistryEntry(state.benchmarkRegistryText, "benchmark_id", replayMatrixRow.benchmark_id || "");
+  benchmarkEl.textContent = bm
+    ? `${bm.symbol}\u2002\u00b7\u2002${bm.name}`
+    : replayMatrixRow.benchmark_id || "—";
+  const vh = lookupRegistryEntry(state.vehicleRegistryText, "vehicle_id", replayMatrixRow.vehicle_id || "");
+  vehicleEl.textContent = vh
+    ? `${vh.symbol}\u2002\u00b7\u2002${vh.name}`
+    : replayMatrixRow.vehicle_id || "—";
+}
+
 function setStatus(message, isEmpty = false) {
   const box = document.getElementById("statusBox");
   box.textContent = message;
@@ -172,6 +208,14 @@ function drawSeriesChart(seriesRows) {
   Object.values(grouped).forEach((points) => {
     points.sort((a, b) => new Date(a.date) - new Date(b.date));
   });
+
+  // Detect if TOP_N_STRATEGY and FULL_UNIVERSE have the same final value (lines would coincide)
+  const fuPts = grouped["FULL_UNIVERSE"] || [];
+  const topnPts = grouped["TOP_N_STRATEGY"] || [];
+  const topNMatchesFU = fuPts.length > 0 && topnPts.length > 0 &&
+    Math.abs(
+      (fuPts[fuPts.length - 1].metric || 0) - (topnPts[topnPts.length - 1].metric || 0)
+    ) < 0.0001;
 
   const allPoints = Object.values(grouped).flat().filter((p) => Number.isFinite(p.metric));
   if (!allPoints.length) {
@@ -266,6 +310,12 @@ function drawSeriesChart(seriesRows) {
 
     ctx.strokeStyle = SERIES_COLORS[type] || "#333";
     ctx.lineWidth = 2.4;
+    // When TOP_N_STRATEGY coincides with FULL_UNIVERSE, draw it dashed so both remain visible
+    if (type === "TOP_N_STRATEGY" && topNMatchesFU) {
+      ctx.setLineDash([10, 5]);
+    } else {
+      ctx.setLineDash([]);
+    }
     ctx.beginPath();
     filtered.forEach((point, idx) => {
       const t = parseIsoDate(point.date).getTime();
@@ -275,6 +325,7 @@ function drawSeriesChart(seriesRows) {
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
+    ctx.setLineDash([]);
   });
 }
 
@@ -394,6 +445,7 @@ function getSelectedFilters() {
   return {
     geography: document.getElementById("geographySelect").value,
     marketCap: document.getElementById("marketCapSelect").value,
+    subtier: document.getElementById("subtierSelect") ? document.getElementById("subtierSelect").value : "",
     industry: document.getElementById("industrySelect").value,
     timeframe: document.getElementById("timeframeSelect").value,
     topN: String(Number(document.getElementById("topNInput").value || 20)),
@@ -401,17 +453,34 @@ function getSelectedFilters() {
 }
 
 function pickReplayRow(filters) {
-  const rows = state.replayInputs.filter((row) => {
-    return (
-      String(row.filter_geography || "").toUpperCase() === filters.geography &&
-      String(row.filter_market_cap_bucket || "").toUpperCase() === filters.marketCap &&
-      String(row.filter_industry || "").toUpperCase() === filters.industry &&
-      String(row.top_n || "") === filters.topN
-    );
-  });
+  const baseMatch = (row) =>
+    String(row.filter_geography || "").toUpperCase() === filters.geography &&
+    String(row.filter_market_cap_bucket || "").toUpperCase() === filters.marketCap &&
+    String(row.filter_industry || "").toUpperCase() === filters.industry &&
+    String(row.top_n || "") === filters.topN;
 
-  if (!rows.length) return null;
-  return rows.sort((a, b) => String(b.replay_id).localeCompare(String(a.replay_id)))[0];
+  const hasStocks = (row) => {
+    const syms = String(row.selected_symbols || "").trim();
+    return syms !== "" && syms !== "|";
+  };
+
+  const latest = (rows) =>
+    rows.length ? rows.sort((a, b) => String(b.replay_id).localeCompare(String(a.replay_id)))[0] : null;
+
+  // When a subtier is selected, prefer subtier-specific replays if they have stocks.
+  // Fall back to full-bucket base when the subtier basket is empty for this geo.
+  if (filters.subtier) {
+    const subtierRows = state.replayInputs.filter(
+      (row) => baseMatch(row) && String(row.filter_analytical_subtier || "").toUpperCase() === filters.subtier.toUpperCase() && hasStocks(row)
+    );
+    if (subtierRows.length) return latest(subtierRows);
+  }
+
+  // Full-bucket / ALL selected (or subtier yielded empty basket): only match base rows
+  const rows = state.replayInputs.filter(
+    (row) => baseMatch(row) && String(row.filter_analytical_subtier || "") === ""
+  );
+  return latest(rows);
 }
 
 function pickAvailabilityRow(filters) {
@@ -497,6 +566,77 @@ async function tryLoadEvidenceSummary(matrixRow) {
   }
 }
 
+function renderForwardBacktestExplainer(replayInputRow, evidenceSummary) {
+  const el = document.getElementById("forwardBacktestExplainer");
+  if (!el) return;
+  if (!replayInputRow) {
+    el.style.display = "none";
+    return;
+  }
+
+  const scoreDate = replayInputRow.composite_score_snapshot_date || replayInputRow.start_date || "—";
+  const startDate = replayInputRow.start_date || "—";
+  const endDate = replayInputRow.end_date || "—";
+  const topN = replayInputRow.top_n || "20";
+  const symbols = String(replayInputRow.selected_symbols || "").split("|").filter(Boolean);
+  const marketCap = replayInputRow.filter_market_cap_bucket || "—";
+  const geography = replayInputRow.filter_geography || "—";
+
+  const fmt = (v) => (v === null || v === undefined || isNaN(Number(v))) ? "—" : (Number(v) * 100).toFixed(2) + "%";
+  const finalTopN = evidenceSummary?.top_n_strategy_final_return;
+  const finalBM = evidenceSummary?.benchmark_final_return;
+  const delta = evidenceSummary?.strategy_vs_benchmark_delta;
+  const deltaNum = Number(delta);
+  const deltaSign = !isNaN(deltaNum) && deltaNum >= 0 ? "+" : "";
+  const returnClass = !isNaN(deltaNum) ? (deltaNum >= 0 ? "positive" : "negative") : "";
+
+  const returnBlock = (finalTopN !== null && finalTopN !== undefined)
+    ? `<div class="fbt-block">
+        <div class="fbt-label">Top-N Strategy Return</div>
+        <div class="fbt-value ${returnClass}">${fmt(finalTopN)}<span style="font-size:0.82rem;font-weight:400;"> (${deltaSign}${fmt(delta)} vs Benchmark ${fmt(finalBM)})</span></div>
+       </div>`
+    : "";
+
+  el.style.display = "block";
+  el.innerHTML = `
+    <div class="fbt-header">
+      <span class="fbt-badge">Forward Backtest</span>
+      <span class="fbt-subtitle">Out-of-sample validation — scores were locked on the selection date before the measurement period began</span>
+    </div>
+    <div class="fbt-body">
+      <div class="fbt-block">
+        <div class="fbt-label">Score &amp; Selection Date</div>
+        <div class="fbt-value">${scoreDate}</div>
+      </div>
+      <div class="fbt-block">
+        <div class="fbt-label">Measurement Window</div>
+        <div class="fbt-value">${startDate} → ${endDate}</div>
+      </div>
+      <div class="fbt-block">
+        <div class="fbt-label">Universe</div>
+        <div class="fbt-value">${geography} ${marketCap}</div>
+      </div>
+      <div class="fbt-block">
+        <div class="fbt-label">Stocks Selected</div>
+        <div class="fbt-value">${symbols.length} (Top ${topN})</div>
+      </div>
+      ${returnBlock}
+    </div>
+    <div class="fbt-stocks">
+      <div class="fbt-label">Top ${topN} stocks scored on ${scoreDate} — held for the full period, no changes:</div>
+      <div class="fbt-symbols">${symbols.map((s) => `<span class="fbt-symbol">${s}</span>`).join("")}</div>
+    </div>
+    <div class="fbt-explanation">
+      These ${symbols.length} stocks were selected based exclusively on composite scores calculated on <strong>${scoreDate}</strong>.
+      No information from after that date was used. Performance was then tracked forward from <strong>${startDate}</strong> to <strong>${endDate}</strong>
+      using actual market prices, equally weighted, with no rebalancing.
+      If the Top-N Strategy line is above the Benchmark and ETF/Fund lines, it means the scoring system
+      successfully identified future outperformers — a true out-of-sample forward test.
+      If it is below, the model did not add predictive value for this tier over this period.
+    </div>
+  `;
+}
+
 function renderStockCoveragePanel(evidenceSummary) {
   const panel = document.getElementById("stockCoverageMeta");
   if (!panel) return;
@@ -504,25 +644,32 @@ function renderStockCoveragePanel(evidenceSummary) {
     panel.textContent = "Stock coverage data not available.";
     return;
   }
-  const selected = Array.isArray(evidenceSummary.selected_symbols)
-    ? evidenceSummary.selected_symbols.join(", ") || "None"
-    : "—";
+  const rawSelected = Array.isArray(evidenceSummary.selected_symbols) ? evidenceSummary.selected_symbols : [];
+  const uniqueSelected = [...new Set(rawSelected)];
+  const selected = uniqueSelected.join(", ") || "None";
+  const dupCount = rawSelected.length - uniqueSelected.length;
   const missing = Array.isArray(evidenceSummary.missing_price_symbols) && evidenceSummary.missing_price_symbols.length
     ? evidenceSummary.missing_price_symbols.join(", ")
     : "None";
   const partial = Array.isArray(evidenceSummary.partial_price_symbols) && evidenceSummary.partial_price_symbols.length
     ? evidenceSummary.partial_price_symbols.join(", ")
     : "None";
+  const universeSize = evidenceSummary.full_universe_symbol_count ?? null;
+  const topN = evidenceSummary.top_n ?? null;
+  const overlapNote = universeSize !== null && topN !== null && universeSize <= topN
+    ? `\n⚠ Universe (${universeSize}) ≤ Top-N (${topN}): all universe stocks selected — Top-N Strategy = Full Universe; chart lines coincide`
+    : "";
+  const dupNote = dupCount > 0 ? ` (${dupCount} duplicate${dupCount > 1 ? "s" : ""} removed)` : "";
   panel.textContent = [
     `Coverage Status : ${evidenceSummary.coverage_status || "—"}`,
     `Full-Universe : ${evidenceSummary.full_universe_coverage_status || "—"}`,
     `Top-N : ${evidenceSummary.top_n_coverage_status || "—"}`,
-    `Universe Size  : ${evidenceSummary.full_universe_symbol_count ?? "—"}`,
-    `Top N          : ${evidenceSummary.top_n ?? "—"}`,
-    `Selected       : ${selected}`,
+    `Universe Size  : ${universeSize ?? "—"}`,
+    `Top N          : ${topN ?? "—"}`,
+    `Selected       : ${selected}${dupNote}`,
     `Missing Prices : ${missing}`,
     `Partial Prices : ${partial}`,
-  ].join("\n");
+  ].join("\n") + overlapNote;
 }
 
 function renderReturnComparisonTable(evidenceSummary) {
@@ -561,6 +708,8 @@ async function render() {
   const replay = pickReplayRow(filters);
   const availability = pickAvailabilityRow(filters);
   const replayMatrixRow = pickReplayMatrixRow(filters);
+
+  updateActiveLegend(replayMatrixRow);
 
   const replayMetaNode = document.getElementById("replayMeta");
   const registryMetaNode = document.getElementById("registryMeta");
@@ -630,7 +779,8 @@ async function render() {
     return;
   }
 
-  const replayId = String(replayMatrixRow.replay_id || replay?.replay_id || "");
+  const replayId = String(replay?.replay_id || replayMatrixRow.replay_id || "");
+  console.log("[render] filters:", JSON.stringify(filters), "replayId:", replayId);
   const seriesRows = state.replaySeries
     .filter((row) => String(row.replay_id || "") === replayId)
     .sort((a, b) => {
@@ -659,6 +809,7 @@ async function render() {
   try { renderReturnComparisonTable(evidenceSummary); } catch { /* non-fatal */ }
   // Phase F: extract replay_mode from replay_inputs row
   const replayInputRow = state.replayInputs.find((r) => String(r.replay_id || "") === replayId);
+  try { renderForwardBacktestExplainer(replayInputRow, evidenceSummary); } catch { /* non-fatal */ }
   const replayMode = String(
     (replayInputRow && replayInputRow.replay_mode) ||
     (replayMetadata && replayMetadata.replay_mode) ||
@@ -670,7 +821,7 @@ async function render() {
     ? "[FORWARD SIM]"
     : replayMode === "CURRENT_RECOMMENDATION"
     ? "[CURRENT]"
-    : "[HISTORICAL]";
+    : "[FORWARD BACKTEST]";
 
   replayMetaNode.textContent = JSON.stringify(
     {
@@ -722,7 +873,11 @@ async function render() {
     return;
   }
 
-  setStatus(`${modeLabel} Line render with ${seriesRows.length} points for replay ${replayId}. ${statusSummary}`);
+  const subtierNote = filters.subtier && replay && String(replay.filter_analytical_subtier || "") === ""
+    ? ` [${filters.subtier} subtier: no dedicated replay built — showing ${filters.geography} ${filters.marketCap} full-bucket results]`
+    : "";
+
+  setStatus(`${modeLabel} Line render with ${seriesRows.length} points for replay ${replayId}. ${statusSummary}${subtierNote}`);
   drawSeriesChart(seriesRows);
 }
 
@@ -748,16 +903,63 @@ async function initialize() {
     state.vehicleRegistryText = vehicleYaml;
     state.snapshotMetadata = snapshotMetaText ? (() => { try { return JSON.parse(snapshotMetaText); } catch { return null; } })() : null;
 
+    // Dynamically populate industry dropdown from available replay data
+    const industryEl = document.getElementById("industrySelect");
+    if (industryEl && state.replayInputs.length > 0) {
+      const rawIndustries = [...new Set(
+        state.replayInputs.map(r => String(r.filter_industry || "ALL").toUpperCase())
+      )].sort();
+      const industries = rawIndustries.includes("ALL")
+        ? ["ALL", ...rawIndustries.filter(i => i !== "ALL")]
+        : ["ALL", ...rawIndustries];
+      industryEl.innerHTML = industries
+        .map(ind => `<option value="${ind}">${ind}</option>`)
+        .join("");
+    }
+
     if (state.replayInputs.length > 0) {
       const first = state.replayInputs[0];
       document.getElementById("geographySelect").value = String(first.filter_geography || "US").toUpperCase();
       document.getElementById("marketCapSelect").value = String(first.filter_market_cap_bucket || "LARGE").toUpperCase();
-      document.getElementById("industrySelect").value = String(first.filter_industry || "ALL").toUpperCase();
+      document.getElementById("industrySelect").value = "ALL";
       document.getElementById("topNInput").value = Number(first.top_n || 20);
     }
 
+    // Subtier auto-sync: selecting a subtier drives the market cap bucket to the
+    // correct parent bucket so the chart always has valid replay data to display.
+    const SUBTIER_TO_BUCKET = {
+      HYPER_MEGA: "MEGA",
+      ULTRA_MEGA: "MEGA",
+      EXTENDED_MEGA: "MEGA",
+      LARGE: "LARGE",
+      MID: "MID",
+      SMALL: "SMALL",
+      MICRO: "MICRO",
+    };
+    const subtierEl = document.getElementById("subtierSelect");
+    const marketCapEl = document.getElementById("marketCapSelect");
+    let preSyncMarketCap = null;
+    if (subtierEl) {
+      subtierEl.addEventListener("change", () => {
+        const bucket = SUBTIER_TO_BUCKET[subtierEl.value.toUpperCase()];
+        if (bucket && marketCapEl) {
+          // Save the user's original market cap before overriding it
+          if (preSyncMarketCap === null) preSyncMarketCap = marketCapEl.value;
+          marketCapEl.value = bucket;
+        } else if (!subtierEl.value && preSyncMarketCap !== null && marketCapEl) {
+          // Restore the original market cap when going back to ALL
+          marketCapEl.value = preSyncMarketCap;
+          preSyncMarketCap = null;
+        }
+        render();
+      });
+    }
+
     ["geographySelect", "marketCapSelect", "industrySelect", "timeframeSelect", "topNInput"].forEach((id) => {
-      document.getElementById(id).addEventListener("change", () => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", () => {
+        // If the user manually changes market cap, forget the saved pre-sync value
+        if (id === "marketCapSelect") preSyncMarketCap = null;
         render();
       });
     });
@@ -775,3 +977,543 @@ async function initialize() {
 }
 
 initialize();
+
+// ---------------------------------------------------------------------------
+// Symbol Lookup
+// ---------------------------------------------------------------------------
+
+const SIGNAL_PATHS = {
+  zacks:    "/data/signals/zacks/latest_zacks.csv",
+  yahoo:    "/data/signals/yahoo/latest_yahoo_supplemental.csv",
+  danelfin: "/data/signals/danelfin/latest_danelfin.csv",
+  metadata: "/data/signals/security_metadata/latest_security_metadata.csv",
+};
+
+async function fetchSignalCsv(path) {
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) return [];
+    const text = await response.text();
+    return parseCsv(text);
+  } catch {
+    return [];
+  }
+}
+
+function essBadge(text) {
+  const t = String(text || "").trim().toUpperCase();
+  const cls = {
+    VERY_BULLISH: "badge-very-bullish",
+    BULLISH:      "badge-bullish",
+    NEUTRAL:      "badge-neutral",
+    BEARISH:      "badge-bearish",
+    VERY_BEARISH: "badge-very-bearish",
+  }[t] || "badge-unknown";
+  const label = t || "n/a";
+  return `<span class="lookup-badge ${cls}">${label}</span>`;
+}
+
+function fmtUpside(val) {
+  const n = parseFloat(val);
+  if (!isFinite(n)) return `<span class="lf-value na">n/a</span>`;
+  const cls = n >= 0 ? "positive" : "negative";
+  return `<span class="lf-value ${cls}">${n >= 0 ? "+" : ""}${n.toFixed(1)}%</span>`;
+}
+
+function fmtVal(val, prefix = "", suffix = "", decimals = 2) {
+  const n = parseFloat(val);
+  if (!isFinite(n)) return `<span class="lf-value na">n/a</span>`;
+  return `<span class="lf-value">${prefix}${n.toFixed(decimals)}${suffix}</span>`;
+}
+
+function fmtText(val) {
+  const s = String(val || "").trim();
+  if (!s) return `<span class="lf-value na">n/a</span>`;
+  return `<span class="lf-value">${s}</span>`;
+}
+
+function fieldHtml(label, valueHtml) {
+  return `<div class="lookup-field"><div class="lf-label">${label}</div><div>${valueHtml}</div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Factor contribution helpers — Phase 8
+// Mirrors analytical_universe_manager weight constants + scoring logic.
+// ---------------------------------------------------------------------------
+const _FACTOR_ESS_SCORE_MAP = {
+  VERY_BULLISH: 5.0, BULLISH: 4.0, NEUTRAL: 3.0, BEARISH: 2.0, VERY_BEARISH: 1.0,
+};
+// v1 production weights
+const _V1_FACTOR_WEIGHTS = { ess: 0.55, zacks: 0.25, danelfin: 0.10, yahoo: 0.10 };
+// v2 experimental weights (must match composite_versioning.py)
+const _V2_FACTOR_WEIGHTS = { ess: 0.50, zacks: 0.225, danelfin: 0.175, yahoo: 0.10 };
+
+function _resolveZacksScore(zacksRaw) {
+  const n = parseFloat(zacksRaw);
+  if (isFinite(n) && n >= 1.0 && n <= 5.0) return n;
+  const textMap = {
+    "STRONG BUY": 5, "STRONG_BUY": 5, "OUTPERFORM": 4, "BUY": 4, "OVERWEIGHT": 4,
+    "NEUTRAL": 3, "HOLD": 3, "MARKET PERFORM": 3, "MARKET_PERFORM": 3,
+    "UNDERPERFORM": 2, "SELL": 2, "UNDERWEIGHT": 2,
+    "STRONG SELL": 1, "STRONG_SELL": 1,
+  };
+  return textMap[String(zacksRaw || "").trim().toUpperCase()] || null;
+}
+
+/**
+ * Compute per-factor attributions for a composite score.
+ *
+ * @param {string} essText     - ESS signal text
+ * @param {string} zacksRaw    - Zacks rating (numeric string or text)
+ * @param {string} yahooNorm   - Normalized Yahoo ABR string (or "" for v1)
+ * @param {string} danelfinRaw - Danelfin numeric score string
+ * @param {object} weights     - { ess, zacks, danelfin, yahoo }
+ * @returns {Array<{name, rawDisplay, score, baseW, effW, contrib, available}>}
+ */
+function computeFactorAttribution(essText, zacksRaw, yahooNorm, danelfinRaw, weights) {
+  const essUpper = String(essText || "").trim().toUpperCase();
+  const essScore = _FACTOR_ESS_SCORE_MAP[essUpper];
+  const essAvail = essScore !== undefined;
+
+  const zScore = _resolveZacksScore(zacksRaw);
+  const zAvail = zScore !== null;
+
+  const yScore = parseFloat(yahooNorm);
+  const yAvail = isFinite(yScore) && yScore > 0.0;
+
+  const dScore = parseFloat(danelfinRaw);
+  const dAvail = isFinite(dScore) && dScore > 0.0;
+
+  const rawFactors = [
+    { name: "ESS",       rawDisplay: essUpper || "—",         score: essScore ?? 0, w: weights.ess,      avail: essAvail },
+    { name: "Zacks",     rawDisplay: zacksRaw || "—",          score: zScore  ?? 0, w: weights.zacks,    avail: zAvail   },
+    { name: "Danelfin",  rawDisplay: danelfinRaw || "—",       score: dScore  ?? 0, w: weights.danelfin, avail: dAvail   },
+    { name: "Yahoo ABR", rawDisplay: yahooNorm  || "—",        score: yScore  ?? 0, w: weights.yahoo,    avail: yAvail   },
+  ];
+
+  const totalW = rawFactors.filter(f => f.avail).reduce((s, f) => s + f.w, 0);
+  if (totalW === 0) return null;
+
+  return rawFactors.map(f => ({
+    ...f,
+    effW:   f.avail ? f.w / totalW : 0,
+    contrib: f.avail ? f.score * f.w / totalW : 0,
+  }));
+}
+
+/**
+ * Render the factor attribution panel HTML.
+ *
+ * @param {Array} factors  - result of computeFactorAttribution (may be null)
+ * @param {string} label   - section title (e.g. "Score Attribution — v1")
+ * @param {string} version - "v1" | "v2"
+ * @returns {string} HTML fragment
+ */
+function renderFactorAttributionHtml(factors, label, version) {
+  if (!factors) return "";
+  const maxContrib = 5.0; // max score × effW ≤ 5 (if only one signal)
+  const rows = factors.map(f => {
+    if (!f.avail) {
+      return `
+        <div class="fc-row fc-unavail">
+          <span class="fc-factor">${f.name}</span>
+          <span class="fc-raw">n/a</span>
+          <div class="fc-bar-wrap"><div class="fc-bar-fill fc-na" style="width:0%"></div></div>
+          <span class="fc-contrib-val fc-na">—</span>
+        </div>`;
+    }
+    const pct = Math.round(100 * f.contrib / maxContrib);
+    const barColor = version === "v2"
+      ? (f.name === "Yahoo ABR" ? "#6b3fa0" : "#2a9d8f")
+      : "#2a9d8f";
+    const rawLabel = f.name === "Zacks"
+      ? (isFinite(parseFloat(f.rawDisplay)) ? `Z${parseFloat(f.rawDisplay).toFixed(1)}` : f.rawDisplay)
+      : f.name === "Danelfin"
+      ? (isFinite(parseFloat(f.rawDisplay)) ? `${Math.round(parseFloat(f.rawDisplay) * 2)}/10` : f.rawDisplay)
+      : f.name === "Yahoo ABR"
+      ? (isFinite(parseFloat(f.rawDisplay)) ? `${parseFloat(f.rawDisplay).toFixed(2)} (norm)` : f.rawDisplay)
+      : f.rawDisplay;
+    return `
+      <div class="fc-row">
+        <span class="fc-factor">${f.name}</span>
+        <span class="fc-raw" title="${f.rawDisplay}">${rawLabel}</span>
+        <div class="fc-bar-wrap"><div class="fc-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <span class="fc-contrib-val">+${f.contrib.toFixed(2)}</span>
+      </div>`;
+  }).join("");
+
+  return `
+    <div class="factor-attribution">
+      <div class="factor-attribution-title">${label}</div>
+      ${rows}
+    </div>`;
+}
+
+/**
+ * Render the v1 vs v2 comparison row.
+ */
+function renderV2CompareHtml(v1Score, v2ScoreRaw, yahooNorm) {
+  const v2 = parseFloat(v2ScoreRaw);
+  if (!isFinite(v2) || !v2ScoreRaw) return "";
+  const delta = v2 - parseFloat(v1Score);
+  const sign  = delta >= 0 ? "+" : "";
+  const cls   = Math.abs(delta) < 0.005 ? "neutral" : (delta > 0 ? "positive" : "negative");
+  const abr   = parseFloat(yahooNorm);
+  const abrLabel = isFinite(abr) && abr > 0
+    ? ` · Yahoo ABR ${abr.toFixed(2)}`
+    : " · Yahoo ABR n/a";
+  return `
+    <div class="v2-compare-row">
+      <span class="v2-badge">v2 Experimental</span>
+      <span class="v2-score">${v2.toFixed(4)}</span>
+      <span class="v2-delta ${cls}">(${sign}${delta.toFixed(4)} vs v1${abrLabel})</span>
+    </div>`;
+}
+
+async function lookupSymbol() {
+  const input = document.getElementById("lookupInput");
+  const resultDiv = document.getElementById("lookupResult");
+  const sym = String(input.value || "").trim().toUpperCase();
+  if (!sym) {
+    resultDiv.innerHTML = "";
+    return;
+  }
+
+  resultDiv.innerHTML = `<p class="lookup-not-found">Searching for <strong>${sym}</strong>…</p>`;
+
+  const [zacksRows, yahooRows, danelfinRows, metaRows] = await Promise.all([
+    fetchSignalCsv(SIGNAL_PATHS.zacks),
+    fetchSignalCsv(SIGNAL_PATHS.yahoo),
+    fetchSignalCsv(SIGNAL_PATHS.danelfin),
+    fetchSignalCsv(SIGNAL_PATHS.metadata),
+  ]);
+
+  const auRow    = state.analyticalUniverse.find((r) => String(r.symbol || "").toUpperCase() === sym);
+  const zRow     = zacksRows.find((r) => String(r.symbol || "").toUpperCase() === sym);
+  const yRow     = yahooRows.find((r) => String(r.symbol || "").toUpperCase() === sym);
+  const dRow     = danelfinRows.find((r) => String(r.symbol || "").toUpperCase() === sym);
+  const mRow     = metaRows.find((r) => String(r.symbol || "").toUpperCase() === sym);
+
+  if (!auRow && !zRow && !yRow && !dRow && !mRow) {
+    resultDiv.innerHTML = `<p class="lookup-not-found">No data found for <strong>${sym}</strong>. It may not be in the current analytical universe or signal cache.</p>`;
+    return;
+  }
+
+  // Derive fields
+  const essText     = auRow ? auRow.ess_score_text : "";
+  const compScore   = auRow ? auRow.composite_score : "";
+  const mcap        = auRow ? auRow.market_cap_bucket : "";
+  const subtier     = auRow ? (auRow.analytical_market_cap_subtier || "") : "";
+  const sector      = mRow ? (mRow.sector || "") : (auRow ? (auRow.sector !== "ALL" ? auRow.sector : "") : "");
+  const industry    = mRow ? (mRow.industry || "") : "";
+  const country     = mRow ? (mRow.country || "") : "";
+  const quoteType   = mRow ? (mRow.quote_type || "") : "";
+  const zRankRaw    = zRow  ? zRow.zacks_rank : (auRow ? auRow.zacks_rating : "");
+  const zScoreRaw   = zRow  ? zRow.score : "";
+  const danScore    = dRow  ? dRow.danelfin_score : (auRow ? auRow.danelfin_score : "");
+  const danRaw10    = danScore ? Math.round(parseFloat(danScore) * 2) : null;
+  const curPx       = yRow  ? yRow.current_price : "";
+  const tgtPx       = yRow  ? yRow.price_target : "";
+  const upside      = yRow  ? yRow.upside_pct : "";
+  const abr         = yRow  ? yRow.abr : "";
+  const eps         = yRow  ? (yRow.eps_growth_5yr || yRow["eps_growth_5yr"] || "") : "";
+  // Phase 8: governance + v2 experimental fields from universe row
+  const compV2Raw   = auRow ? (auRow.composite_v2_yahoo || "") : "";
+  const yahooNorm   = auRow ? (auRow.yahoo_abr_normalized || "") : "";
+
+  // Zacks rank label
+  const zRankNum = parseFloat(zRankRaw);
+  const zRankLabel = isFinite(zRankNum)
+    ? [`Strong Buy`, `Buy`, `Hold`, `Sell`, `Strong Sell`][Math.round(zRankNum) - 1] || String(zRankNum)
+    : "n/a";
+  const zRankHtml = isFinite(zRankNum)
+    ? `<span class="lf-value">Z${Math.round(zRankNum)} — ${zRankLabel}</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  const danHtml = danRaw10 !== null
+    ? `<span class="lf-value">${danRaw10}/10</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  const abrNum = parseFloat(abr);
+  const abrLabel = isFinite(abrNum)
+    ? [`Strong Buy`, `Buy`, `Hold`, `Sell`, `Strong Sell`][Math.round(abrNum) - 1] || abr
+    : "";
+  const abrHtml = isFinite(abrNum)
+    ? `<span class="lf-value">${abrNum.toFixed(2)} — ${abrLabel}</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  const fields = [
+    fieldHtml("Symbol",       `<span class="lf-value" style="font-size:1.25rem">${sym}</span>`),
+    fieldHtml("Market Cap",   fmtText(mcap || (auRow ? "WATCHLIST" : ""))),
+    ...(subtier && subtier !== mcap ? [fieldHtml("Analytical Subtier", fmtText(subtier))] : []),
+    ...(sector ? [fieldHtml("Sector", fmtText(sector))] : []),
+    ...(industry ? [fieldHtml("Industry", fmtText(industry))] : []),
+    ...(country ? [fieldHtml("Country", fmtText(country))] : []),
+    ...(quoteType && quoteType !== "EQUITY" ? [fieldHtml("Type", fmtText(quoteType))] : []),
+    fieldHtml("ESS Signal",   essText ? essBadge(essText) : `<span class="lf-value na">n/a</span>`),
+    fieldHtml("Composite",    fmtVal(compScore, "", "", 4)),
+    fieldHtml("Zacks Rank",   zRankHtml),
+    fieldHtml("Danelfin AI",  danHtml),
+    fieldHtml("Yahoo ABR",    abrHtml),
+    fieldHtml("Current Px",   fmtVal(curPx, "$")),
+    fieldHtml("Target Px",    fmtVal(tgtPx, "$")),
+    fieldHtml("Upside",       fmtUpside(upside)),
+    ...(eps ? [fieldHtml("5yr EPS Est", fmtVal(eps, "", "%", 1))] : []),
+  ];
+
+  const missingProviders = !zRow || !yRow || !dRow;
+
+  const sources = [
+    auRow ? "universe" : null,
+    zRow  ? "zacks" : null,
+    yRow  ? "yahoo" : null,
+    dRow  ? "danelfin" : null,
+    mRow  ? "metadata" : null,
+  ].filter(Boolean).join(", ");
+
+  const fetchBtnHtml = missingProviders
+    ? `<div style="margin-top: 12px;">
+        <button id="fetchLiveBtn" onclick="fetchLiveScores('${sym}')"
+          style="padding:7px 18px;border-radius:9px;border:none;background:var(--accent-2);color:#fff;font-size:0.88rem;cursor:pointer;font-family:inherit;">
+          Fetch Live Scores
+        </button>
+        <span id="fetchLiveStatus" style="margin-left:10px;font-size:0.82rem;color:var(--muted);"></span>
+       </div>`
+    : "";
+
+  // Phase 8: factor attribution panels
+  const v1Attribs  = computeFactorAttribution(essText, zRankRaw, "", danScore, _V1_FACTOR_WEIGHTS);
+  const v1AttrHtml = renderFactorAttributionHtml(v1Attribs, "Score Attribution — v1 (Production)", "v1");
+
+  let v2SectionHtml = "";
+  if (compV2Raw) {
+    if (yahooNorm) {
+      // Full v2 attribution including Yahoo ABR factor
+      const v2Attribs  = computeFactorAttribution(essText, zRankRaw, yahooNorm, danScore, _V2_FACTOR_WEIGHTS);
+      v2SectionHtml = renderFactorAttributionHtml(v2Attribs, "Score Attribution — v2 Experimental (Yahoo ABR included)", "v2")
+                    + renderV2CompareHtml(compScore, compV2Raw, yahooNorm);
+    } else {
+      // v2 computed but no ABR for this symbol — score comparison only
+      v2SectionHtml = renderV2CompareHtml(compScore, compV2Raw, "");
+    }
+  }
+
+  resultDiv.innerHTML = `
+    <div class="lookup-card" id="lookupCard">${fields.join("")}</div>
+    ${v1AttrHtml}
+    ${v2SectionHtml}
+    <p style="margin: 8px 0 0; font-size: 0.78rem; color: var(--muted);">Data sources: ${sources}</p>
+    ${fetchBtnHtml}
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// On-demand live score fetch
+// ---------------------------------------------------------------------------
+
+let _fetchPollTimer = null;
+
+async function fetchLiveScores(sym) {
+  const btn    = document.getElementById("fetchLiveBtn");
+  const status = document.getElementById("fetchLiveStatus");
+  if (!btn || !status) return;
+
+  btn.disabled = true;
+  btn.textContent = "Fetching\u2026";
+  status.textContent = "Contacting Zacks, Danelfin & Yahoo (may take 5\u201315s)\u2026";
+
+  try {
+    const res = await fetch("/api/score-fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol: sym }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = "Retry";
+    return;
+  }
+
+  // Poll until done
+  clearInterval(_fetchPollTimer);
+  _fetchPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/score-fetch/status?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data.status === "done") {
+        clearInterval(_fetchPollTimer);
+        _applyLiveScores(sym, data);
+      } else if (data.status === "error") {
+        clearInterval(_fetchPollTimer);
+        status.textContent = `Fetch error: ${data.error || "unknown"}`;
+        btn.disabled = false;
+        btn.textContent = "Retry";
+      }
+    } catch (_) {}
+  }, 2000);
+}
+
+function _applyLiveScores(sym, data) {
+  const btn    = document.getElementById("fetchLiveBtn");
+  const status = document.getElementById("fetchLiveStatus");
+  const card   = document.getElementById("lookupCard");
+  if (btn)    { btn.disabled = false; btn.textContent = "Refresh Live Scores"; }
+  if (status) { status.textContent = `Fetched at ${data.fetched_at ? data.fetched_at.substring(11, 19) + " UTC" : "just now"}`; }
+
+  // Build a fresh overlay of provider fields
+  const z = data.zacks    || {};
+  const y = data.yahoo    || {};
+  const d = data.danelfin || {};
+
+  // Zacks
+  const zRankNum = z.rank != null ? parseFloat(z.rank) : NaN;
+  const zRankLabel = isFinite(zRankNum)
+    ? [`Strong Buy`, `Buy`, `Hold`, `Sell`, `Strong Sell`][Math.round(zRankNum) - 1] || String(zRankNum)
+    : "n/a";
+  const zHtml = isFinite(zRankNum)
+    ? `<span class="lf-value">Z${Math.round(zRankNum)} \u2014 ${zRankLabel}</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  // Danelfin
+  const dRaw = d.raw != null ? d.raw : null;
+  const dHtml = dRaw !== null
+    ? `<span class="lf-value">${dRaw}/10</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  // Yahoo / ABR
+  const abrNum = (y.abr != null) ? parseFloat(y.abr) : (z.abr != null ? parseFloat(z.abr) : NaN);
+  const abrLabel = isFinite(abrNum)
+    ? [`Strong Buy`, `Buy`, `Hold`, `Sell`, `Strong Sell`][Math.round(abrNum) - 1] || abrNum.toFixed(2)
+    : "";
+  const abrHtml = isFinite(abrNum)
+    ? `<span class="lf-value">${abrNum.toFixed(2)} \u2014 ${abrLabel}</span>`
+    : `<span class="lf-value na">n/a</span>`;
+
+  const tgtPx    = y.price_target  ?? z.price_target  ?? null;
+  const curPx    = y.current_price ?? null;
+  const eps      = y.eps_growth_5yr ?? z.eps_growth ?? null;
+  const upside   = (tgtPx != null && curPx != null && curPx > 0)
+    ? ((tgtPx - curPx) / curPx * 100)
+    : null;
+
+  // Inject/replace provider fields in the card
+  function _setOrAddField(id, label, valueHtml) {
+    let el = document.getElementById(id);
+    if (!el && card) {
+      el = document.createElement("div");
+      el.id = id;
+      el.className = "lookup-field";
+      card.appendChild(el);
+    }
+    if (el) el.innerHTML = `<div class="lf-label">${label}</div>${valueHtml}`;
+  }
+
+  _setOrAddField("lf-live-zacks",    "Zacks Rank (live)",   zHtml);
+  _setOrAddField("lf-live-danelfin", "Danelfin AI (live)",  dHtml);
+  _setOrAddField("lf-live-abr",      "Analyst Cons (live)", abrHtml);
+  if (curPx != null) _setOrAddField("lf-live-curpx",  "Current Px (live)", fmtVal(curPx, "$"));
+  if (tgtPx != null) _setOrAddField("lf-live-tgtpx",  "Target Px (live)",  fmtVal(tgtPx, "$"));
+  if (upside != null) _setOrAddField("lf-live-upside", "Upside (live)",     fmtUpside(upside.toFixed(1)));
+  if (eps    != null) _setOrAddField("lf-live-eps",    "5yr EPS Est (live)",fmtVal(eps, "", "%", 1));
+}
+
+// ---------------------------------------------------------------------------
+// Signal Data Freshness
+// ---------------------------------------------------------------------------
+
+let _refreshPollTimer = null;
+
+function loadSignalStatus() {
+  fetch("/api/signal-status", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(data => {
+      _renderSignalPills(data);
+      if (data._running) {
+        const btn = document.getElementById("signalRefreshBtn");
+        const msg = document.getElementById("signalRefreshMsg");
+        if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
+        if (msg) { msg.style.display = ""; msg.textContent = "Refresh in progress (smart mode \u2014 bullish symbols only). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background."; }
+        _startRefreshPoll();
+      }
+    })
+    .catch(() => {
+      const el = document.getElementById("signalStatusPills");
+      if (el) el.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Status unavailable \u2014 API not reachable</span>';
+    });
+}
+
+function _renderSignalPills(data) {
+  const el = document.getElementById("signalStatusPills");
+  if (!el) return;
+  const providers = ["zacks", "danelfin", "yahoo"];
+  const labels    = { zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  el.innerHTML = providers.filter(k => k in data).map(key => {
+    const info    = data[key];
+    const label   = labels[key];
+    const dateStr = info.sourced_date || "—";
+    const dotCls  = !info.sourced_date ? "dot-unknown" : info.stale ? "dot-stale" : "dot-fresh";
+    const stsCls  = !info.sourced_date ? "pill-status-unknown" : info.stale ? "pill-status-stale" : "pill-status-fresh";
+    const stsLbl  = !info.sourced_date ? "no data" : info.stale ? "stale" : "fresh";
+    return `<div class="signal-pill">
+      <span class="dot ${dotCls}"></span>
+      <span class="pill-label">${label}</span>
+      <span class="pill-date">${dateStr}</span>
+      <span class="${stsCls}">(${stsLbl})</span>
+    </div>`;
+  }).join("");
+}
+
+function triggerSignalRefresh() {
+  const btn = document.getElementById("signalRefreshBtn");
+  const msg = document.getElementById("signalRefreshMsg");
+  if (!btn || !msg) return;
+  // Disable immediately to prevent double-click while the POST is in-flight
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+
+  fetch("/api/signal-refresh", { method: "POST", cache: "no-store" })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(data => {
+      msg.style.display = "";
+      if (data.started === false) {
+        // Already running — keep button disabled and start polling
+        btn.textContent = "Refreshing\u2026";
+        msg.textContent = "Refresh already running in background.";
+        _startRefreshPoll();
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Refreshing\u2026";
+      msg.textContent = "Refresh started (smart mode \u2014 bullish symbols only). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background, you can continue using the UI.";
+      _startRefreshPoll();
+    })
+    .catch(() => {
+      btn.disabled = false;
+      btn.textContent = "Refresh Stale";
+      msg.style.display = "";
+      msg.textContent = "Could not start refresh \u2014 is the server running with API support?";
+    });
+}
+
+function _startRefreshPoll() {
+  if (_refreshPollTimer) clearInterval(_refreshPollTimer);
+  _refreshPollTimer = setInterval(() => {
+    fetch("/api/signal-refresh/status", { cache: "no-store" })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => {
+        if (!data.running) {
+          clearInterval(_refreshPollTimer);
+          _refreshPollTimer = null;
+          const btn = document.getElementById("signalRefreshBtn");
+          const msg = document.getElementById("signalRefreshMsg");
+          if (btn) { btn.disabled = false; btn.textContent = "Refresh Stale"; }
+          if (msg) { msg.textContent = "Refresh complete. Signal dates updated."; }
+          loadSignalStatus();
+        }
+      })
+      .catch(() => {});
+  }, 5000);
+}

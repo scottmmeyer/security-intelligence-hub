@@ -258,6 +258,8 @@ def build_full_universe_curve(
         if (not geo_filter or r.geography.upper() == geo_filter)
         and (not cap_filter or r.market_cap_bucket.upper() == cap_filter)
         and (ind_filter in ("", "ALL") or r.industry.upper() == ind_filter)
+        and getattr(r, "replay_eligible", True) is not False
+        and str(getattr(r, "replay_eligible", True)).lower() != "false"
     ]
 
     # 3. Unique symbols, deterministic sort, safety cap

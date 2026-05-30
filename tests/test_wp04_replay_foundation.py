@@ -276,6 +276,8 @@ def test_performance_series_contract_generation_and_persistence(tmp_path: Path) 
         investable_vehicle_symbol="SPY",
     )
 
-    assert Path(paths["current_inputs_path"]).exists()
-    assert Path(paths["current_series_path"]).exists()
+    # current/ is no longer written by persist_replay_outputs — the matrix builder
+    # (build_wp05b_replay_matrix) owns atomic current/ publishing with merge support.
+    assert "current_inputs_path" in paths
+    assert "current_series_path" in paths
     assert Path(paths["replay_metadata_path"]).exists()

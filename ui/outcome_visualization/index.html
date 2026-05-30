@@ -52,6 +52,27 @@
         font-size: 0.95rem;
       }
 
+      .page-nav {
+        display: flex;
+        gap: 8px;
+        margin: 14px 0 0;
+        flex-wrap: wrap;
+      }
+
+      .nav-link {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        text-decoration: none;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        background: #fff;
+        transition: background 0.15s, color 0.15s;
+      }
+
+      .nav-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .nav-link-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
@@ -104,6 +125,20 @@
         padding: 8px;
         font-size: 0.85rem;
         background: #fff;
+      }
+
+      .legend-active-id {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--text);
+        margin: 5px 0 2px;
+        letter-spacing: 0.01em;
+      }
+
+      .legend-desc {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-top: 2px;
       }
 
       .chip {
@@ -203,6 +238,256 @@
         color: #2e2a23;
       }
 
+      .forward-backtest-panel {
+        margin-bottom: 14px;
+        border: 1.5px solid #2a9d8f;
+        border-radius: 10px;
+        background: #f0faf9;
+        padding: 14px 18px 12px;
+      }
+
+      .fbt-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .fbt-badge {
+        background: #2a9d8f;
+        color: #fff;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        padding: 3px 9px;
+        border-radius: 5px;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .fbt-subtitle {
+        font-size: 0.82rem;
+        color: #1b6b62;
+        font-style: italic;
+      }
+
+      .fbt-body {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        margin-bottom: 12px;
+      }
+
+      .fbt-block {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .fbt-label {
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #2a9d8f;
+        font-weight: 600;
+      }
+
+      .fbt-value {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #1b1b1b;
+      }
+
+      .fbt-value.positive { color: #1a7a5e; }
+      .fbt-value.negative { color: #b54a3a; }
+
+      .fbt-stocks {
+        margin-bottom: 10px;
+      }
+
+      .fbt-symbols {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .fbt-symbol {
+        background: #d0f0ec;
+        color: #0d4e48;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+      }
+
+      .fbt-explanation {
+        font-size: 0.82rem;
+        color: #2a4a47;
+        line-height: 1.5;
+        border-top: 1px solid #b2dbd7;
+        padding-top: 10px;
+        margin-top: 4px;
+      }
+
+      /* Symbol Lookup */
+      .lookup-bar {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
+
+      .lookup-bar .field {
+        flex: 0 0 auto;
+      }
+
+      .lookup-bar input[type="text"] {
+        width: 160px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 12px;
+        font-size: 0.95rem;
+        background: #fff;
+        color: var(--text);
+        text-transform: uppercase;
+      }
+
+      .lookup-bar button {
+        padding: 8px 20px;
+        border-radius: 9px;
+        border: none;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.95rem;
+        cursor: pointer;
+        font-family: inherit;
+      }
+
+      .lookup-bar button:hover {
+        background: #0a4a50;
+      }
+
+      #lookupResult {
+        margin-top: 14px;
+        min-height: 0;
+      }
+
+      .lookup-card {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 10px;
+        margin-top: 0;
+      }
+
+      .lookup-field {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+
+      .lookup-field .lf-label {
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+
+      .lookup-field .lf-value {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .lookup-field .lf-value.positive { color: #1a7a2e; }
+      .lookup-field .lf-value.negative { color: #b83232; }
+      .lookup-field .lf-value.na       { color: var(--muted); font-weight: 400; }
+
+      .lookup-badge {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 2px 10px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #fff;
+      }
+
+      .badge-very-bullish { background: #1a7a2e; }
+      .badge-bullish      { background: #2a9d8f; }
+      .badge-neutral      { background: #888; }
+      .badge-bearish      { background: #c97c22; }
+      .badge-very-bearish { background: #b83232; }
+      .badge-unknown      { background: #aaa; color: #fff; }
+
+      .lookup-not-found {
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 8px 0;
+      }
+
+      /* ── Factor contribution attribution panel ─────────────────────────── */
+      .factor-attribution {
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 16px 10px;
+        margin-top: 10px;
+      }
+      .factor-attribution-title {
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+      }
+      .fc-row {
+        display: grid;
+        grid-template-columns: 90px 120px 1fr 52px;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 5px;
+        font-size: 0.83rem;
+      }
+      .fc-factor { font-weight: 600; color: var(--text); }
+      .fc-raw    { color: var(--muted); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .fc-bar-wrap { background: #f0ede7; border-radius: 4px; height: 8px; }
+      .fc-bar-fill { height: 8px; border-radius: 4px; background: #2a9d8f; }
+      .fc-bar-fill.fc-na { background: #d9ceb8; }
+      .fc-contrib-val { text-align: right; font-weight: 600; color: var(--text); font-size: 0.82rem; }
+      .fc-contrib-val.fc-na { color: var(--muted); font-weight: 400; }
+      .fc-unavail .fc-factor { color: var(--muted); font-weight: 400; }
+
+      /* ── V2 experimental comparison row ──────────────────────────────────── */
+      .v2-compare-row {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        font-size: 0.83rem;
+      }
+      .v2-badge {
+        display: inline-block;
+        background: #e8e0f3;
+        color: #6b3fa0;
+        border-radius: 999px;
+        padding: 2px 10px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .v2-score { font-weight: 600; color: var(--text); }
+      .v2-delta { font-size: 0.78rem; }
+      .v2-delta.positive { color: #1a7a2e; }
+      .v2-delta.negative { color: #b83232; }
+      .v2-delta.neutral  { color: var(--muted); }
+
       @media (max-width: 980px) {
         .filters {
           grid-template-columns: repeat(2, minmax(120px, 1fr));
@@ -216,11 +501,67 @@
           grid-template-columns: 1fr 1fr;
         }
       }
+
+      /* Signal freshness panel */
+      .signal-status-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .signal-pill {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #fff;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 5px 14px 5px 10px;
+        font-size: 0.83rem;
+      }
+
+      .signal-pill .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .dot-fresh   { background: #2a9d8f; }
+      .dot-stale   { background: #e76f51; }
+      .dot-unknown { background: #bbb; }
+
+      .pill-label { font-weight: 600; color: var(--text); }
+      .pill-date  { color: var(--muted); margin-left: 2px; }
+      .pill-status-fresh  { color: #2a9d8f; margin-left: 2px; font-size: 0.75rem; }
+      .pill-status-stale  { color: #e76f51; margin-left: 2px; font-size: 0.75rem; }
+      .pill-status-unknown { color: var(--muted); margin-left: 2px; font-size: 0.75rem; }
+
+      .signal-refresh-btn {
+        padding: 6px 16px;
+        border-radius: 9px;
+        border: none;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.88rem;
+        cursor: pointer;
+        font-family: inherit;
+        white-space: nowrap;
+      }
+
+      .signal-refresh-btn:hover { background: #0a4a50; }
+      .signal-refresh-btn:disabled { background: #aaa; cursor: not-allowed; }
     </style>
   </head>
   <body>
     <div class="shell">
       <h1>Outcome Visualization Prototype</h1>
+      <nav class="page-nav">
+        <a href="/ui/outcome_visualization/" class="nav-link nav-link-active">Outcome Visualization</a>
+        <a href="/ui/allocation_intelligence/" class="nav-link">Allocation Intelligence</a>
+        <a href="/ui/portfolio_alignment/" class="nav-link">Portfolio Alignment</a>
+      </nav>
       <p class="subtitle">
         Benchmark baseline vs ETF/fund alternative vs full universe vs fixed top-N replay strategy.
       </p>
@@ -230,7 +571,7 @@
           <div class="field">
             <label for="geographySelect">Geography</label>
             <select id="geographySelect">
-              <option>US</option>
+              <option selected>US</option>
               <option>INTERNATIONAL</option>
             </select>
           </div>
@@ -242,6 +583,19 @@
               <option>MID</option>
               <option>SMALL</option>
               <option>MICRO</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subtierSelect">Analytical Subtier</label>
+            <select id="subtierSelect">
+              <option value="" selected>ALL</option>
+              <option value="HYPER_MEGA">HYPER_MEGA</option>
+              <option value="ULTRA_MEGA">ULTRA_MEGA</option>
+              <option value="EXTENDED_MEGA">EXTENDED_MEGA</option>
+              <option value="LARGE">LARGE</option>
+              <option value="MID">MID</option>
+              <option value="SMALL">SMALL</option>
+              <option value="MICRO">MICRO</option>
             </select>
           </div>
           <div class="field">
@@ -265,11 +619,13 @@
         <div class="legend">
           <div class="legend-item">
             <span class="chip chip-benchmark">Benchmark</span>
-            Analytical baseline for category performance comparison.
+            <div class="legend-active-id" id="legendBenchmarkId">—</div>
+            <div class="legend-desc">Analytical baseline for category performance comparison.</div>
           </div>
           <div class="legend-item">
             <span class="chip chip-vehicle">ETF/Fund</span>
-            Investable passive alternative mapped to the category.
+            <div class="legend-active-id" id="legendVehicleId">—</div>
+            <div class="legend-desc">Investable passive alternative mapped to the category.</div>
           </div>
           <div class="legend-item">
             <span class="chip chip-universe">Full Universe</span>
@@ -282,7 +638,31 @@
         </div>
       </section>
 
+      <section class="panel" style="margin-top: 14px;">
+        <h3 style="margin: 0 0 12px; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Symbol Lookup</h3>
+        <div class="lookup-bar">
+          <div class="field">
+            <label for="lookupInput">Symbol (equity or ETF)</label>
+            <input id="lookupInput" type="text" placeholder="e.g. MU, IWC, ATLC" autocomplete="off" spellcheck="false" />
+          </div>
+          <button id="lookupBtn" onclick="lookupSymbol()">Look Up</button>
+        </div>
+        <div id="lookupResult"></div>
+      </section>
+
+      <section class="panel" style="margin-top: 14px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <h3 style="margin: 0; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Signal Data Freshness</h3>
+          <div id="signalStatusPills" class="signal-status-row">
+            <span style="color: var(--muted); font-size: 0.83rem;">Loading…</span>
+          </div>
+          <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Stale</button>
+        </div>
+        <div id="signalRefreshMsg" style="margin-top: 8px; font-size: 0.82rem; color: var(--muted); display: none;"></div>
+      </section>
+
       <section class="panel chart-wrap">
+        <div id="forwardBacktestExplainer" class="forward-backtest-panel" style="display:none;"></div>
         <div class="chart-card">
           <canvas id="seriesCanvas" width="1120" height="360"></canvas>
           <div id="statusBox" class="status">Loading replay contracts...</div>
@@ -315,6 +695,14 @@
       </section>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=9"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        document.getElementById("lookupInput").addEventListener("keydown", function (e) {
+          if (e.key === "Enter") lookupSymbol();
+        });
+        loadSignalStatus();
+      });
+    </script>
   </body>
 </html>

@@ -58,3 +58,13 @@ def test_no_heavy_frontend_tooling_introduced() -> None:
 
     assert not (root / "ui" / "outcome_visualization" / "package.json").exists()
     assert not (root / "ui" / "outcome_visualization" / "node_modules").exists()
+
+
+def test_portfolio_alignment_ui_shows_exposure_split() -> None:
+    root = Path(__file__).resolve().parents[1]
+    app_js = (root / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "Direct" in app_js
+    assert "ETF-derived" in app_js
+    assert "Effective" in app_js
+    assert "Hyper Mega exposure:" in app_js

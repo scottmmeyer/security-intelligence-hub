@@ -274,6 +274,7 @@ def build_wp04_foundation(
     filter_market_cap_bucket: str = "LARGE",
     filter_geography: str = "US",
     filter_industry: str = "ALL",
+    filter_analytical_subtier: str | None = None,
     top_n: int = 20,
     current_root: str | Path = "data/current",
     analytical_history_root: str | Path = "data/history/analytical_universe",
@@ -335,6 +336,7 @@ def build_wp04_foundation(
         industry=filter_industry,
         top_n=top_n,
         replay_id_suffix=run_id,
+        filter_analytical_subtier=filter_analytical_subtier,
     )
 
     lookahead_errors = validate_replay_no_lookahead(selection, filtered_rows)
@@ -348,7 +350,7 @@ def build_wp04_foundation(
     benchmark, vehicle = resolve_category_mapping(
         geography=selection.filter_geography,
         market_cap_bucket=selection.filter_market_cap_bucket,
-        industry_scope=selection.filter_industry,
+        industry_scope="ALL",  # Benchmark/vehicle assignments are market-cap based, not sector-specific.
         benchmark_registry=benchmark_registry,
         vehicle_registry=vehicle_registry,
     )
@@ -556,6 +558,8 @@ def build_wp05b_replay_matrix(
     start_date: str | None = None,
     end_date: str | None = None,
     top_n: int = 20,
+    filter_analytical_subtier: str | None = None,
+    filter_industry: str = "ALL",
     current_root: str | Path = "data/current",
     analytical_history_root: str | Path = "data/history/analytical_universe",
     replay_history_root: str | Path = "data/history/replays",
@@ -588,7 +592,23 @@ def build_wp05b_replay_matrix(
         raise ValueError("WP-05B replay matrix blocked by mapping validation errors: " + "; ".join(mapping_errors))
 
     generated_at = datetime.now(timezone.utc).isoformat()
-    scope_set = {(geo, bucket, industry) for geo, bucket, industry in WP05B_REPLAY_GENERATION_SCOPE}
+
+    # When a specific industry is requested, replace "ALL" in the scope with that industry.
+    industry_filter = filter_industry.upper() if filter_industry else "ALL"
+    if industry_filter == "ALL":
+        active_scope = WP05B_UI_CATEGORY_SCOPE
+        active_gen_scope = WP05B_REPLAY_GENERATION_SCOPE
+    else:
+        active_scope = tuple(
+            (geo, bucket, industry_filter)
+            for geo, bucket, _industry in WP05B_UI_CATEGORY_SCOPE
+        )
+        active_gen_scope = tuple(
+            (geo, bucket, industry_filter)
+            for geo, bucket, _industry in WP05B_REPLAY_GENERATION_SCOPE
+        )
+
+    scope_set = {(geo, bucket, industry) for geo, bucket, industry in active_gen_scope}
 
     availability_rows: List[Dict[str, object]] = []
     matrix_rows: List[Dict[str, object]] = []
@@ -599,13 +619,54 @@ def build_wp05b_replay_matrix(
     current_root_path = Path(current_root)
     tmp_root = current_root_path / ".tmp"
 
+    # Merge strategy: preserve rows for other industries from an existing current build.
+    # When industry_filter == "ALL" this preserves nothing (full rebuild).
+    # When industry_filter == "TECHNOLOGY" it keeps ALL + other sector rows intact.
+    _existing_inputs_path = current_root_path / "replay_inputs.csv"
+    _existing_series_path = current_root_path / "replay_performance_series.csv"
+    _existing_availability_path = current_root_path / "replay_availability.csv"
+    _existing_matrix_path = current_root_path / "replay_matrix.csv"
+    preserved_inputs_rows: List[Dict[str, str]] = []
+    preserved_series_rows: List[Dict[str, str]] = []
+    preserved_availability_rows: List[Dict[str, str]] = []
+    preserved_matrix_rows: List[Dict[str, str]] = []
+    if _existing_inputs_path.exists():
+        _all_existing_inputs = _read_csv_rows(_existing_inputs_path)
+        preserved_inputs_rows = [
+            r for r in _all_existing_inputs
+            if str(r.get("filter_industry", "")).upper() != industry_filter
+        ]
+        _surviving_replay_ids = {str(r.get("replay_id", "")) for r in preserved_inputs_rows}
+        if _existing_series_path.exists():
+            preserved_series_rows = [
+                r for r in _read_csv_rows(_existing_series_path)
+                if str(r.get("replay_id", "")) in _surviving_replay_ids
+            ]
+    if _existing_availability_path.exists():
+        preserved_availability_rows = [
+            r for r in _read_csv_rows(_existing_availability_path)
+            if str(r.get("industry", "")).upper() != industry_filter
+        ]
+    if _existing_matrix_path.exists():
+        preserved_matrix_rows = [
+            r for r in _read_csv_rows(_existing_matrix_path)
+            if str(r.get("industry", "")).upper() != industry_filter
+        ]
+
     # Phase C: clear any stale .tmp from a prior interrupted run before starting
     if tmp_root.exists():
         shutil.rmtree(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
 
+    # Shared provider instances: benchmark and vehicle data are cached in-memory
+    # across all categories so each benchmark/ETF symbol is fetched only once,
+    # preventing Yahoo Finance rate-limiting on large all-universe builds.
+    _shared_historical = historical_price_provider or YahooHistoricalPriceProvider()
+    _shared_benchmark_return = benchmark_return_provider or YahooBenchmarkProvider(_shared_historical)
+    _shared_vehicle_return = investable_vehicle_return_provider or YahooInvestableVehicleProvider(_shared_historical)
+
     try:
-        for geography, market_cap_bucket, industry in WP05B_UI_CATEGORY_SCOPE:
+        for geography, market_cap_bucket, industry in active_scope:
             benchmark_mapped = False
             vehicle_mapped = False
             resolved_benchmark_id = ""
@@ -622,7 +683,7 @@ def build_wp05b_replay_matrix(
                 benchmark, vehicle = resolve_category_mapping(
                     geography=geography,
                     market_cap_bucket=market_cap_bucket,
-                    industry_scope=industry,
+                    industry_scope="ALL",  # Benchmark/vehicle assignments are market-cap based.
                     benchmark_registry=benchmark_registry,
                     vehicle_registry=vehicle_registry,
                 )
@@ -647,6 +708,7 @@ def build_wp05b_replay_matrix(
                         filter_market_cap_bucket=market_cap_bucket,
                         filter_geography=geography,
                         filter_industry=industry,
+                        filter_analytical_subtier=filter_analytical_subtier,
                         top_n=top_n,
                         current_root=current_root_path,
                         analytical_history_root=analytical_history_root,
@@ -655,9 +717,9 @@ def build_wp05b_replay_matrix(
                         vehicle_registry_path=vehicle_registry_path,
                         start_date=start_date,
                         end_date=end_date,
-                        historical_price_provider=historical_price_provider,
-                        benchmark_return_provider=benchmark_return_provider,
-                        investable_vehicle_return_provider=investable_vehicle_return_provider,
+                        historical_price_provider=_shared_historical,
+                        benchmark_return_provider=_shared_benchmark_return,
+                        investable_vehicle_return_provider=_shared_vehicle_return,
                         include_stock_curves=True,
                     )
 
@@ -787,7 +849,7 @@ def build_wp05b_replay_matrix(
         availability_errors.extend(
             validate_unsupported_category_exposure(
                 availability_rows,
-                supported_categories=WP05B_REPLAY_GENERATION_SCOPE,
+                supported_categories=active_gen_scope,
             )
         )
         matrix_errors = validate_empty_replay_outputs(matrix_rows)
@@ -807,11 +869,15 @@ def build_wp05b_replay_matrix(
             )
 
         # Phase C: write all combined outputs to .tmp/ then atomic swap to current/
-        _write_csv(tmp_root / "replay_availability.csv", REPLAY_AVAILABILITY_HEADERS, availability_rows)
-        _write_csv(tmp_root / "replay_matrix.csv", REPLAY_MATRIX_HEADERS, matrix_rows)
-        _write_csv(tmp_root / "replay_inputs.csv", REPLAY_SELECTION_HEADERS, combined_inputs_rows)
+        _write_csv(tmp_root / "replay_availability.csv", REPLAY_AVAILABILITY_HEADERS,
+                   preserved_availability_rows + availability_rows)
+        _write_csv(tmp_root / "replay_matrix.csv", REPLAY_MATRIX_HEADERS,
+                   preserved_matrix_rows + matrix_rows)
+        _write_csv(tmp_root / "replay_inputs.csv", REPLAY_SELECTION_HEADERS,
+                   preserved_inputs_rows + combined_inputs_rows)
         _write_csv(
-            tmp_root / "replay_performance_series.csv", PERFORMANCE_SERIES_HEADERS, combined_series_rows
+            tmp_root / "replay_performance_series.csv", PERFORMANCE_SERIES_HEADERS,
+            preserved_series_rows + combined_series_rows
         )
 
         _atomic_publish_current_outputs(tmp_root, current_root_path)
@@ -873,7 +939,7 @@ def build_wp05b_replay_matrix(
         return {
             "matrix_row_count": len(matrix_rows),
             "availability_row_count": len(availability_rows),
-            "generated_category_scope": ["/".join(item) for item in WP05B_REPLAY_GENERATION_SCOPE],
+            "generated_category_scope": [f"{geo}/{bucket}/{ind}" for geo, bucket, ind in active_gen_scope],
             "status_counts": status_counts,
             "snapshot_date": snapshot_date,
             "run_id": run_id,

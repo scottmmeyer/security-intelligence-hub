@@ -193,12 +193,17 @@ def validate_top_n_selection_reproducibility(
 ) -> List[str]:
     """Check deterministic top-N ordering against stored selection symbols."""
 
-    expected = [
-        row.symbol
-        for row in sorted(filtered_rows, key=lambda item: (-float(item.composite_score), item.symbol))[
-            : selection.top_n
-        ]
-    ]
+    ranked = sorted(filtered_rows, key=lambda item: (-float(item.composite_score), item.symbol))
+    unique_ranked: List[str] = []
+    seen_symbols: set[str] = set()
+    for row in ranked:
+        symbol = str(row.symbol or "")
+        if not symbol or symbol in seen_symbols:
+            continue
+        seen_symbols.add(symbol)
+        unique_ranked.append(symbol)
+
+    expected = unique_ranked[: selection.top_n]
     observed = list(selection.selected_symbols)
     if observed != expected:
         return [

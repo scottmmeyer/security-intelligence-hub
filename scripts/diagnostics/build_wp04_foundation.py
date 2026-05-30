@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.replay.foundation_service import build_wp04_foundation
+from scripts.refresh_signals import ensure_signals_fresh
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,11 +26,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-n", type=int, default=20, help="Top-N basket size.")
     parser.add_argument("--start-date", default=None, help="Replay start date (defaults to snapshot date).")
     parser.add_argument("--end-date", default=None, help="Replay end date (defaults to +365 days).")
+    parser.add_argument("--skip-signal-refresh", action="store_true", help="Skip automatic signal freshness check.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
+    if not args.skip_signal_refresh:
+        ensure_signals_fresh()
+
     result = build_wp04_foundation(
         run_id=args.run_id,
         snapshot_date=args.snapshot_date,
