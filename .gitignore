@@ -15,6 +15,9 @@ __pycache__/
 coverage.xml
 htmlcov/
 
+# API keys and local secrets
+.env
+
 # Virtual environments
 .venv/
 venv/
@@ -110,6 +113,10 @@ migrate_zacks.py
 script.py
 solution.py
 top5_analysis.py
+
+# Scratch folder — debug artifacts from Phase 22D.2–22D.3 interactive sessions.
+# macOS default "untitled folder" name; contents are transient debug captures.
+untitled folder/
 
 # Portfolio ingestion runtime artifacts.
 # All PAR run outputs, normalized forms, archive CSVs, and the ingestion manifest
