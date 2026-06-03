@@ -49,32 +49,102 @@ from .phase_e_synthesis import synthesize_phase_e_recommendations
 def _load_replay_evidence(
     replay_series_csv: str = "data/current/replay_performance_series.csv",
     replay_inputs_csv: str = "data/current/replay_inputs.csv",
+    analytical_universe_csv: str = "data/current/analytical_universe.csv",
 ) -> dict[str, dict]:
     """Return symbol → {tier, return, replay_id, percentile_approx}.
 
     We load the final cumulative return for each symbol that appeared in any
     TOP_N_STRATEGY replay to estimate replay-backed performance context.
     This is a lightweight evidence signal — not full scoring.
+
+    Replay evidence routing (Phase 7.4D fix):
+    - Cross-sector ALL replays are accepted unconditionally (existing behavior).
+    - Industry-specific replays are now also accepted.  The symbol's canonical
+      tier (geography / market_cap_bucket / industry) must match the replay's
+      filter dimensions; this check is deferred to build_security_overlays()
+      where the holding's classification is available.
+    - If a symbol appears in both an ALL replay and an industry-specific replay,
+      the ALL replay takes priority (first-seen wins).
+
+    Phase 22D.2 — Replay Quality:
+    - Computes per-symbol percentile rank within each replay cohort using current
+      composite scores from analytical_universe.csv.  Higher composite score =
+      higher percentile.  Stored in symbol_percentile and wired to the
+      replay_percentile field of SecurityIntelligenceOverlay.
     """
-    # Load replay inputs to get which symbols are in which tiers
+    # Cross-sector ALL replay evidence: symbol → tier key / replay_id
     symbol_tier: dict[str, str] = {}
     symbol_replay: dict[str, str] = {}
+
+    # Industry-specific replay evidence: symbol → {geo, cap, industry, replay_id}
+    # Canonical tier compatibility is verified in build_security_overlays().
+    industry_replay_evidence: dict[str, dict[str, str]] = {}
+
+    # Per-replay symbol lists (needed for percentile computation below).
+    replay_symbols: dict[str, list[str]] = {}
+
     if os.path.exists(replay_inputs_csv):
-        for row in csv.DictReader(open(replay_inputs_csv)):
-            if row.get("filter_industry", "").upper() != "ALL":
-                continue
-            cap = row.get("filter_market_cap_bucket", "")
-            geo = row.get("filter_geography", "")
-            syms = row.get("selected_symbols", "").split("|")
-            for s in syms:
-                sym = s.strip().upper()
-                if sym and sym not in symbol_tier:
-                    symbol_tier[sym] = f"{geo}.{cap}"
-                    symbol_replay[sym] = row.get("replay_id", "")
+        with open(replay_inputs_csv, newline="", encoding="utf-8") as _fh:
+            for row in csv.DictReader(_fh):
+                cap = row.get("filter_market_cap_bucket", "")
+                geo = row.get("filter_geography", "")
+                ind = row.get("filter_industry", "").strip().upper()
+                replay_id = row.get("replay_id", "")
+                syms_raw = row.get("selected_symbols", "").split("|")
+                sym_list = [s.strip().upper() for s in syms_raw if s.strip()]
+                if replay_id:
+                    replay_symbols[replay_id] = sym_list
+                for sym in sym_list:
+                    if ind == "ALL":
+                        # Cross-sector ALL replay — highest priority.
+                        if sym not in symbol_tier:
+                            symbol_tier[sym] = f"{geo}.{cap}"
+                            symbol_replay[sym] = replay_id
+                    else:
+                        # Industry-specific replay — record dimensions for
+                        # downstream tier-compatibility check.  Do not promote
+                        # if the symbol is already covered by an ALL replay.
+                        if sym not in symbol_tier and sym not in industry_replay_evidence:
+                            industry_replay_evidence[sym] = {
+                                "geo": geo,
+                                "cap": cap,
+                                "industry": ind,
+                                "replay_id": replay_id,
+                            }
+
+    # ── Phase 22D.2: per-symbol percentile within replay cohort ───────────
+    # Load current composite scores to rank each symbol within its replay.
+    composite_scores: dict[str, float] = {}
+    if os.path.exists(analytical_universe_csv):
+        with open(analytical_universe_csv, newline="", encoding="utf-8") as _ufh:
+            for _urow in csv.DictReader(_ufh):
+                _usym = str(_urow.get("symbol", "")).strip().upper()
+                _uscr = str(_urow.get("composite_score", "")).strip()
+                if _usym and _uscr:
+                    try:
+                        composite_scores[_usym] = float(_uscr)
+                    except ValueError:
+                        pass
+
+    symbol_percentile: dict[str, float] = {}
+    for rid, sym_list in replay_symbols.items():
+        if not sym_list:
+            continue
+        # Only compute for symbols registered in the primary (ALL) replay path.
+        primary_syms = [s for s in sym_list if symbol_replay.get(s) == rid]
+        scored = [(s, composite_scores[s]) for s in primary_syms if s in composite_scores]
+        if not scored:
+            continue
+        scored.sort(key=lambda x: x[1])   # ascending → lowest = percentile 0 end
+        n = len(scored)
+        for rank_idx, (sym, _) in enumerate(scored):
+            symbol_percentile[sym] = round((rank_idx + 1) / n * 100.0, 1)
 
     return {
         "symbol_tier": symbol_tier,
         "symbol_replay": symbol_replay,
+        "industry_replay_evidence": industry_replay_evidence,
+        "symbol_percentile": symbol_percentile,
     }
 
 
@@ -92,6 +162,26 @@ def build_security_overlays(
     replay_ev = _load_replay_evidence()
     symbol_tier = replay_ev["symbol_tier"]
     symbol_replay = replay_ev["symbol_replay"]
+    industry_replay_evidence: dict[str, dict[str, str]] = replay_ev.get("industry_replay_evidence", {})
+    symbol_percentile: dict[str, float] = replay_ev.get("symbol_percentile", {})
+
+    # ── Phase 22D.2 WS-B: ESS archive fallback ───────────────────────────
+    # For symbols whose ESS was absent or suppressed in signal_snapshot.csv
+    # (e.g. symbols absent from snapshot or classified NON_STARMINE_ANALYST),
+    # fall back to the most recent entry in ess_history_master.csv.
+    _ess_archive: dict[str, str] = {}
+    _ess_archive_path = "ess_history_master.csv"
+    if os.path.exists(_ess_archive_path):
+        _ess_latest_dates: dict[str, str] = {}
+        with open(_ess_archive_path, newline="", encoding="utf-8") as _efh:
+            for _erow in csv.DictReader(_efh):
+                _esym = str(_erow.get("symbol", "")).strip().upper()
+                _ecat = str(_erow.get("ess_category", "")).strip()
+                _edate = str(_erow.get("capture_date", "")).strip()
+                if _esym and _ecat and _edate:
+                    if _esym not in _ess_latest_dates or _edate > _ess_latest_dates[_esym]:
+                        _ess_latest_dates[_esym] = _edate
+                        _ess_archive[_esym] = _ecat
 
     # Build set of overweight node keys for quick lookup
     overweight_nodes = {
@@ -103,12 +193,31 @@ def build_security_overlays(
     for h in holdings:
         sym = h.symbol.upper()
         score = h.composite_score
-        ess = h.ess_score_text or "UNKNOWN"
+        ess = h.ess_score_text or ""
+        # Phase 22D.2 WS-B: if ESS is absent from the holding (signal_snapshot
+        # gap or NON_STARMINE_ANALYST suppression), use archive fallback.
+        if not ess:
+            ess = _ess_archive.get(sym, "")
+        ess = ess or "UNKNOWN"
         zacks = h.zacks_rating or "UNKNOWN"
 
         # Replay support — is this symbol in any top-N replay for its tier?
+        # Phase 7.4D: also accept industry-specific replay evidence when
+        # geo / market_cap_bucket / industry match the holding's canonical tier.
         in_replay = sym in symbol_tier
         replay_id = symbol_replay.get(sym)
+        replay_tier = symbol_tier.get(sym, "?")
+
+        if not in_replay and sym in industry_replay_evidence:
+            ev = industry_replay_evidence[sym]
+            if (
+                ev["geo"] == h.geography
+                and ev["cap"] == h.market_cap_bucket
+                and ev["industry"] == (h.industry or "").strip().upper()
+            ):
+                in_replay = True
+                replay_id = ev["replay_id"]
+                replay_tier = f"{ev['geo']}.{ev['cap']}.{ev['industry']}"
 
         # Signal direction synthesis
         # ESS takes priority when available and explicit; composite score is
@@ -145,7 +254,7 @@ def build_security_overlays(
             rationale = f"{sym} has a weak signal ({ess}/{zacks}) and sits in an overweight allocation tier."
         elif direction == "BULLISH" and in_replay:
             flag = "ACCUMULATE"
-            rationale = f"{sym} is replay-supported (tier: {symbol_tier.get(sym, '?')}) with a strong score ({score})."
+            rationale = f"{sym} is replay-supported (tier: {replay_tier}) with a strong score ({score})."
         elif direction == "BEARISH":
             flag = "WATCH"
             rationale = f"{sym} has a weak signal — monitor for further deterioration."
@@ -163,7 +272,7 @@ def build_security_overlays(
             ess_score_text=ess if ess != "UNKNOWN" else None,
             zacks_rating=zacks if zacks != "UNKNOWN" else None,
             best_replay_return=None,    # enriched if needed in future
-            replay_percentile=None,
+            replay_percentile=symbol_percentile.get(sym),
             replay_supported=in_replay,
             percent_of_portfolio=h.percent_of_portfolio,
             is_overweight_vs_target=is_overweight,
@@ -171,6 +280,7 @@ def build_security_overlays(
             opportunity_flag=flag,
             flag_rationale=rationale,
             created_at_utc=now_utc,
+            danelfin_score=h.danelfin_score,
         ))
 
     return sorted(overlays, key=lambda o: o.percent_of_portfolio, reverse=True)

@@ -84,6 +84,103 @@ def _make_candidate(
     }
 
 
+def _build_preferred_display(
+    preferred_candidate: Optional[dict],
+    legacy_vehicles: list,
+    candidates: list,
+    optimizer_decision: str,
+) -> Optional[dict]:
+    """Phase 7.3C — Build a structured display comparison for side-by-side rendering.
+
+    Populated only when SECURITY_SUPERIOR and the preferred candidate is not
+    already the legacy vehicle.  Returns None otherwise.
+
+    The returned dict is display-ready and carries no action authority —
+    it is purely for visibility.
+    """
+    if not preferred_candidate:
+        return None
+    if optimizer_decision != "SECURITY_SUPERIOR":
+        return None
+
+    pref_sym = str(preferred_candidate.get("symbol") or "").upper()
+    if not pref_sym:
+        return None
+
+    # No comparison needed if the optimizer preferred IS the legacy vehicle
+    legacy_upper = [str(s).upper() for s in legacy_vehicles]
+    if pref_sym in legacy_upper:
+        return None
+
+    # Best ETF candidate (the "legacy-type" alternative for comparison)
+    best_etf = next(
+        (c for c in candidates if c.get("candidate_type") == "ETF"),
+        None,
+    )
+
+    # PIS delta: preferred security PIS vs best ETF PIS
+    pis_delta: Optional[float] = None
+    if best_etf is not None:
+        pis_delta = round(
+            float(preferred_candidate.get("pis", 0)) - float(best_etf.get("pis", 0)),
+            1,
+        )
+
+    # Key advantages text
+    advantages: list[str] = []
+    if pis_delta is not None and pis_delta > 0:
+        advantages.append(f"Higher PIS (+{pis_delta})")
+    if preferred_candidate.get("replay_supported"):
+        advantages.append("Replay-supported")
+    sti = str(preferred_candidate.get("sti_tier") or "")
+    if sti in ("CCL", "CORE_CONVICTION_LEADER"):
+        advantages.append("Core conviction leader")
+    elif sti in ("HCA", "HIGH_CONVICTION_ANCHOR"):
+        advantages.append("High conviction anchor")
+    if best_etf is not None and best_etf.get("worsens_overweight"):
+        advantages.append("No overweight amplification")
+    if best_etf is not None and not str(best_etf.get("etf_gate") or "").startswith("PASS"):
+        advantages.append("Avoids ETF gate failure")
+    comp_score = preferred_candidate.get("composite_score")
+    if comp_score is not None and float(comp_score) >= 4.0:
+        advantages.append(f"Strong composite score ({float(comp_score):.2f})")
+
+    # Legacy summary (best ETF candidate)
+    legacy_summary: Optional[dict] = None
+    legacy_sym = legacy_vehicles[0] if legacy_vehicles else "—"
+    if best_etf is not None:
+        legacy_summary = {
+            "symbol": str(best_etf.get("symbol") or legacy_sym),
+            "type": "ETF",
+            "pis": best_etf.get("pis"),
+            "etf_gate": str(best_etf.get("etf_gate") or "—"),
+            "suitability_tier": str(best_etf.get("suitability_tier") or "—"),
+            "ncs": best_etf.get("ncs"),
+            "worsens_overweight": bool(best_etf.get("worsens_overweight", False)),
+        }
+
+    # Preferred summary
+    preferred_summary = {
+        "symbol": pref_sym,
+        "type": "SECURITY",
+        "pis": preferred_candidate.get("pis"),
+        "composite_score": comp_score,
+        "sti_tier": sti or "—",
+        "replay_supported": bool(preferred_candidate.get("replay_supported", False)),
+        "ess_score": preferred_candidate.get("ess_score"),
+        "worsens_overweight": False,
+    }
+
+    return {
+        "legacy_symbol": str(legacy_sym),
+        "preferred_symbol": pref_sym,
+        "pis_delta": pis_delta,
+        "key_advantages": advantages,
+        "legacy_summary": legacy_summary,
+        "preferred_summary": preferred_summary,
+    }
+
+
 def _make_result(
     *,
     rec_id: str,
@@ -96,8 +193,14 @@ def _make_result(
                                          # NO_CANDIDATES | REDUCE_COHERENT | NOT_APPLICABLE
     conflicts_detected: list,
     mandate_blocked: bool,
-    optimizer_version: str = "7.3A",
+    optimizer_version: str = "7.3C",
 ) -> dict:
+    preferred_display = _build_preferred_display(
+        preferred_candidate=preferred_candidate,
+        legacy_vehicles=legacy_vehicles,
+        candidates=candidates,
+        optimizer_decision=optimizer_decision,
+    )
     return {
         "rec_id": rec_id,
         "rec_type": rec_type,
@@ -109,6 +212,8 @@ def _make_result(
         "conflicts_detected": list(conflicts_detected),
         "mandate_blocked": mandate_blocked,
         "optimizer_version": optimizer_version,
+        # Phase 7.3C — display-only comparison (None when not applicable)
+        "preferred_display": preferred_display,
     }
 
 

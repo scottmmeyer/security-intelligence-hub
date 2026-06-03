@@ -463,14 +463,45 @@ def build_analytical_universe_rows_from_current(
             base_raw_map[sym] = 0
 
     signal_rows = _read_csv_rows(current_root_path / "signal_snapshot.csv")
-    signal_by_symbol = {
-        str(row.get("symbol", "")).strip().upper(): row
-        for row in signal_rows
-        if str(row.get("symbol", "")).strip()
-    }
+    # Coverage-aware dedup: STARMINE_COVERED always wins over NON_STARMINE_ANALYST.
+    # A plain last-row-wins dict comprehension would silently overwrite valid covered
+    # rows with ESS_NONE sentinel rows when both appear for the same symbol.
+    _COVERAGE_PRIORITY: Dict[str, int] = {"STARMINE_COVERED": 1, "NON_STARMINE_ANALYST": 0}
+    signal_by_symbol: Dict[str, dict] = {}
+    for _row in signal_rows:
+        _sym = str(_row.get("symbol", "")).strip().upper()
+        if not _sym:
+            continue
+        _existing = signal_by_symbol.get(_sym)
+        if _existing is None:
+            signal_by_symbol[_sym] = _row
+        else:
+            _new_pri = _COVERAGE_PRIORITY.get(str(_row.get("coverage_domain", "")), 0)
+            _old_pri = _COVERAGE_PRIORITY.get(str(_existing.get("coverage_domain", "")), 0)
+            if _new_pri > _old_pri:
+                signal_by_symbol[_sym] = _row
 
     zacks_scores_by_symbol = load_latest_zacks_scores(zacks_signals_dir)
     danelfin_scores_by_symbol = load_latest_danelfin_scores(danelfin_signals_dir)
+
+    # Phase 22D.2 WS-B: ESS history archive fallback.
+    # Symbols absent from signal_snapshot.csv or classified NON_STARMINE_ANALYST
+    # have an empty starmine_ess_text in the pipeline, but may have valid recent
+    # ESS data in ess_history_master.csv.  Load the archive and use it as a
+    # fallback when the primary signal path yields no ESS text.
+    _ess_archive_path = _REPO_ROOT / "ess_history_master.csv"
+    ess_archive_by_symbol: Dict[str, str] = {}
+    if _ess_archive_path.exists():
+        _ess_archive_dates: Dict[str, str] = {}
+        with _ess_archive_path.open("r", encoding="utf-8", newline="") as _efh:
+            for _erow in csv.DictReader(_efh):
+                _esym = str(_erow.get("symbol", "")).strip().upper()
+                _ecat = str(_erow.get("ess_category", "")).strip()
+                _edate = str(_erow.get("capture_date", "")).strip()
+                if _esym and _ecat and _edate:
+                    if _esym not in _ess_archive_dates or _edate > _ess_archive_dates[_esym]:
+                        _ess_archive_dates[_esym] = _edate
+                        ess_archive_by_symbol[_esym] = _ecat
 
     # --- load classification policy data once (reused across all rows) ---
     type_policy = load_security_type_policy()
@@ -546,6 +577,11 @@ def build_analytical_universe_rows_from_current(
             vehicle_id = "UNMAPPED"
 
         ess_score_text = str(signal_row.get("starmine_ess_text") or base_row.get("starmine_ess_text") or "").strip()
+        # Phase 22D.2 WS-B: if the primary signal path yielded no ESS text
+        # (symbol absent from snapshot or NON_STARMINE_ANALYST), fall back to
+        # the most recent entry in ess_history_master.csv.
+        if not ess_score_text:
+            ess_score_text = ess_archive_by_symbol.get(symbol, "")
         # Zacks score: prefer internet fetch cache; fall back to ESS file's Zacks rank (ess_zacks_rating).
         fetched_zacks_score = zacks_scores_by_symbol.get(symbol)
         zacks_rating = str(fetched_zacks_score) if fetched_zacks_score is not None else ""

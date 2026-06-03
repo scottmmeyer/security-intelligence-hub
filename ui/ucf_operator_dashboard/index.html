@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UCF Operator Dashboard — Security Intelligence Hub</title>
+  <style>
+    /* ── Design tokens (same as portfolio_alignment) ───────────────────── */
+    :root {
+      --bg: #f3efe6;
+      --panel: #fffaf2;
+      --card: #ffffff;
+      --fg: #1b1b1b;
+      --muted: #575043;
+      --accent: #0d5c63;
+      --accent-2: #f28f3b;
+      --border: #d9ceb8;
+      --green: #1a7c4f;
+      --red: #c0392b;
+      --yellow: #b8860b;
+      --sev-high: #c0392b;
+      --sev-mod: #d97706;
+      --sev-low: #2a7a3b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--fg);
+      background:
+        radial-gradient(circle at 12% 10%, #fff8ea 0%, transparent 38%),
+        radial-gradient(circle at 90% 0%,  #d9ecf2 0%, transparent 30%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .shell { max-width: 1380px; margin: 0 auto; padding: 24px 20px 48px; }
+    h1 { margin: 0; font-size: clamp(1.3rem, 2.4vw, 1.9rem); letter-spacing: 0.02em; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 0.88rem; }
+
+    /* Nav */
+    .page-nav { display: flex; gap: 8px; margin: 14px 0 0; flex-wrap: wrap; }
+    .nav-link {
+      padding: 6px 14px; border-radius: 20px; font-size: 0.83rem;
+      text-decoration: none; border: 1px solid var(--border);
+      color: var(--muted); background: #fff;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .nav-link-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    /* Run selector */
+    .run-bar {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin-top: 20px; padding: 12px 16px; border-radius: 10px;
+      background: var(--panel); border: 1px solid var(--border);
+    }
+    .run-bar label { font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+    .run-bar select {
+      font-size: 0.83rem; padding: 4px 8px; border-radius: 6px;
+      border: 1px solid var(--border); background: #fff; color: var(--fg);
+    }
+    .btn {
+      padding: 6px 16px; border-radius: 8px; font-size: 0.83rem;
+      border: none; cursor: pointer; font-weight: 600;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #0a4a50; }
+    .btn-secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+    .run-meta { font-size: 0.76rem; color: var(--muted); margin-left: auto; }
+
+    /* Status banner */
+    #statusBanner {
+      margin-top: 12px; padding: 10px 16px; border-radius: 8px; font-size: 0.84rem;
+      display: none;
+    }
+    .banner-loading { background: #eaf4fb; color: #0a5070; border: 1px solid #b3d8eb; display: block !important; }
+    .banner-error   { background: #fdecea; color: #991111; border: 1px solid #f5b8b8; display: block !important; }
+
+    /* Summary stats row */
+    .stats-row {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;
+    }
+    .stat-card {
+      flex: 1; min-width: 110px; padding: 12px 16px; border-radius: 10px;
+      background: var(--panel); border: 1px solid var(--border);
+      text-align: center;
+    }
+    .stat-val { font-size: 1.6rem; font-weight: 800; line-height: 1.1; }
+    .stat-lbl { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 3px; }
+    .stat-ccl  .stat-val { color: #145226; }
+    .stat-hca  .stat-val { color: var(--accent); }
+    .stat-dep  .stat-val { color: #5a3000; }
+    .stat-tg   .stat-val { color: var(--yellow); }
+    .stat-tw   .stat-val { color: var(--red); }
+    .stat-div  .stat-val { color: var(--sev-high); }
+
+    /* Section wrapper */
+    .section {
+      margin-top: 24px; border-radius: 12px;
+      background: var(--panel); border: 1px solid var(--border);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.04);
+      overflow: hidden;
+    }
+    .section-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px; cursor: pointer; user-select: none;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .section-header:hover { background: #fdf7ec; }
+    .section-title {
+      font-size: 0.9rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--accent);
+    }
+    .section-q {
+      font-size: 0.8rem; color: var(--muted); font-style: italic; margin-left: 4px;
+    }
+    .section-badge {
+      margin-left: auto; font-size: 0.72rem; font-weight: 700;
+      padding: 2px 10px; border-radius: 12px; background: #e8f4ea; color: #145226;
+    }
+    .section-chevron {
+      font-size: 0.75rem; color: var(--muted); margin-left: 6px; transition: transform 0.2s;
+    }
+    .section-chevron.open { transform: rotate(180deg); }
+    .section-body { padding: 16px 18px; display: none; }
+    .section-body.open { display: block; }
+
+    /* Table styles */
+    .ucf-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .ucf-table th {
+      text-align: left; font-size: 0.68rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted); padding: 4px 10px 8px;
+      border-bottom: 2px solid var(--border); white-space: nowrap;
+    }
+    .ucf-table td {
+      padding: 7px 10px; border-bottom: 1px solid #f0ebe0; vertical-align: middle;
+    }
+    .ucf-table tr:last-child td { border-bottom: none; }
+    .ucf-table tr:hover td { background: #fdf8f0; }
+    .ucf-table th.r, .ucf-table td.r { text-align: right; }
+
+    /* Symbol chip */
+    .sym { font-family: "SF Mono", "Consolas", monospace; font-weight: 700; font-size: 0.85rem; }
+
+    /* Score bars */
+    .score-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .score-bar-bg { width: 60px; height: 6px; background: #e8e0d4; border-radius: 3px; flex-shrink: 0; }
+    .score-bar-fill { height: 6px; border-radius: 3px; background: var(--accent); }
+
+    /* UCF label chips */
+    .ucf-label {
+      display: inline-block; font-size: 0.65rem; font-weight: 800;
+      padding: 2px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .ucf-ccl  { background: #c8f7d8; color: #145226; }
+    .ucf-hca  { background: #d6eef5; color: #0a4060; }
+    .ucf-dep  { background: #fff3cd; color: #856404; }
+    .ucf-tg   { background: #fde8c8; color: #7a3800; }
+    .ucf-tw   { background: #fde8e8; color: #991111; }
+    .ucf-mnt  { background: #f0f0f0; color: #777; }
+    .ucf-unk  { background: #f0f0f0; color: #999; }
+
+    /* Direction */
+    .dir-BULLISH  { color: var(--green);  font-weight: 700; font-size: 0.8rem; }
+    .dir-BEARISH  { color: var(--red);    font-weight: 700; font-size: 0.8rem; }
+    .dir-NEUTRAL  { color: var(--muted);  font-weight: 600; font-size: 0.8rem; }
+    .dir-UNKNOWN  { color: #bbb;          font-size: 0.8rem; }
+
+    /* Replay badge */
+    .replay-yes { background: #d0f0e0; color: #155724; padding: 1px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; }
+    .replay-no  { background: #f5e8e8; color: #881111; padding: 1px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; }
+
+    /* Conflict flags */
+    .flag-chip {
+      display: inline-block; font-size: 0.64rem; font-weight: 700;
+      padding: 1px 6px; border-radius: 8px; margin: 1px 2px;
+      background: #fff3cd; color: #856404; border: 1px solid #ffe08a;
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .flag-chip.replay  { background: #fde8e8; color: #991111; border-color: #f5b8b8; }
+    .flag-chip.ow      { background: #fff0e0; color: #7a3800; border-color: #f0c090; }
+    .flag-chip.mismatch{ background: #f3f0fb; color: #4a0080; border-color: #d0b0f0; }
+
+    /* Consensus matrix badges */
+    .matrix-badge {
+      display: inline-block; font-size: 0.63rem; font-weight: 700;
+      padding: 1px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .matrix-full-bullish   { background: #c8f7d8; color: #145226; }
+    .matrix-full-bearish   { background: #fde8e8; color: #991111; }
+    .matrix-partial        { background: #fff3cd; color: #856404; }
+    .matrix-divergence     { background: #fdecea; color: #7a1c1c; border: 1px solid #f2a0a0; }
+    .matrix-insufficient   { background: #f0f0f0; color: #999; }
+
+    /* Signal stack grid (Section 4) */
+    .sig-stack { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+    .sig-stack-cell { min-width: 80px; }
+    .sig-stack-lbl { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 2px; }
+    .sig-stack-val { font-size: 0.8rem; font-weight: 700; }
+
+    /* Gap reason chips (Section 3) */
+    .gap-chip {
+      display: inline-block; font-size: 0.68rem; font-weight: 600;
+      padding: 2px 8px; border-radius: 10px;
+      background: #f3f0fb; color: #4a0080; border: 1px solid #d0b0f0;
+    }
+    .gap-chip.replay { background: #fde8e8; color: #991111; border-color: #f5b8b8; }
+    .gap-chip.signal { background: #fff0e0; color: #7a3800; border-color: #f0c090; }
+    .gap-chip.composite { background: #eaf4fb; color: #0a4060; border-color: #aad4eb; }
+    .gap-chip.ow     { background: #fff3cd; color: #856404; border-color: #ffe08a; }
+
+    /* Trim score bar */
+    .trim-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .trim-bar-bg { width: 60px; height: 6px; background: #e8e0d4; border-radius: 3px; flex-shrink: 0; }
+    .trim-bar-fill { height: 6px; border-radius: 3px; }
+
+    /* Research priority level */
+    .pri-high { color: var(--red); font-weight: 800; font-size: 0.8rem; }
+    .pri-med  { color: var(--yellow); font-weight: 700; font-size: 0.8rem; }
+    .pri-low  { color: var(--muted); font-size: 0.8rem; }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center; padding: 24px; color: var(--muted);
+      font-size: 0.84rem; font-style: italic;
+    }
+
+    /* DAS rank badge */
+    .das-rank {
+      display: inline-block; min-width: 26px; text-align: center;
+      font-size: 0.72rem; font-weight: 800; padding: 1px 6px;
+      border-radius: 8px; background: var(--accent); color: #fff;
+    }
+
+    /* Blocked badge */
+    .blocked-badge {
+      display: inline-block; font-size: 0.65rem; font-weight: 700;
+      padding: 1px 6px; border-radius: 8px; background: #fdecea; color: #991111;
+    }
+
+    /* Weight pct */
+    .wt-pct { font-family: monospace; font-size: 0.8rem; color: var(--fg); }
+
+    /* Footnote */
+    .footnote {
+      margin-top: 10px; font-size: 0.68rem; color: var(--muted);
+      border-top: 1px solid var(--border); padding-top: 8px;
+    }
+
+    /* Loading overlay */
+    #loadingOverlay {
+      position: fixed; inset: 0; background: rgba(243,239,230,0.85);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; color: var(--accent); font-weight: 700;
+      z-index: 100; display: none;
+    }
+
+    @media (max-width: 700px) {
+      .stats-row { gap: 8px; }
+      .stat-card { min-width: 90px; padding: 10px; }
+      .ucf-table { font-size: 0.76rem; }
+    }
+  </style>
+</head>
+<body>
+<div id="loadingOverlay">Loading analysis data…</div>
+<div class="shell">
+  <!-- Header -->
+  <header>
+    <h1>UCF Operator Dashboard</h1>
+    <p class="subtitle">Unified Conviction Framework &nbsp;·&nbsp; Advisory intelligence only — not trade execution</p>
+    <nav class="page-nav">
+      <a href="/ui/outcome_visualization/"   class="nav-link">Outcome Visualization</a>
+      <a href="/ui/allocation_intelligence/" class="nav-link">Allocation Intelligence</a>
+      <a href="/ui/portfolio_alignment/"     class="nav-link">Portfolio Alignment</a>
+      <a href="/ui/ucf_operator_dashboard/"  class="nav-link nav-link-active">UCF Dashboard</a>
+    </nav>
+  </header>
+
+  <!-- Run selector -->
+  <div class="run-bar">
+    <label for="runSelect">Analysis Run:</label>
+    <select id="runSelect"><option value="">— loading runs —</option></select>
+    <button class="btn btn-primary" id="loadBtn">Load Dashboard</button>
+    <span class="run-meta" id="runMeta"></span>
+  </div>
+  <div id="statusBanner"></div>
+
+  <!-- Summary stats -->
+  <div class="stats-row" id="statsRow" style="display:none"></div>
+
+  <!-- Section 1 — Conviction Leaders -->
+  <div class="section" id="s1">
+    <div class="section-header" onclick="toggleSection('s1')">
+      <span class="section-title">1 &mdash; Conviction Leaders</span>
+      <span class="section-q">What are my best holdings?</span>
+      <span class="section-badge" id="s1-badge">—</span>
+      <span class="section-chevron open" id="s1-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s1-body">
+      <div class="empty-state" id="s1-empty">Load an analysis run to view conviction leaders.</div>
+      <div id="s1-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Section 2 — Deployment Ready -->
+  <div class="section" id="s2">
+    <div class="section-header" onclick="toggleSection('s2')">
+      <span class="section-title">2 &mdash; Deployment Ready</span>
+      <span class="section-q">What are my deployable holdings?</span>
+      <span class="section-badge" id="s2-badge">—</span>
+      <span class="section-chevron open" id="s2-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s2-body">
+      <div class="empty-state" id="s2-empty">Load an analysis run to view deployment candidates.</div>
+      <div id="s2-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Section 3 — Conviction Watchlist -->
+  <div class="section" id="s3">
+    <div class="section-header" onclick="toggleSection('s3')">
+      <span class="section-title">3 &mdash; Conviction Watchlist</span>
+      <span class="section-q">What holdings are gaining conviction?</span>
+      <span class="section-badge" id="s3-badge">—</span>
+      <span class="section-chevron open" id="s3-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s3-body">
+      <div class="empty-state" id="s3-empty">Load an analysis run to view watchlist.</div>
+      <div id="s3-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Section 4 — Signal Divergence -->
+  <div class="section" id="s4">
+    <div class="section-header" onclick="toggleSection('s4')">
+      <span class="section-title">4 &mdash; Signal Divergence</span>
+      <span class="section-q">What holdings have signal disagreement?</span>
+      <span class="section-badge" id="s4-badge">—</span>
+      <span class="section-chevron open" id="s4-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s4-body">
+      <div class="empty-state" id="s4-empty">Load an analysis run to view signal divergence.</div>
+      <div id="s4-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Section 5 — Trim Watch -->
+  <div class="section" id="s5">
+    <div class="section-header" onclick="toggleSection('s5')">
+      <span class="section-title">5 &mdash; Trim Watch</span>
+      <span class="section-q">What holdings are losing conviction?</span>
+      <span class="section-badge" id="s5-badge">—</span>
+      <span class="section-chevron open" id="s5-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s5-body">
+      <div class="empty-state" id="s5-empty">Load an analysis run to view trim watch.</div>
+      <div id="s5-content" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Section 6 — Research Priorities -->
+  <div class="section" id="s6">
+    <div class="section-header" onclick="toggleSection('s6')">
+      <span class="section-title">6 &mdash; Research Priorities</span>
+      <span class="section-q">Where should I spend research time?</span>
+      <span class="section-badge" id="s6-badge">—</span>
+      <span class="section-chevron open" id="s6-chev">▲</span>
+    </div>
+    <div class="section-body open" id="s6-body">
+      <div class="empty-state" id="s6-empty">Load an analysis run to view research priorities.</div>
+      <div id="s6-content" style="display:none"></div>
+    </div>
+  </div>
+
+</div><!-- /.shell -->
+
+<script>
+"use strict";
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function pct(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? "—" : n.toFixed(2) + "%";
+}
+function num(v, d=2) {
+  const n = parseFloat(v);
+  return isNaN(n) ? "—" : n.toFixed(d);
+}
+function scoreBar(score, maxW=60, color="var(--accent)") {
+  const pct = Math.min(100, Math.max(0, parseFloat(score) || 0));
+  const w = Math.round(maxW * pct / 100);
+  return `<div class="score-bar-wrap">
+    <div class="score-bar-bg"><div class="score-bar-fill" style="width:${w}px;background:${color}"></div></div>
+    <span style="font-size:0.78rem;font-weight:700;color:var(--fg)">${pct.toFixed(1)}</span>
+  </div>`;
+}
+function trimBar(score) {
+  const n = Math.min(100, Math.max(0, parseFloat(score) || 0));
+  const w = Math.round(60 * n / 100);
+  const color = n >= 40 ? "var(--red)" : n >= 20 ? "var(--yellow)" : "var(--green)";
+  return `<div class="trim-bar-wrap">
+    <div class="trim-bar-bg"><div class="trim-bar-fill" style="width:${w}px;background:${color}"></div></div>
+    <span style="font-size:0.78rem;font-weight:700;color:${color}">${n.toFixed(1)}</span>
+  </div>`;
+}
+function ucfLabelChip(label) {
+  const map = {
+    CORE_CONVICTION_LEADER: ["CCL",       "ucf-ccl"],
+    HIGH_CONVICTION_ANCHOR: ["HCA",       "ucf-hca"],
+    DEPLOYMENT_CANDIDATE:   ["DEP",       "ucf-dep"],
+    TACTICAL_GROWTH:        ["TG",        "ucf-tg"],
+    TRIM_WATCH:             ["TRIM",      "ucf-tw"],
+    MAINTAIN:               ["MAINTAIN",  "ucf-mnt"],
+  };
+  const [txt, cls] = map[label] || [label || "—", "ucf-unk"];
+  return `<span class="ucf-label ${cls}" title="${esc(label)}">${esc(txt)}</span>`;
+}
+function replayBadge(supported) {
+  const b = supported === true || supported === "True" || supported === "true";
+  return b ? `<span class="replay-yes">YES</span>` : `<span class="replay-no">NO</span>`;
+}
+function flagChips(flags) {
+  if (!flags || (Array.isArray(flags) && flags.length === 0)) return "—";
+  const arr = Array.isArray(flags) ? flags : String(flags).split("|").filter(Boolean);
+  return arr.map(f => {
+    const fStr = f.trim();
+    const cls = fStr.includes("REPLAY") ? "replay"
+              : fStr.includes("OW") || fStr.includes("TENSION") ? "ow"
+              : fStr.includes("MISMATCH") || fStr.includes("TIER") ? "mismatch"
+              : "";
+    return `<span class="flag-chip ${cls}">${esc(fStr.replace(/_/g," "))}</span>`;
+  }).join("");
+}
+function matrixBadge(classification) {
+  if (!classification) return `<span style="color:var(--muted)">—</span>`;
+  const map = {
+    FULL_ALIGNMENT_BULLISH: ["Full Align Bullish", "matrix-full-bullish"],
+    FULL_ALIGNMENT_BEARISH: ["Full Align Bearish", "matrix-full-bearish"],
+    PARTIAL_ALIGNMENT:      ["Partial",            "matrix-partial"],
+    MAJOR_DIVERGENCE:       ["Divergence",         "matrix-divergence"],
+    INSUFFICIENT_DATA:      ["Insuff. Data",       "matrix-insufficient"],
+  };
+  const [txt, cls] = map[classification] || [classification, "matrix-insufficient"];
+  return `<span class="matrix-badge ${cls}">${esc(txt)}</span>`;
+}
+function dirSpan(dir) {
+  return `<span class="dir-${dir || "UNKNOWN"}">${esc(dir || "—")}</span>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section toggle
+// ─────────────────────────────────────────────────────────────────────────────
+function toggleSection(id) {
+  const body = document.getElementById(id + "-body");
+  const chev = document.getElementById(id + "-chev");
+  if (!body) return;
+  const isOpen = body.classList.contains("open");
+  body.classList.toggle("open", !isOpen);
+  if (chev) { chev.textContent = isOpen ? "▼" : "▲"; chev.classList.toggle("open", !isOpen); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API helpers
+// ─────────────────────────────────────────────────────────────────────────────
+async function fetchRuns() {
+  const resp = await fetch("/api/portfolio/runs");
+  if (!resp.ok) throw new Error("Failed to load portfolio runs");
+  return resp.json();
+}
+async function fetchRun(runId) {
+  const resp = await fetch(`/api/portfolio/runs/${encodeURIComponent(runId)}`);
+  if (!resp.ok) throw new Error(`Failed to load run ${runId}`);
+  return resp.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const el = document.getElementById("statusBanner");
+  el.textContent = msg;
+  el.className = type === "error" ? "banner-error" : "banner-loading";
+}
+function clearStatus() {
+  const el = document.getElementById("statusBanner");
+  el.className = "";
+  el.style.display = "none";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 1 — Conviction Leaders (CORE_CONVICTION_LEADER)
+// ─────────────────────────────────────────────────────────────────────────────
+function renderConvictionLeaders(ucfBySymbol, ovBySymbol) {
+  const rows = Object.values(ucfBySymbol)
+    .filter(v => v.ucf_label === "CORE_CONVICTION_LEADER")
+    .sort((a, b) => (b.ucf_score || 0) - (a.ucf_score || 0));
+
+  document.getElementById("s1-badge").textContent = rows.length;
+
+  if (!rows.length) {
+    document.getElementById("s1-empty").style.display = "";
+    document.getElementById("s1-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s1-empty").style.display = "none";
+  const contentEl = document.getElementById("s1-content");
+  contentEl.style.display = "";
+
+  const tbody = rows.map(v => {
+    const ss = v.source_signals || {};
+    const ov = ovBySymbol[v.symbol] || {};
+    const dep = v.deployment || {};
+    const dasScore  = ss.cw_das_score  != null ? parseFloat(ss.cw_das_score).toFixed(1) : "—";
+    const dasRank   = ss.cw_das_rank   != null ? `<span class="das-rank">#${ss.cw_das_rank}</span>` : "—";
+    const wt        = ov.percent_of_portfolio != null ? pct(ov.percent_of_portfolio) : "—";
+    const depBadge  = dep.deployment_eligible
+      ? (dep.deployment_blocked ? `<span class="blocked-badge">BLOCKED</span>` : `<span class="replay-yes">DEPLOYABLE</span>`)
+      : `<span class="replay-no">NOT ELIGIBLE</span>`;
+
+    return `<tr>
+      <td><span class="sym">${esc(v.symbol)}</span></td>
+      <td class="r">${scoreBar(v.ucf_score)}</td>
+      <td class="r"><span style="font-weight:700">${num(ss.composite_score)}</span></td>
+      <td>${esc(ov.ess_score_text || "—")}</td>
+      <td class="r">${dasScore} ${dasRank}</td>
+      <td class="r"><span class="wt-pct">${wt}</span></td>
+      <td>${replayBadge(ss.replay_supported)}</td>
+      <td>${depBadge}</td>
+      <td style="font-size:0.75rem;color:var(--muted);max-width:220px">${esc(v.signal_summary || "")}</td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th class="r">UCF Score</th>
+      <th class="r">Composite</th>
+      <th>ESS</th>
+      <th class="r">CW-DAS</th>
+      <th class="r">Weight</th>
+      <th>Replay</th>
+      <th>Deploy</th>
+      <th>Summary</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">UCF Score = weighted synthesis of composite, ESS, replay, CW-DAS (0–100 scale). Higher = stronger conviction.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 2 — Deployment Ready (from deployment_queue)
+// ─────────────────────────────────────────────────────────────────────────────
+function renderDeploymentReady(deploymentQueue, ucfBySymbol, dpBySymbol) {
+  const queue = (deploymentQueue?.queue || []);
+  const rows  = queue.filter(c => {
+    const bd = c.score_breakdown || {};
+    const blocked = parseFloat(c.current_weight_pct || 0) >= 6.0 || bd.conc_pen > 0;
+    return !blocked;
+  }).slice(0, 15);
+
+  document.getElementById("s2-badge").textContent = rows.length;
+
+  if (!rows.length) {
+    document.getElementById("s2-empty").style.display = "";
+    document.getElementById("s2-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s2-empty").style.display = "none";
+  const contentEl = document.getElementById("s2-content");
+  contentEl.style.display = "";
+
+  const tbody = rows.map(c => {
+    const ucf = ucfBySymbol[c.symbol] || {};
+    const dp  = dpBySymbol[c.symbol]  || {};
+    const tier = c.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL"
+               : c.narrative_tier === "HIGH_CONVICTION_ANCHOR" ? "HCA"
+               : c.narrative_tier || "—";
+    const curWt  = c.current_weight_pct  != null ? pct(c.current_weight_pct) : "—";
+    const projWt = dp.projected_weight_pct != null ? pct(dp.projected_weight_pct) : "—";
+    const addAmt = dp.suggested_add != null && parseFloat(dp.suggested_add) > 0
+      ? `+$${(parseFloat(dp.suggested_add)/1000).toFixed(0)}k`
+      : "—";
+    const ucfLbl = ucfLabelChip(ucf.ucf_label);
+    const replayStr = replayBadge(c.replay_supported);
+
+    return `<tr>
+      <td><span class="das-rank">#${c.rank}</span></td>
+      <td><span class="sym">${esc(c.symbol)}</span></td>
+      <td class="r">${scoreBar(c.deployment_score)}</td>
+      <td>${ucfLbl} <span style="font-size:0.72rem;color:var(--muted)">${esc(tier)}</span></td>
+      <td class="r"><span class="wt-pct">${curWt}</span></td>
+      <td class="r"><span style="color:var(--green);font-weight:700">${projWt}</span></td>
+      <td class="r" style="font-weight:700;color:var(--accent)">${addAmt}</td>
+      <td>${replayStr}</td>
+      <td class="r"><span style="font-weight:700">${c.composite_score != null ? num(c.composite_score) : "—"}</span></td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Rank</th>
+      <th>Symbol</th>
+      <th class="r">DAS Score</th>
+      <th>UCF / Tier</th>
+      <th class="r">Cur Wt</th>
+      <th class="r">Proj Wt</th>
+      <th class="r">Suggest Add</th>
+      <th>Replay</th>
+      <th class="r">Composite</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">Deployment queue — candidates not blocked by overweight constraints. CW-DAS rank shown. Suggested add from deployment plan.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 3 — Conviction Watchlist (TACTICAL_GROWTH + DEPLOYMENT_CANDIDATE)
+// Answers: "What holdings are gaining conviction?"
+// ─────────────────────────────────────────────────────────────────────────────
+function _gapToCCL(v) {
+  const ss    = v.source_signals || {};
+  const flags = Array.isArray(v.conflict_flags)
+    ? v.conflict_flags
+    : String(v.conflict_flags || "").split("|").filter(Boolean);
+  const gaps = [];
+  if (!ss.replay_supported || ss.replay_supported === "False" || ss.replay_supported === false)
+    gaps.push({ text: "Missing Replay", cls: "replay" });
+  if (flags.some(f => f.includes("SIGNAL") || f.includes("MISMATCH")))
+    gaps.push({ text: "Signal Tier Mismatch", cls: "signal" });
+  if ((parseFloat(ss.composite_score) || 0) < 3.5)
+    gaps.push({ text: "Insufficient Composite", cls: "composite" });
+  if (flags.some(f => f.includes("OW") || f.includes("TENSION")))
+    gaps.push({ text: "Node Overweight", cls: "ow" });
+  if (gaps.length === 0 && v.ucf_label === "DEPLOYMENT_CANDIDATE")
+    gaps.push({ text: "Near CCL threshold", cls: "" });
+  if (gaps.length === 0)
+    gaps.push({ text: "Monitor for promotion", cls: "" });
+  return gaps;
+}
+
+function renderConvictionWatchlist(ucfBySymbol, ovBySymbol) {
+  const rows = Object.values(ucfBySymbol)
+    .filter(v => v.ucf_label === "TACTICAL_GROWTH" || v.ucf_label === "DEPLOYMENT_CANDIDATE")
+    .sort((a, b) => (b.ucf_score || 0) - (a.ucf_score || 0));
+
+  document.getElementById("s3-badge").textContent = rows.length;
+
+  if (!rows.length) {
+    document.getElementById("s3-empty").style.display = "";
+    document.getElementById("s3-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s3-empty").style.display = "none";
+  const contentEl = document.getElementById("s3-content");
+  contentEl.style.display = "";
+
+  const tbody = rows.map(v => {
+    const ss = v.source_signals || {};
+    const ov = ovBySymbol[v.symbol] || {};
+    const gaps = _gapToCCL(v).map(g =>
+      `<span class="gap-chip ${g.cls}">${esc(g.text)}</span>`
+    ).join(" ");
+
+    return `<tr>
+      <td><span class="sym">${esc(v.symbol)}</span></td>
+      <td>${ucfLabelChip(v.ucf_label)}</td>
+      <td class="r">${scoreBar(v.ucf_score)}</td>
+      <td>${dirSpan(ss.signal_direction)}</td>
+      <td class="r"><span style="font-weight:700">${num(ss.composite_score)}</span></td>
+      <td>${esc(ov.ess_score_text || "—")}</td>
+      <td>${replayBadge(ss.replay_supported)}</td>
+      <td>${gaps}</td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th>Label</th>
+      <th class="r">UCF Score</th>
+      <th>Direction</th>
+      <th class="r">Composite</th>
+      <th>ESS</th>
+      <th>Replay</th>
+      <th>Gap to Promotion</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">TACTICAL_GROWTH: developing conviction. DEPLOYMENT_CANDIDATE: near CCL threshold. Gap column shows primary blockers to promotion.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 4 — Signal Divergence (consensus matrix + UCF conflict flags)
+// Answers: "What holdings have signal disagreement?"
+// ─────────────────────────────────────────────────────────────────────────────
+function renderSignalDivergence(ucfBySymbol, fidBySymbol, ovBySymbol, acBySymbol) {
+  // Collect securities with MAJOR_DIVERGENCE or PARTIAL_ALIGNMENT consensus matrix
+  // Only for portfolio holdings (must exist in ucfBySymbol or ovBySymbol)
+  const portfolioSymbols = new Set([
+    ...Object.keys(ucfBySymbol),
+    ...Object.keys(ovBySymbol),
+  ]);
+  const divergentRows = [];
+
+  // First pass: from consensus matrix (fidelity signals)
+  for (const [sym, fs] of Object.entries(fidBySymbol || {})) {
+    if (!portfolioSymbols.has(sym)) continue;  // skip non-portfolio symbols
+    const matrix = fs.consensus_matrix || {};
+    const cls    = matrix.classification || "";
+    if (cls === "MAJOR_DIVERGENCE" || cls === "PARTIAL_ALIGNMENT") {
+      const ucf = ucfBySymbol[sym] || {};
+      const ov  = ovBySymbol[sym]  || {};
+      divergentRows.push({ sym, matrix, ucf, ov, fs, ac: acBySymbol[sym] || null });
+    }
+  }
+
+  // Sort: MAJOR_DIVERGENCE first, then PARTIAL, then by UCF rank
+  divergentRows.sort((a, b) => {
+    const clsScore = (c) => c === "MAJOR_DIVERGENCE" ? 0 : c === "PARTIAL_ALIGNMENT" ? 1 : 2;
+    const ac = clsScore(a.matrix.classification);
+    const bc = clsScore(b.matrix.classification);
+    if (ac !== bc) return ac - bc;
+    return (a.ucf.ucf_rank || 999) - (b.ucf.ucf_rank || 999);
+  });
+
+  document.getElementById("s4-badge").textContent = divergentRows.length;
+
+  if (!divergentRows.length) {
+    document.getElementById("s4-empty").style.display = "";
+    document.getElementById("s4-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s4-empty").style.display = "none";
+  const contentEl = document.getElementById("s4-content");
+  contentEl.style.display = "";
+
+  const tbody = divergentRows.map(({ sym, matrix, ucf, ov, fs, ac }) => {
+    const essDir    = dirSpan(matrix.ess_direction);
+    const yahooDir  = dirSpan(matrix.yahoo_direction);
+    const zacksDir  = dirSpan(matrix.zacks_direction);
+    const danelfin  = ov.danelfin_score != null
+      ? `<span style="font-weight:700">${parseFloat(ov.danelfin_score).toFixed(1)}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    const abrLbl    = ac ? esc(ac.consensus_label || "—") : "—";
+    const essText   = esc(ov.ess_score_text || fs.ess_text || "—");
+    const conflictFlags = flagChips(ucf.conflict_flags);
+
+    return `<tr>
+      <td><span class="sym">${esc(sym)}</span></td>
+      <td>${matrixBadge(matrix.classification)}</td>
+      <td>
+        <div class="sig-stack">
+          <div class="sig-stack-cell">
+            <div class="sig-stack-lbl">ESS (Fidelity)</div>
+            <div class="sig-stack-val">${essDir}</div>
+            <div style="font-size:0.68rem;color:var(--muted)">${essText}</div>
+          </div>
+          <div class="sig-stack-cell">
+            <div class="sig-stack-lbl">Yahoo ABR</div>
+            <div class="sig-stack-val">${yahooDir}</div>
+            <div style="font-size:0.68rem">${abrLbl}</div>
+          </div>
+          <div class="sig-stack-cell">
+            <div class="sig-stack-lbl">Zacks</div>
+            <div class="sig-stack-val">${zacksDir}</div>
+          </div>
+          <div class="sig-stack-cell">
+            <div class="sig-stack-lbl">Danelfin</div>
+            <div class="sig-stack-val">${danelfin}</div>
+          </div>
+        </div>
+      </td>
+      <td>${ucfLabelChip(ucf.ucf_label)}</td>
+      <td>${conflictFlags}</td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th>Matrix</th>
+      <th>Signal Stack (ESS · Yahoo · Zacks · Danelfin)</th>
+      <th>UCF Label</th>
+      <th>UCF Flags</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">MAJOR_DIVERGENCE: available signals strongly disagree. PARTIAL_ALIGNMENT: majority agree but at least one dissents. Operator review recommended before deployment.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 5 — Trim Watch (TRIM_WATCH)
+// Answers: "What holdings are losing conviction?"
+// ─────────────────────────────────────────────────────────────────────────────
+function renderTrimWatch(ucfBySymbol, ovBySymbol) {
+  const rows = Object.values(ucfBySymbol)
+    .filter(v => v.ucf_label === "TRIM_WATCH")
+    .sort((a, b) => {
+      const tsa = parseFloat((a.source_signals || {}).trim_priority_score) || 0;
+      const tsb = parseFloat((b.source_signals || {}).trim_priority_score) || 0;
+      return tsb - tsa;
+    });
+
+  document.getElementById("s5-badge").textContent = rows.length;
+
+  if (!rows.length) {
+    document.getElementById("s5-empty").style.display = "";
+    document.getElementById("s5-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s5-empty").style.display = "none";
+  const contentEl = document.getElementById("s5-content");
+  contentEl.style.display = "";
+
+  const tbody = rows.map(v => {
+    const ss  = v.source_signals || {};
+    const ov  = ovBySymbol[v.symbol] || {};
+    const dep = v.deployment || {};
+    const trimScore = parseFloat(ss.trim_priority_score) || 0;
+    const isOW      = ov.is_overweight_vs_target === true || ov.is_overweight_vs_target === "True" || ov.is_overweight_vs_target === "true";
+    const owBadge   = isOW
+      ? `<span class="flag-chip ow">OVERWEIGHT</span>`
+      : `<span style="color:var(--muted)">Within target</span>`;
+    const wt        = ov.percent_of_portfolio != null ? pct(ov.percent_of_portfolio) : "—";
+    const reason    = flagChips(v.conflict_flags) !== "—"
+      ? flagChips(v.conflict_flags)
+      : `<span class="flag-chip">${esc((ss.signal_direction === "BEARISH" ? "BEARISH SIGNAL" : "CONVICTION LOSS").replace(/_/g," "))}</span>`;
+
+    return `<tr>
+      <td><span class="sym">${esc(v.symbol)}</span></td>
+      <td>${trimBar(trimScore)}</td>
+      <td class="r"><span class="wt-pct">${wt}</span></td>
+      <td>${owBadge}</td>
+      <td>${dirSpan(ss.signal_direction)}</td>
+      <td>${esc(ov.ess_score_text || "—")}</td>
+      <td>${reason}</td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th>Trim Score (0–100)</th>
+      <th class="r">Weight</th>
+      <th>OW Node</th>
+      <th>Direction</th>
+      <th>ESS</th>
+      <th>Reason</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">TRIM_WATCH: conviction has degraded below hold threshold. Trim score reflects severity (higher = stronger trim signal). Operator judgment required.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 6 — Research Priorities
+// Answers: "Where should I spend research time?"
+// Surfaces holdings closest to promotion or most in need of review
+// ─────────────────────────────────────────────────────────────────────────────
+function _researchPriority(v, fidBySymbol, acBySymbol) {
+  const ss    = v.source_signals || {};
+  const flags = Array.isArray(v.conflict_flags)
+    ? v.conflict_flags
+    : String(v.conflict_flags || "").split("|").filter(Boolean);
+  const fs    = fidBySymbol[v.symbol] || {};
+  const matrix= (fs.consensus_matrix || {});
+  const reasons = [];
+  let level = "low";
+
+  // Replay candidate (replay missing but signal is strong)
+  if ((!ss.replay_supported || ss.replay_supported === false || ss.replay_supported === "False")
+      && (parseFloat(ss.composite_score) || 0) >= 3.5) {
+    reasons.push("Replay candidate — confirm replay for promotion");
+    level = "high";
+  }
+
+  // One signal away from CCL (HCA with only replay missing)
+  if (v.ucf_label === "HIGH_CONVICTION_ANCHOR"
+      && flags.length === 1
+      && flags[0].includes("REPLAY")) {
+    reasons.push("One confirmed replay away from CCL");
+    level = "high";
+  }
+
+  // Consensus conflict
+  if (matrix.classification === "MAJOR_DIVERGENCE") {
+    reasons.push("Signal conflict: resolve MAJOR_DIVERGENCE before deployment");
+    level = level === "high" ? "high" : "high";
+  }
+
+  // DEPLOYMENT_CANDIDATE close to threshold
+  if (v.ucf_label === "DEPLOYMENT_CANDIDATE") {
+    reasons.push("Near deployment threshold — review blockers");
+    level = "high";
+  }
+
+  // OW tension blocking deployment
+  if (flags.some(f => f.includes("OW") || f.includes("TENSION")) && ss.deployment_eligible) {
+    reasons.push("OW node tension — monitor node rebalance");
+    if (level !== "high") level = "med";
+  }
+
+  // Signal tier mismatch
+  if (flags.some(f => f.includes("MISMATCH"))) {
+    reasons.push("Signal tier mismatch — verify ESS / Zacks consistency");
+    if (level !== "high") level = "med";
+  }
+
+  if (reasons.length === 0) return null;
+  return { reasons, level };
+}
+
+function renderResearchPriorities(ucfBySymbol, fidBySymbol, acBySymbol, ovBySymbol) {
+  const items = [];
+  for (const [sym, v] of Object.entries(ucfBySymbol)) {
+    const pr = _researchPriority(v, fidBySymbol, acBySymbol);
+    if (pr) {
+      const ov = ovBySymbol[sym] || {};
+      items.push({ sym, v, ov, pr });
+    }
+  }
+
+  // Sort: high first, then by UCF rank
+  items.sort((a, b) => {
+    const lv = x => x.pr.level === "high" ? 0 : x.pr.level === "med" ? 1 : 2;
+    const ld = lv(a) - lv(b);
+    if (ld !== 0) return ld;
+    return (a.v.ucf_rank || 999) - (b.v.ucf_rank || 999);
+  });
+
+  document.getElementById("s6-badge").textContent = items.length;
+
+  if (!items.length) {
+    document.getElementById("s6-empty").style.display = "";
+    document.getElementById("s6-content").style.display = "none";
+    return;
+  }
+  document.getElementById("s6-empty").style.display = "none";
+  const contentEl = document.getElementById("s6-content");
+  contentEl.style.display = "";
+
+  const tbody = items.map(({ sym, v, ov, pr }) => {
+    const ss  = v.source_signals || {};
+    const lvl = pr.level;
+    const lvlSpan = lvl === "high"
+      ? `<span class="pri-high">HIGH</span>`
+      : lvl === "med"
+      ? `<span class="pri-med">MED</span>`
+      : `<span class="pri-low">LOW</span>`;
+    const actionList = pr.reasons.map(r => `<li style="margin:2px 0">${esc(r)}</li>`).join("");
+    const replayPct  = ss.replay_percentile != null
+      ? `<span style="font-size:0.72rem;color:var(--muted)">(${parseFloat(ss.replay_percentile).toFixed(0)}th pctile)</span>`
+      : "";
+
+    return `<tr>
+      <td><span class="sym">${esc(sym)}</span></td>
+      <td>${lvlSpan}</td>
+      <td>${ucfLabelChip(v.ucf_label)}</td>
+      <td class="r"><span style="font-weight:700">${num(v.ucf_score, 1)}</span></td>
+      <td>${replayBadge(ss.replay_supported)} ${replayPct}</td>
+      <td><ul style="margin:0;padding-left:16px;font-size:0.78rem">${actionList}</ul></td>
+    </tr>`;
+  }).join("");
+
+  contentEl.innerHTML = `<table class="ucf-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th>Priority</th>
+      <th>UCF Label</th>
+      <th class="r">UCF Score</th>
+      <th>Replay</th>
+      <th>Research Action</th>
+    </tr></thead>
+    <tbody>${tbody}</tbody>
+  </table>
+  <div class="footnote">Holdings where operator attention can directly move conviction level. HIGH = actionable gap to promotion or deployment. MED = structural tension to monitor.</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stats row
+// ─────────────────────────────────────────────────────────────────────────────
+function renderStats(ucfBySymbol, deploymentQueue) {
+  const counts = {};
+  for (const v of Object.values(ucfBySymbol)) {
+    counts[v.ucf_label] = (counts[v.ucf_label] || 0) + 1;
+  }
+  const qLen = (deploymentQueue?.queue || []).length;
+  const el   = document.getElementById("statsRow");
+  el.style.display = "";
+  el.innerHTML = `
+    <div class="stat-card stat-ccl">
+      <div class="stat-val">${counts["CORE_CONVICTION_LEADER"] || 0}</div>
+      <div class="stat-lbl">Conviction Leaders</div>
+    </div>
+    <div class="stat-card stat-hca">
+      <div class="stat-val">${counts["HIGH_CONVICTION_ANCHOR"] || 0}</div>
+      <div class="stat-lbl">High Conv. Anchors</div>
+    </div>
+    <div class="stat-card stat-dep">
+      <div class="stat-val">${qLen}</div>
+      <div class="stat-lbl">Deployment Queue</div>
+    </div>
+    <div class="stat-card stat-tg">
+      <div class="stat-val">${(counts["TACTICAL_GROWTH"] || 0) + (counts["DEPLOYMENT_CANDIDATE"] || 0)}</div>
+      <div class="stat-lbl">Watchlist</div>
+    </div>
+    <div class="stat-card stat-tw">
+      <div class="stat-val">${counts["TRIM_WATCH"] || 0}</div>
+      <div class="stat-lbl">Trim Watch</div>
+    </div>
+    <div class="stat-card stat-div">
+      <div class="stat-val">${counts["MAINTAIN"] || 0}</div>
+      <div class="stat-lbl">Maintain</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:var(--fg)">${Object.values(ucfBySymbol).length}</div>
+      <div class="stat-lbl">Total Holdings</div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main render pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+function renderDashboard(data) {
+  const ucfBySymbol = data.ucf_verdicts_by_symbol || {};
+  const fidBySymbol = data.fidelity_signals_by_symbol || {};
+  const acBySymbol  = data.analyst_consensus_by_symbol || {};
+
+  // Build overlay lookup
+  const ovBySymbol = {};
+  for (const ov of (data.security_overlays || [])) {
+    ovBySymbol[ov.symbol] = ov;
+  }
+
+  // Build deployment plan lookup
+  const dpBySymbol = {};
+  for (const r of ((data.deployment_plan || {}).recommendations || [])) {
+    dpBySymbol[r.symbol] = r;
+  }
+
+  renderStats(ucfBySymbol, data.deployment_queue);
+  renderConvictionLeaders(ucfBySymbol, ovBySymbol);
+  renderDeploymentReady(data.deployment_queue, ucfBySymbol, dpBySymbol);
+  renderConvictionWatchlist(ucfBySymbol, ovBySymbol);
+  renderSignalDivergence(ucfBySymbol, fidBySymbol, ovBySymbol, acBySymbol);
+  renderTrimWatch(ucfBySymbol, ovBySymbol);
+  renderResearchPriorities(ucfBySymbol, fidBySymbol, acBySymbol, ovBySymbol);
+
+  // Update run meta
+  const meta = data.run_id
+    ? `Run: ${data.run_id} · ${(data.snapshot_date || data.portfolio_date || "")}`
+    : "";
+  document.getElementById("runMeta").textContent = meta;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load & init
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const runId = document.getElementById("runSelect").value;
+  if (!runId) { showStatus("Please select a portfolio run.", "error"); return; }
+  showStatus("Loading analysis data…", "loading");
+  document.getElementById("loadingOverlay").style.display = "flex";
+  try {
+    const data = await fetchRun(runId);
+    if (data.error) throw new Error(data.error);
+    clearStatus();
+    renderDashboard(data);
+  } catch(e) {
+    showStatus("Error: " + e.message, "error");
+  } finally {
+    document.getElementById("loadingOverlay").style.display = "none";
+  }
+}
+
+document.getElementById("loadBtn").addEventListener("click", loadDashboard);
+
+// Populate run selector on page load
+(async () => {
+  try {
+    showStatus("Loading available portfolio runs…", "loading");
+    const runsData = await fetchRuns();
+    const portfolios = (runsData.portfolios || []).slice().reverse(); // newest first
+    const sel = document.getElementById("runSelect");
+    if (!portfolios.length) {
+      sel.innerHTML = "<option value=''>No completed runs found</option>";
+      showStatus("No portfolio analysis runs found. Run a portfolio analysis first.", "error");
+      return;
+    }
+    sel.innerHTML = portfolios.map(p => {
+      const label = p.run_id + (p.snapshot_date ? " — " + p.snapshot_date : "") + (p.mandate_type ? " (" + p.mandate_type + ")" : "");
+      return `<option value="${esc(p.run_id)}">${esc(label)}</option>`;
+    }).join("");
+    clearStatus();
+    // Auto-load the most recent run
+    await loadDashboard();
+  } catch(e) {
+    showStatus("Error loading runs: " + e.message, "error");
+  }
+})();
+</script>
+</body>
+</html>

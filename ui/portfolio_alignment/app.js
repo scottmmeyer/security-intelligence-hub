@@ -201,6 +201,7 @@ function renderResults(data) {
   renderKPIs(data);
   renderMultiDimScores(data);
   renderMandatePanel(data);
+  renderDeploymentQueue(data);
   renderAllocationMap(data.alignment || []);
   renderConcentration(data.concentration || {});
   renderOptimizerSummary(data.recommendations || []);  // Phase 7.3B
@@ -699,6 +700,507 @@ function _stiPanelHtml(sp, containerId, rowIdx) {
 </div>`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5J — Analyst Consensus helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _consensusLabelDisplay(label) {
+  const map = {
+    STRONG_BUY:    { text: "STRONG BUY",    cls: "consensus-strong-buy"    },
+    BUY:           { text: "BUY",            cls: "consensus-buy"           },
+    MODERATE_BUY:  { text: "MODERATE BUY",  cls: "consensus-moderate-buy"  },
+    HOLD:          { text: "HOLD",           cls: "consensus-hold"          },
+    SELL:          { text: "SELL",           cls: "consensus-sell"          },
+    NO_CONSENSUS:  { text: "NO CONSENSUS",   cls: "consensus-none"          },
+  };
+  const d = map[label] || { text: label || "—", cls: "consensus-none" };
+  return `<span class="consensus-label ${d.cls}">${d.text}</span>`;
+}
+
+function _conflictBadgeHtml(badge) {
+  if (!badge || badge === "NO_CONSENSUS") return "";
+  const map = {
+    CONSENSUS_ALIGNED:    { text: "CONSENSUS ALIGNED",    cls: "badge-aligned"    },
+    CONSENSUS_DIVERGENCE: { text: "CONSENSUS DIVERGENCE", cls: "badge-divergence" },
+    CONSENSUS_NEUTRAL:    { text: "CONSENSUS NEUTRAL",    cls: "badge-neutral"    },
+  };
+  const d = map[badge] || { text: badge.replace(/_/g, " "), cls: "badge-neutral" };
+  return `<span class="conflict-badge ${d.cls}">${d.text}</span>`;
+}
+
+function _computeConflictBadge(essText, consensusLabel) {
+  if (!consensusLabel || consensusLabel === "NO_CONSENSUS") return "NO_CONSENSUS";
+  const ess = (essText || "").toUpperCase();
+  if (!ess || ess === "UNKNOWN" || ess === "NEUTRAL") return "CONSENSUS_NEUTRAL";
+  const essBullish = (ess === "VERY_BULLISH" || ess === "BULLISH");
+  const essBearish = (ess === "VERY_BEARISH" || ess === "BEARISH");
+  const abrBuy  = (consensusLabel === "STRONG_BUY" || consensusLabel === "BUY" || consensusLabel === "MODERATE_BUY");
+  const abrSell = (consensusLabel === "HOLD" || consensusLabel === "SELL");
+  if ((essBullish && abrBuy) || (essBearish && abrSell)) return "CONSENSUS_ALIGNED";
+  if ((essBullish && abrSell) || (essBearish && abrBuy)) return "CONSENSUS_DIVERGENCE";
+  return "CONSENSUS_NEUTRAL";
+}
+
+function _consensusPanelHtml(ac, essText) {
+  if (!ac) return "";
+  const badge = _computeConflictBadge(essText, ac.consensus_label);
+  const upsideColor = (ac.upside_pct != null)
+    ? (ac.upside_pct >= 0 ? "var(--green)" : "var(--sev-high)")
+    : "var(--muted)";
+  const upsideStr = ac.upside_pct != null
+    ? `<span style="color:${upsideColor};font-weight:700">${ac.upside_pct >= 0 ? "+" : ""}${parseFloat(ac.upside_pct).toFixed(1)}%</span>`
+    : "—";
+  const targetStr  = ac.price_target  != null ? `$${parseFloat(ac.price_target).toFixed(2)}`  : "—";
+  const currentStr = ac.current_price != null ? `$${parseFloat(ac.current_price).toFixed(2)}` : "—";
+  const abrStr     = ac.abr           != null ? parseFloat(ac.abr).toFixed(2) : "—";
+
+  return `<div class="consensus-panel">
+  <div class="consensus-panel-header">
+    <strong style="font-size:0.76rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Analyst Consensus</strong>
+    ${_conflictBadgeHtml(badge)}
+  </div>
+  <div class="consensus-panel-row">
+    <div class="consensus-field"><div class="consensus-field-label">Consensus</div>
+      <div class="consensus-field-value">${_consensusLabelDisplay(ac.consensus_label)}</div></div>
+    <div class="consensus-field"><div class="consensus-field-label">ABR</div>
+      <div class="consensus-field-value" style="font-weight:700">${abrStr}</div></div>
+    <div class="consensus-field"><div class="consensus-field-label">Price Target</div>
+      <div class="consensus-field-value">${targetStr}</div></div>
+    <div class="consensus-field"><div class="consensus-field-label">Current Price</div>
+      <div class="consensus-field-value">${currentStr}</div></div>
+    <div class="consensus-field"><div class="consensus-field-label">Upside</div>
+      <div class="consensus-field-value">${upsideStr}</div></div>
+    <div class="consensus-field"><div class="consensus-field-label">Refresh</div>
+      <div class="consensus-field-value" style="color:var(--muted)">${escHtml(ac.refresh_date || "—")}</div></div>
+  </div>
+</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5K — Fidelity Analyst helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _fidelityRatingDisplay(rating) {
+  const map = {
+    STRONG_BUY:  { text: "STRONG BUY",  cls: "fidelity-strong-buy"  },
+    BUY:         { text: "BUY",          cls: "fidelity-buy"         },
+    HOLD:        { text: "HOLD",         cls: "fidelity-hold"        },
+    SELL:        { text: "SELL",         cls: "fidelity-sell"        },
+    STRONG_SELL: { text: "STRONG SELL",  cls: "fidelity-strong-sell" },
+  };
+  const d = map[rating] || { text: rating || "—", cls: "fidelity-unknown" };
+  return `<span class="fidelity-rating ${d.cls}">${d.text}</span>`;
+}
+
+function _matrixBadgeHtml(classification) {
+  if (!classification) return "";
+  const map = {
+    FULL_ALIGNMENT_BULLISH: { text: "Full Alignment — Bullish", cls: "matrix-full-bullish" },
+    FULL_ALIGNMENT_BEARISH: { text: "Full Alignment — Bearish", cls: "matrix-full-bearish" },
+    PARTIAL_ALIGNMENT:      { text: "Partial Alignment",        cls: "matrix-partial"      },
+    MAJOR_DIVERGENCE:       { text: "Major Divergence",         cls: "matrix-divergence"   },
+    INSUFFICIENT_DATA:      { text: "Insufficient Data",        cls: "matrix-insufficient" },
+  };
+  const d = map[classification] || { text: classification.replace(/_/g, " "), cls: "matrix-insufficient" };
+  return `<span class="matrix-badge ${d.cls}">${d.text}</span>`;
+}
+
+function _directionChip(direction) {
+  if (!direction || direction === "UNKNOWN") return `<span style="color:var(--muted)">—</span>`;
+  const color = direction === "BULLISH" ? "var(--green)"
+              : direction === "BEARISH" ? "var(--sev-high)"
+              : "var(--muted)";
+  return `<span style="color:${color};font-weight:700;font-size:0.78rem">${direction}</span>`;
+}
+
+function _fidelityPanelHtml(fs) {
+  if (!fs) return "";
+  const matrix = fs.consensus_matrix || {};
+  const scoreStr = fs.ess_numeric != null ? `${parseFloat(fs.ess_numeric).toFixed(1)} / 5` : "—";
+
+  return `<div class="fidelity-panel">
+  <div class="fidelity-panel-header">
+    <strong style="font-size:0.76rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Fidelity Analyst (ESS)</strong>
+    ${_matrixBadgeHtml(matrix.classification)}
+  </div>
+  <div class="fidelity-panel-row">
+    <div class="fidelity-field">
+      <div class="fidelity-field-label">Rating</div>
+      <div class="fidelity-field-value">${_fidelityRatingDisplay(fs.fidelity_rating)}</div>
+    </div>
+    <div class="fidelity-field">
+      <div class="fidelity-field-label">Score</div>
+      <div class="fidelity-field-value">${scoreStr}</div>
+    </div>
+    <div class="fidelity-field">
+      <div class="fidelity-field-label">Direction</div>
+      <div class="fidelity-field-value">${_directionChip(fs.fidelity_direction)}</div>
+    </div>
+    <div class="fidelity-field">
+      <div class="fidelity-field-label">Refresh</div>
+      <div class="fidelity-field-value" style="color:var(--muted)">${escHtml(fs.refresh_date || "—")}</div>
+    </div>
+    <div class="fidelity-field">
+      <div class="fidelity-field-label">Coverage</div>
+      <div class="fidelity-field-value" style="font-size:0.72rem;color:var(--muted)">${escHtml((fs.coverage_domain || "—").replace(/_/g, " "))}</div>
+    </div>
+  </div>
+</div>`;
+}
+
+function _consensusStackHtml(fs, ac) {
+  if (!fs && !ac) return "";
+  const matrix = (fs || {}).consensus_matrix || {};
+  const zDir   = _directionChip(matrix.zacks_direction);
+  const essDir  = _directionChip(matrix.ess_direction);
+  const abrDir  = _directionChip(matrix.yahoo_direction);
+  const abrLabel = ac ? _consensusLabelDisplay(ac.consensus_label) : `<span style="color:var(--muted)">—</span>`;
+  const zScoreRaw = matrix.zacks_direction && matrix.zacks_direction !== "UNKNOWN"
+    ? `<span style="font-size:0.72rem;color:var(--muted)">(${matrix.zacks_direction})</span>` : "";
+
+  return `<div class="consensus-stack">
+  <div class="consensus-stack-header">
+    <strong style="font-size:0.76rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Analyst Signal Stack</strong>
+    ${_matrixBadgeHtml(matrix.classification)}
+  </div>
+  <div class="consensus-stack-signals">
+    <div class="consensus-stack-signal">
+      <div class="consensus-stack-label">ESS (Fidelity)</div>
+      <div>${essDir}</div>
+      <div style="font-size:0.70rem;color:var(--muted)">${escHtml((fs || {}).ess_text || "—")}</div>
+    </div>
+    <div class="consensus-stack-signal">
+      <div class="consensus-stack-label">Yahoo ABR</div>
+      <div>${abrDir}</div>
+      <div style="font-size:0.70rem">${abrLabel}</div>
+    </div>
+    <div class="consensus-stack-signal">
+      <div class="consensus-stack-label">Zacks</div>
+      <div>${zDir}</div>
+    </div>
+    <div class="consensus-stack-signal" style="margin-left:8px">
+      <div class="consensus-stack-label">Signals</div>
+      <div style="font-size:0.78rem;color:var(--muted)">${matrix.signals_available ?? "—"} / 3 available</div>
+    </div>
+  </div>
+</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5N — Signal Agreement Engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Convert ESS text label to BULLISH / NEUTRAL / BEARISH / UNKNOWN. */
+function _essDirection(essText) {
+  const t = (essText || "").toUpperCase();
+  if (t === "VERY_BULLISH" || t === "BULLISH") return "BULLISH";
+  if (t === "VERY_BEARISH" || t === "BEARISH") return "BEARISH";
+  if (t === "NEUTRAL") return "NEUTRAL";
+  return "UNKNOWN";
+}
+
+/** Convert normalized Zacks score (1–5 ascending) to direction. */
+function _zacksDirection(zacksScore) {
+  const z = parseFloat(zacksScore);
+  if (isNaN(z)) return "UNKNOWN";
+  if (z >= 4.0) return "BULLISH";
+  if (z <= 2.0) return "BEARISH";
+  return "NEUTRAL";
+}
+
+/** Convert Yahoo consensus_label to direction. */
+function _yahooDirection(consensusLabel) {
+  const l = (consensusLabel || "").toUpperCase();
+  if (l === "STRONG_BUY" || l === "BUY" || l === "MODERATE_BUY") return "BULLISH";
+  if (l === "HOLD") return "NEUTRAL";
+  if (l === "SELL" || l === "STRONG_SELL" || l === "MODERATE_SELL") return "BEARISH";
+  return "UNKNOWN";
+}
+
+/** Convert normalized Danelfin score (1–5) to direction. */
+function _danelfinDirection(danelfinScore) {
+  const d = parseFloat(danelfinScore);
+  if (isNaN(d)) return "UNKNOWN";
+  if (d >= 3.5) return "BULLISH";
+  if (d <= 2.5) return "BEARISH";
+  return "NEUTRAL";
+}
+
+/** Derive native Zacks rank from normalized score: rank = 6 − score. */
+function _zacksNativeRank(zacksScore) {
+  const z = parseFloat(zacksScore);
+  if (isNaN(z)) return null;
+  return Math.round(6 - z);
+}
+
+/** Map Zacks rank (1–5) to analyst language. */
+function _zacksRankLabel(rank) {
+  return ["", "STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"][rank] || "—";
+}
+
+/** Derive native Danelfin raw score (1–10) from normalized (1–5). */
+function _danelfinNativeRaw(danelfinScore) {
+  const d = parseFloat(danelfinScore);
+  if (isNaN(d)) return null;
+  return Math.round(d * 2);
+}
+
+/**
+ * Compute signal agreement summary.
+ * Agreement is defined as the count of signals that are BULLISH
+ * (consistent with the Objective 1 mapping). A separate ESS-override flag
+ * surfaces when the primary signal (ESS, 55% weight) diverges from the majority.
+ *
+ * @param {object} ov  - security_overlay row
+ * @param {object} ac  - analyst_consensus_by_symbol entry (may be null)
+ * @param {object} fs  - fidelity_signals_by_symbol entry (may be null)
+ * @returns {{ signals, bullish, total, label, confidence, essOverride }}
+ */
+function _computeSignalAgreement(ov, ac, fs) {
+  const essDir  = _essDirection((ov && ov.ess_score_text) || (fs && fs.ess_text));
+  const zDir    = _zacksDirection(ov && ov.zacks_rating);
+  const yDir    = _yahooDirection(ac && ac.consensus_label);
+  const danDir  = _danelfinDirection(ov && ov.danelfin_score);
+
+  const zRank   = _zacksNativeRank(ov && ov.zacks_rating);
+  const danRaw  = _danelfinNativeRaw(ov && ov.danelfin_score);
+  const abrVal  = (ac && ac.abr != null) ? parseFloat(ac.abr).toFixed(2) : null;
+  const essLabel = (ov && ov.ess_score_text) ? ov.ess_score_text.replace(/_/g, " ") : "—";
+
+  const signals = [
+    {
+      name: "ESS",
+      native: essLabel,
+      sublabel: "Primary Signal (55%)",
+      direction: essDir,
+    },
+    {
+      name: "Zacks",
+      native: zRank != null ? `Rank #${zRank} ${_zacksRankLabel(zRank)}` : "—",
+      sublabel: zRank != null ? `Score ${parseFloat(ov.zacks_rating).toFixed(1)} / 5` : "",
+      direction: zDir,
+    },
+    {
+      name: "Yahoo ABR",
+      native: abrVal != null ? `ABR ${abrVal}` : "—",
+      sublabel: ac && ac.consensus_label ? ac.consensus_label.replace(/_/g, " ") : "",
+      direction: yDir,
+    },
+    {
+      name: "Danelfin",
+      native: danRaw != null ? `${danRaw} / 10` : "—",
+      sublabel: danRaw != null ? `Score ${parseFloat(ov.danelfin_score).toFixed(1)} / 5` : "",
+      direction: danDir,
+    },
+  ];
+
+  const available = signals.filter(s => s.direction !== "UNKNOWN");
+  const bullish   = available.filter(s => s.direction === "BULLISH").length;
+  const total     = available.length;
+
+  let label, confidence;
+  if (total === 0) {
+    label = "INSUFFICIENT DATA"; confidence = "UNKNOWN";
+  } else if (bullish === total) {
+    label = "FULL ALIGNMENT"; confidence = "HIGH";
+  } else if (bullish >= 3 && total >= 4) {
+    label = "STRONG ALIGNMENT"; confidence = "HIGH";
+  } else if (bullish >= 2) {
+    label = "MIXED"; confidence = "MEDIUM";
+  } else if (bullish === 1) {
+    label = "DIVERGENT"; confidence = "LOW";
+  } else {
+    label = "MAJOR DIVERGENCE"; confidence = "LOW";
+  }
+
+  // ESS override flag: primary signal diverges from the majority direction
+  const majorityBullish = bullish > total / 2;
+  const essOverride = essDir !== "UNKNOWN" && total >= 2 &&
+    ((essDir === "BEARISH" && majorityBullish) ||
+     (essDir === "BULLISH" && !majorityBullish && total - bullish > bullish));
+
+  return { signals, bullish, total, label, confidence, essOverride };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5N — Freshness helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Classify signal freshness based on age in days relative to a reference date. */
+function _freshnessStatus(dateStr, refDateStr) {
+  if (!dateStr) return "UNKNOWN";
+  const date = new Date(dateStr);
+  const ref  = refDateStr ? new Date(refDateStr) : new Date();
+  const ageDays = (ref - date) / (1000 * 60 * 60 * 24);
+  if (ageDays <= 2)  return "FRESH";
+  if (ageDays <= 5)  return "WARNING";
+  if (ageDays <= 10) return "STALE";
+  return "CRITICAL";
+}
+
+/** Render a freshness status chip. */
+function _freshnessChip(status) {
+  const map = {
+    FRESH:    { cls: "fn-fresh",    label: "FRESH"    },
+    WARNING:  { cls: "fn-warning",  label: "WARNING"  },
+    STALE:    { cls: "fn-stale",    label: "STALE"    },
+    CRITICAL: { cls: "fn-critical", label: "CRITICAL" },
+    UNKNOWN:  { cls: "fn-unknown",  label: "—"        },
+  };
+  const d = map[status] || map["UNKNOWN"];
+  return `<span class="fn-chip ${d.cls}">${d.label}</span>`;
+}
+
+/** Format days-ago as a compact string. */
+function _ageDaysStr(dateStr, refDateStr) {
+  if (!dateStr) return "—";
+  const date = new Date(dateStr);
+  const ref  = refDateStr ? new Date(refDateStr) : new Date();
+  const age  = Math.round((ref - date) / (1000 * 60 * 60 * 24));
+  return age <= 0 ? "today" : `${age}d`;
+}
+
+/** Return the "worst" freshness status across an array of statuses. */
+function _worstFreshness(statuses) {
+  const order = ["CRITICAL", "STALE", "WARNING", "FRESH", "UNKNOWN"];
+  for (const s of order) {
+    if (statuses.includes(s)) return s;
+  }
+  return "UNKNOWN";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5N — Signal Agreement Panel HTML
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the combined Signal Agreement + Freshness panel for the breakdown row.
+ * @param {object} ov  - security_overlay row
+ * @param {object} ac  - analyst_consensus entry (may be null)
+ * @param {object} fs  - fidelity_signals entry (may be null)
+ */
+function _signalAgreementPanelHtml(ov, ac, fs) {
+  const meta    = (_lastAnalysisData && _lastAnalysisData.signal_source_metadata) || {};
+  const refDate = (_lastAnalysisData && _lastAnalysisData.snapshot_date) || "";
+  const ag      = _computeSignalAgreement(ov, ac, fs);
+
+  // ── Agreement label styling ───────────────────────────────────────────────
+  const labelColors = {
+    "FULL ALIGNMENT":    "#1a7c4f",
+    "STRONG ALIGNMENT":  "#2e7d52",
+    "MIXED":             "#b8860b",
+    "DIVERGENT":         "#c0392b",
+    "MAJOR DIVERGENCE":  "#c0392b",
+    "INSUFFICIENT DATA": "#999",
+  };
+  const labelColor = labelColors[ag.label] || "#999";
+
+  const confCls = {
+    HIGH: "sa-conf-high", MEDIUM: "sa-conf-medium", LOW: "sa-conf-low"
+  }[ag.confidence] || "";
+
+  // ── Direction icon and color ──────────────────────────────────────────────
+  const dirIcon = dir => {
+    if (dir === "BULLISH") return `<span style="color:var(--green);font-weight:700">✓</span>`;
+    if (dir === "BEARISH") return `<span style="color:var(--sev-high);font-weight:700">✗</span>`;
+    if (dir === "NEUTRAL") return `<span style="color:var(--muted)">~</span>`;
+    return `<span style="color:var(--muted)">?</span>`;
+  };
+  const dirLabel = dir => {
+    const colors = { BULLISH: "var(--green)", BEARISH: "var(--sev-high)", NEUTRAL: "var(--muted)", UNKNOWN: "var(--muted)" };
+    return `<span style="color:${colors[dir] || "var(--muted)"};font-weight:600;font-size:0.80rem">${dir || "—"}</span>`;
+  };
+
+  // ── Signal rows ───────────────────────────────────────────────────────────
+  const signalRows = ag.signals.map(s => `
+    <tr>
+      <td style="font-weight:700;font-family:monospace;font-size:0.80rem;padding:5px 8px;white-space:nowrap">${escHtml(s.name)}</td>
+      <td style="font-size:0.80rem;padding:5px 8px;color:var(--muted)">${escHtml(s.native)}</td>
+      <td style="padding:5px 8px">${dirLabel(s.direction)}</td>
+      <td style="padding:5px 8px;text-align:center;font-size:1rem">${dirIcon(s.direction)}</td>
+    </tr>`).join("");
+
+  // ── Freshness rows ────────────────────────────────────────────────────────
+  const essFreshDate   = (fs && fs.refresh_date) || "";
+  const yahooFreshDate = (ac && ac.refresh_date) || "";
+  const zacksFreshDate = meta.zacks_refresh_date || "";
+  const danFreshDate   = meta.danelfin_refresh_date || "";
+
+  const freshnessData = [
+    { name: "ESS",      date: essFreshDate,   source: "Fidelity / StarMine" },
+    { name: "Zacks",    date: zacksFreshDate,  source: "Zacks API"           },
+    { name: "Danelfin", date: danFreshDate,    source: "Danelfin AI"         },
+    { name: "Yahoo",    date: yahooFreshDate,  source: "Yahoo Finance"       },
+  ];
+  const freshnessRows = freshnessData.filter(r => r.date).map(r => {
+    const status = _freshnessStatus(r.date, refDate);
+    return `<tr>
+      <td style="font-weight:700;font-family:monospace;font-size:0.76rem;padding:4px 8px">${r.name}</td>
+      <td style="font-size:0.76rem;color:var(--muted);padding:4px 8px">${escHtml(r.source)}</td>
+      <td style="font-size:0.76rem;padding:4px 8px">${escHtml(r.date)}</td>
+      <td style="font-size:0.76rem;padding:4px 8px">${_ageDaysStr(r.date, refDate)}</td>
+      <td style="padding:4px 8px">${_freshnessChip(status)}</td>
+    </tr>`;
+  }).join("");
+
+  // ── Yahoo target divergence flag ──────────────────────────────────────────
+  const yahooFlag = (ac && ac.abr != null && ac.upside_pct != null &&
+      parseFloat(ac.abr) <= 2.5 && parseFloat(ac.upside_pct) < -10)
+    ? `<div class="fn-target-flag">
+        <span class="fn-target-icon">⚠</span>
+        <strong>Analyst Target Divergence</strong>
+        — Analyst consensus is bullish (ABR&nbsp;${parseFloat(ac.abr).toFixed(2)})
+        but the price target implies ${parseFloat(ac.upside_pct).toFixed(1)}% upside.
+        This usually indicates stale analyst targets at the source.
+      </div>`
+    : "";
+
+  // ── ESS override note ─────────────────────────────────────────────────────
+  const essOverrideNote = ag.essOverride
+    ? `<div class="sa-ess-override">
+        ⚠ <strong>ESS Primary Override:</strong>
+        ESS (55% weight) is ${escHtml((ov && ov.ess_score_text || "").replace(/_/g, " "))}
+        and diverges from the majority signal direction. ESS anchors the final signal direction.
+      </div>`
+    : "";
+
+  return `<div class="sa-panel">
+    <div class="sa-panel-header">
+      <span class="sa-panel-title">Signal Agreement</span>
+      <span class="sa-count">${ag.bullish}&thinsp;/&thinsp;${ag.total}</span>
+      <span class="sa-label" style="color:${labelColor}">${ag.label}</span>
+      <span class="sa-conf ${confCls}">Confidence: ${ag.confidence}</span>
+    </div>
+    <div class="sa-body">
+      <table class="sa-table">
+        <thead><tr>
+          <th style="text-align:left;padding:5px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Signal</th>
+          <th style="text-align:left;padding:5px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Native Value</th>
+          <th style="text-align:left;padding:5px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Direction</th>
+          <th style="text-align:center;padding:5px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Bullish?</th>
+        </tr></thead>
+        <tbody>${signalRows}</tbody>
+      </table>
+    </div>
+    ${essOverrideNote}
+    ${freshnessRows ? `
+    <div class="sa-freshness">
+      <div class="sa-freshness-header">Signal Freshness</div>
+      <table style="border-collapse:collapse;width:100%;margin-top:4px">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 8px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Signal</th>
+          <th style="text-align:left;padding:4px 8px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Source</th>
+          <th style="text-align:left;padding:4px 8px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Updated</th>
+          <th style="text-align:left;padding:4px 8px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Age</th>
+          <th style="text-align:left;padding:4px 8px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);border-bottom:1px solid #c5cae9">Status</th>
+        </tr></thead>
+        <tbody>${freshnessRows}</tbody>
+      </table>
+    </div>` : ""}
+    ${yahooFlag}
+  </div>`;
+}
+
 function _actionBadge(action) {
   return `<span class="action-badge action-${action}">${(action || "").replace(/_/g, " ")}</span>`;
 }
@@ -734,6 +1236,8 @@ function renderHoldingsTable(holdings, containerId, sortMode) {
       : "";
     const bd = h.rps_breakdown || {};
     const sp = h.strategic_profile;
+    const ac = (_lastAnalysisData?.analyst_consensus_by_symbol || {})[h.symbol?.toUpperCase()];
+    const fs = (_lastAnalysisData?.fidelity_signals_by_symbol  || {})[h.symbol?.toUpperCase()];
 
     return `
       <tr class="data-row" onclick="toggleRpsExplain('${explainId}')">
@@ -767,6 +1271,9 @@ function renderHoldingsTable(holdings, containerId, sortMode) {
           = <strong>${h.reduction_priority_score}/100</strong>
           &nbsp;·&nbsp; ${escHtml(bd.explanation || "")}
           ${sp ? _stiPanelHtml(sp, containerId, i) : ""}
+          ${_fidelityPanelHtml(fs)}
+          ${_consensusPanelHtml(ac, h.ess_score_text)}
+          ${_consensusStackHtml(fs, ac)}
         </td>
       </tr>`;
   }).join("");
@@ -800,8 +1307,10 @@ function toggleRpsExplain(explainId) {
 // ─────────────────────────────────────────────────────────────────────────────
 function renderRecommendations(recs) {
   const el = document.getElementById("recommendationsContent");
+  const sepHtml = `<div class="rec-section-separator">Allocation &amp; Portfolio Observations</div>`;
+
   if (!recs.length) {
-    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted)">
+    el.innerHTML = sepHtml + `<div style="padding:20px;text-align:center;color:var(--muted)">
       ✓ No significant recommendations — portfolio is well-aligned.
     </div>`;
     return;
@@ -882,10 +1391,31 @@ function renderRecommendations(recs) {
     const recType = r.recommendation_type || "";
     const isPhaseE = _PHASE_E_TYPES.has(recType);
 
+    // Phase 22D.2 WS-C: visible blocked implementation banner (AC-C1, AC-C2).
+    // Shown when an INCREASE_UNDERWEIGHT recommendation has no actionable path
+    // because all vehicles failed optimizer gates or the mandate blocks deployment.
+    let blockedWarningHtml = "";
+    if (recType === "INCREASE_UNDERWEIGHT" && r.optimizer_metadata) {
+      const decision = r.optimizer_metadata.optimizer_decision || "";
+      if (decision === "NO_CANDIDATES" || decision === "MANDATE_BLOCKED") {
+        const isMandate = decision === "MANDATE_BLOCKED";
+        const bannerLabel = isMandate ? "Mandate Blocked" : "No Actionable Path";
+        const bannerMsg   = isMandate
+          ? "This increase is blocked by the active portfolio mandate. No deployment action is currently available."
+          : "All implementation vehicles failed optimizer gates. No actionable implementation path is available.";
+        const bannerMod   = isMandate ? " rec-blocked-banner-mandate" : "";
+        blockedWarningHtml = `<div class="rec-blocked-banner${bannerMod}">
+          <span class="rec-blocked-banner-label">⚑ ${escHtml(bannerLabel)}</span>
+          <span>${escHtml(bannerMsg)}</span>
+        </div>`;
+      }
+    }
+
     return `<div class="rec-card pri-${r.priority} state-${state} type-${recType} urgency-${r.mandate_urgency || ""}">
       ${isPhaseE ? _phaseETypeHeader(recType) : ""}
       <div class="rec-title">#${i+1} &nbsp; ${escHtml(r.title)}</div>
       <div class="rec-rationale">${escHtml(r.rationale)}</div>
+      ${blockedWarningHtml}
       ${!isPhaseE && r.evidence_summary ? `<div class="rec-evidence">${escHtml(r.evidence_summary)}</div>` : ""}
       <div class="rec-meta">
         ${stateBadge}
@@ -917,7 +1447,7 @@ function renderRecommendations(recs) {
     </div>`;
   }).join("");
 
-  el.innerHTML = `<div class="rec-list">${cards}</div>`;
+  el.innerHTML = sepHtml + `<div class="rec-list">${cards}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1115,6 +1645,35 @@ function renderSecurityOverlays(overlays) {
       ? `<span class="replay-chip">REPLAY</span>` : "";
     const score = o.composite_score != null && o.composite_score !== ""
       ? parseFloat(o.composite_score).toFixed(2) : "—";
+    const ac = (_lastAnalysisData?.analyst_consensus_by_symbol || {})[String(o.symbol || "").toUpperCase()];
+    const fs = (_lastAnalysisData?.fidelity_signals_by_symbol  || {})[String(o.symbol || "").toUpperCase()];
+    const badge = ac ? _computeConflictBadge(o.ess_score_text, ac.consensus_label) : null;
+    const abrCell = ac
+      ? `${_consensusLabelDisplay(ac.consensus_label)}&nbsp;<span style="color:var(--muted);font-size:0.72rem">${ac.abr != null ? parseFloat(ac.abr).toFixed(2) : "—"}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    const matrixBadge = fs ? _matrixBadgeHtml((fs.consensus_matrix || {}).classification) : "";
+    const fidRating = fs ? _fidelityRatingDisplay(fs.fidelity_rating) : `<span style="color:var(--muted)">—</span>`;
+
+    // Phase 7.5N — agreement and freshness columns
+    const ag = _computeSignalAgreement(o, ac, fs);
+    const agrLabelCls = (ag.label === "FULL ALIGNMENT" || ag.label === "STRONG ALIGNMENT")
+      ? "sa-agree-full" : (ag.label === "MIXED" ? "sa-agree-mixed" : "sa-agree-diverge");
+    const agrCell = `<span class="sa-agree-chip ${agrLabelCls}">${ag.label}</span>
+      <span style="font-size:0.72rem;color:var(--muted);white-space:nowrap"> ${ag.bullish}/${ag.total}</span>`;
+    const confCls = { HIGH: "sa-conf-high", MEDIUM: "sa-conf-medium", LOW: "sa-conf-low" }[ag.confidence] || "";
+    const confCell = `<span class="${confCls}">${ag.confidence}</span>`;
+
+    const meta       = (_lastAnalysisData && _lastAnalysisData.signal_source_metadata) || {};
+    const refDate    = (_lastAnalysisData && _lastAnalysisData.snapshot_date) || "";
+    const allDates   = [
+      (fs && fs.refresh_date) || "",
+      meta.zacks_refresh_date || "",
+      meta.danelfin_refresh_date || "",
+      (ac && ac.refresh_date) || "",
+    ].filter(Boolean);
+    const allStatuses = allDates.map(d => _freshnessStatus(d, refDate));
+    const worstFresh = _worstFreshness(allStatuses.length ? allStatuses : ["UNKNOWN"]);
+
     return `<tr>
       <td style="font-weight:600;font-family:monospace">${escHtml(o.symbol)}</td>
       <td style="text-align:right">${pct(o.percent_of_portfolio)}</td>
@@ -1122,6 +1681,11 @@ function renderSecurityOverlays(overlays) {
       <td>${score}</td>
       <td>${escHtml(o.ess_score_text || "—")}</td>
       <td>${escHtml(o.zacks_rating || "—")}</td>
+      <td>${abrCell}${badge ? " " + _conflictBadgeHtml(badge) : ""}</td>
+      <td>${fidRating} ${matrixBadge}</td>
+      <td>${agrCell}</td>
+      <td>${confCell}</td>
+      <td>${_freshnessChip(worstFresh)}</td>
       <td><span class="flag-${o.opportunity_flag}">${o.opportunity_flag || "—"}</span> ${replayChip}</td>
       <td style="font-size:0.8rem;color:var(--muted);max-width:200px">${escHtml(o.flag_rationale || "")}</td>
     </tr>`;
@@ -1137,6 +1701,11 @@ function renderSecurityOverlays(overlays) {
         <th>Score</th>
         <th>ESS</th>
         <th>Zacks</th>
+        <th>Analyst Consensus</th>
+        <th>Fidelity / Matrix</th>
+        <th>Agreement</th>
+        <th>Confidence</th>
+        <th>Freshness</th>
         <th>Flag</th>
         <th>Rationale</th>
       </tr></thead>
@@ -1359,9 +1928,92 @@ function _buildOptimizerViewBlock(r) {
       <div class="optview-label">ETF Assessment</div>
       <div>${etfAssessHtml}</div>
     </div>
+    ${_buildOptimizerPreferredPanel(r)}
     <div style="margin-top:8px;font-size:0.69rem;color:#aaa;border-top:1px solid #dde8f0;padding-top:6px;">
-      Optimizer v${om.optimizer_version || "7.3A"} &nbsp;·&nbsp; Parallel Mode &nbsp;·&nbsp;
+      Optimizer v${om.optimizer_version || "7.3C"} &nbsp;·&nbsp; Parallel Mode &nbsp;·&nbsp;
       Visibility only — no action authority. Legacy recommendations take precedence.
+    </div>
+  </div>`;
+}
+
+// ── Part D (7.3C): Optimizer Preferred Comparison Panel ─────────────────────
+function _buildOptimizerPreferredPanel(r) {
+  const om = r.optimizer_metadata;
+  if (!om) return "";
+
+  const pd = om.preferred_display;
+  if (!pd) return "";
+
+  const pref = pd.preferred_summary || {};
+  const leg  = pd.legacy_summary;
+  const advantages = pd.key_advantages || [];
+
+  // Advantage chips
+  const advHtml = advantages
+    .map(a => `<span class="optpref-advantage">${escHtml(a)}</span>`)
+    .join(" ");
+
+  // Legacy column
+  let legColHtml;
+  if (leg) {
+    const gateCls = !String(leg.etf_gate || "").startsWith("PASS") ? " optpref-fail" : "";
+    const gateLabel = String(leg.etf_gate || "—").split("[")[0].trim();
+    legColHtml = `<div class="optpref-col optpref-col-legacy">
+      <div class="optpref-col-header">Legacy Recommendation</div>
+      <div class="optpref-symbol">${escHtml(leg.symbol)}</div>
+      <div class="optpref-type">ETF</div>
+      <div class="optpref-metrics">
+        <div class="optpref-metric">PIS: <strong>${leg.pis != null ? leg.pis : "—"}</strong></div>
+        <div class="optpref-metric">ETF Gate: <strong class="${gateCls}">${escHtml(gateLabel)}</strong></div>
+        <div class="optpref-metric">Suitability: <strong>${escHtml(leg.suitability_tier || "—")}</strong></div>
+        <div class="optpref-metric">NCS: <strong>${leg.ncs != null ? Number(leg.ncs).toFixed(1) + "%" : "—"}</strong></div>
+        ${leg.worsens_overweight ? `<div class="optpref-metric optpref-fail">⚠ Worsens overweight</div>` : ""}
+      </div>
+    </div>`;
+  } else {
+    legColHtml = `<div class="optpref-col optpref-col-legacy">
+      <div class="optpref-col-header">Legacy Recommendation</div>
+      <div class="optpref-symbol">${escHtml(pd.legacy_symbol || "—")}</div>
+      <div class="optpref-type">—</div>
+    </div>`;
+  }
+
+  // Preferred column
+  const prefPisCls = (pref.pis != null && leg && pref.pis > leg.pis) ? " optpref-win" : "";
+  const prefColHtml = `<div class="optpref-col optpref-col-preferred">
+    <div class="optpref-col-header">Optimizer Preferred</div>
+    <div class="optpref-symbol">${escHtml(pref.symbol || "—")}</div>
+    <div class="optpref-type">SECURITY</div>
+    <div class="optpref-metrics">
+      <div class="optpref-metric">PIS: <strong class="${prefPisCls}">${pref.pis != null ? pref.pis : "—"}</strong></div>
+      ${pref.composite_score != null ? `<div class="optpref-metric">Composite: <strong>${Number(pref.composite_score).toFixed(2)}</strong></div>` : ""}
+      <div class="optpref-metric">STI: <strong>${escHtml(pref.sti_tier || "—")}</strong></div>
+      <div class="optpref-metric">Replay: <strong class="${pref.replay_supported ? "optpref-win" : ""}">${pref.replay_supported ? "Yes" : "No"}</strong></div>
+      ${pref.ess_score ? `<div class="optpref-metric">ESS: <strong>${escHtml(pref.ess_score)}</strong></div>` : ""}
+    </div>
+  </div>`;
+
+  const deltaHtml = pd.pis_delta != null && pd.pis_delta > 0
+    ? `<span class="optpref-delta">+${pd.pis_delta} PIS advantage</span>`
+    : "";
+
+  return `<div class="optpref-panel">
+    <div class="optpref-header">
+      <span class="optpref-title">Optimizer Preferred Alternative</span>
+      ${deltaHtml}
+    </div>
+    <div class="optpref-comparison">
+      ${legColHtml}
+      <div class="optpref-vs">vs</div>
+      ${prefColHtml}
+    </div>
+    ${advantages.length ? `<div class="optpref-advantages">
+      <span class="optpref-advantages-label">Key advantages:</span>
+      ${advHtml}
+    </div>` : ""}
+    <div class="optpref-footnote">
+      Visibility only — optimizer preferred is not a trade instruction.
+      Legacy recommendation takes precedence until Phase 7.3D.
     </div>
   </div>`;
 }
@@ -1372,6 +2024,708 @@ function toggleOptimizerView(optId) {
   if (!body) return;
   const open = body.classList.toggle("open");
   if (btn) btn.innerHTML = open ? "&#9662; Optimizer View" : "&#9656; Optimizer View";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5C — Capital Deployment Queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+// State for view-all toggle and breakdown expansion
+let _dqShowAll = false;
+const DQ_DEFAULT_ROWS = 10;
+
+function renderDeploymentQueue(data) {
+  const el = document.getElementById("deploymentQueueContainer");
+  if (!el) return;
+
+  const dq = data.deployment_queue;
+  if (!dq || !Array.isArray(dq.queue) || dq.queue.length === 0) {
+    el.innerHTML = "";
+    return;
+  }
+
+  _dqShowAll = false;  // reset on each render
+
+  const queue   = dq.queue;
+  const cashCtx = dq.cash_context || {};
+  const top     = queue[0] || {};
+
+  // Phase 7.5F — Build deployment plan lookup (available when plan is pre-loaded)
+  const plan = data.deployment_plan || {};
+  const planRecs = plan.recommendations || [];
+  const _dpBySymbol = {};
+  for (const r of planRecs) _dpBySymbol[r.symbol] = r;
+  const hasPlan = planRecs.length > 0;
+
+  // Phase 22D.6 — Cash context breakdown (Current / Target / Excess / Deployable)
+  const _cashCurrentPct  = cashCtx.cash_pct               != null ? parseFloat(cashCtx.cash_pct).toFixed(2)               : "—";
+  const _cashTargetPct   = cashCtx.mandate_cash_target_pct != null ? parseFloat(cashCtx.mandate_cash_target_pct).toFixed(1) : "—";
+  const _cashExcessPct   = cashCtx.excess_pct              != null ? parseFloat(cashCtx.excess_pct).toFixed(2)              : "—";
+  const _cashExcessMv    = cashCtx.excess_mv               != null ? formatMV(cashCtx.excess_mv)                           : "—";
+  const _excessIsNeg     = cashCtx.excess_pct != null && parseFloat(cashCtx.excess_pct) < 0;
+  const _excessLabel     = _excessIsNeg ? `${_cashExcessPct}% (${_cashExcessMv})` : `+${_cashExcessPct}% (${_cashExcessMv})`;
+  const _excessClass     = _excessIsNeg ? "dq-cash-ctx-deficit" : "dq-cash-ctx-excess";
+
+  // Phase 22D.10 — Settlement adjustment disclosure
+  const _hasSettlement   = cashCtx.settlement_adjustment != null && parseFloat(cashCtx.settlement_adjustment) > 0;
+  const _settlementAdj   = _hasSettlement ? parseFloat(cashCtx.settlement_adjustment) : 0;
+  const _adjDeployableMv = _hasSettlement && cashCtx.adjusted_deployable_mv != null
+    ? parseFloat(cashCtx.adjusted_deployable_mv)
+    : (cashCtx.deployable_mv != null ? parseFloat(cashCtx.deployable_mv) : 0);
+  const _reportedDeployableMv = cashCtx.deployable_mv != null ? parseFloat(cashCtx.deployable_mv) : 0;
+
+  const settlementDisclosureHtml = _hasSettlement ? `
+    <div class="dq-settlement-strip">
+      <div class="dq-settlement-icon">⚠</div>
+      <div class="dq-settlement-body">
+        <div class="dq-settlement-title">Settlement Adjustment Applied</div>
+        <div class="dq-settlement-detail">
+          Pending purchase settlement of ${formatMV(_settlementAdj)} is excluded from the deployment budget.
+          This cash is already economically committed and will be debited at T+1 settlement.
+        </div>
+        <div class="dq-settlement-row">
+          <span class="dq-settlement-item">Reported Deployable: <strong>${formatMV(_reportedDeployableMv)}</strong></span>
+          <span class="dq-settlement-sep">−</span>
+          <span class="dq-settlement-item dq-settlement-neg">Settlement Obligation: <strong>${formatMV(_settlementAdj)}</strong></span>
+          <span class="dq-settlement-sep">=</span>
+          <span class="dq-settlement-item dq-settlement-adj">Adjusted Deployable: <strong>${formatMV(_adjDeployableMv)}</strong></span>
+        </div>
+      </div>
+    </div>` : "";
+
+  const cashContextHtml = `<div class="dq-cash-context-strip">
+    <div class="dq-cash-ctx-card">
+      <div class="dq-cash-ctx-val">${_cashCurrentPct}%</div>
+      <div class="dq-cash-ctx-lbl">Current Cash</div>
+    </div>
+    <div class="dq-cash-ctx-card dq-cash-ctx-target">
+      <div class="dq-cash-ctx-val">${_cashTargetPct}%</div>
+      <div class="dq-cash-ctx-lbl">Mandate Target</div>
+    </div>
+    <div class="dq-cash-ctx-card ${_excessClass}">
+      <div class="dq-cash-ctx-val">${_excessLabel}</div>
+      <div class="dq-cash-ctx-lbl">Excess vs Target</div>
+    </div>
+    ${_hasSettlement ? `
+    <div class="dq-cash-ctx-card dq-cash-ctx-reported">
+      <div class="dq-cash-ctx-val">${formatMV(_reportedDeployableMv)}</div>
+      <div class="dq-cash-ctx-lbl">Reported Deployable</div>
+    </div>
+    <div class="dq-cash-ctx-card dq-cash-ctx-settlement-neg">
+      <div class="dq-cash-ctx-val">−${formatMV(_settlementAdj)}</div>
+      <div class="dq-cash-ctx-lbl">Settlement Adj.</div>
+    </div>
+    <div class="dq-cash-ctx-card dq-cash-ctx-deployable">
+      <div class="dq-cash-ctx-val dq-gold">${formatMV(_adjDeployableMv)}</div>
+      <div class="dq-cash-ctx-lbl">Adj. Deployable</div>
+    </div>` : `
+    <div class="dq-cash-ctx-card dq-cash-ctx-deployable">
+      <div class="dq-cash-ctx-val dq-gold">${formatMV(cashCtx.deployable_mv)}</div>
+      <div class="dq-cash-ctx-lbl">Deployable</div>
+    </div>`}
+  </div>
+  ${settlementDisclosureHtml}`;
+
+  // Summary strip
+  const summaryHtml = `<div class="dq-summary-strip">
+    <div class="dq-summary-card dq-cash">
+      <div class="dq-summary-val dq-gold">${formatMV(_adjDeployableMv)}</div>
+      <div class="dq-summary-lbl">${_hasSettlement ? "Adj. Deployable Cash" : "Deployable Cash"}</div>
+    </div>
+    <div class="dq-summary-card">
+      <div class="dq-summary-val">${dq.candidate_count || queue.length}</div>
+      <div class="dq-summary-lbl">Eligible Candidates</div>
+    </div>
+    <div class="dq-summary-card">
+      <div class="dq-summary-val" style="font-size:1rem;padding-top:4px">${escHtml(dq.queue_version || "CW-DAS-1.0")}</div>
+      <div class="dq-summary-lbl">Queue Version</div>
+    </div>
+    <div class="dq-summary-card dq-accent">
+      <div class="dq-summary-val dq-green" style="font-size:1.25rem;font-family:monospace">${escHtml(top.symbol || "—")}</div>
+      <div class="dq-summary-lbl">Top Candidate</div>
+    </div>
+    <div class="dq-summary-card dq-accent">
+      <div class="dq-summary-val dq-green">${top.deployment_score != null ? parseFloat(top.deployment_score).toFixed(1) : "—"}</div>
+      <div class="dq-summary-lbl">Top Score</div>
+    </div>
+  </div>`;
+
+  // Phase 7.5F — Cash deployment summary (only when plan is loaded)
+  const cashSummaryHtml = hasPlan ? _daCashSummaryHtml(plan) : "";
+
+  // Phase 7.5F — Action cards for top 10 (only when plan is loaded)
+  const actionCardsHtml = hasPlan
+    ? _daRenderActionCards(queue, _dpBySymbol, 10)
+    : `<div class="da-no-plan-hint">
+        No deployment plan loaded — click ▶ Generate Deployment Plan to see recommended purchase amounts.
+      </div>`;
+
+  // Build the initial 10 rows
+  const tableId = "dq-queue-table-body";
+  const tableHtml = `<div class="dq-table-wrap">
+    <table class="dq-table">
+      <thead><tr>
+        <th>Rank</th>
+        <th>Symbol</th>
+        <th>CW-DAS</th>
+        <th>Tier</th>
+        <th>Wt% / Proj</th>
+        <th>Composite</th>
+        <th>Replay</th>
+        <th>Add $</th>
+        <th>Status</th>
+      </tr></thead>
+      <tbody id="${tableId}"></tbody>
+    </table>
+  </div>
+  <button class="dq-view-all-btn" id="dq-view-all-btn" onclick="_dqToggleViewAll()">
+    ▼ View all ${queue.length} candidates
+  </button>`;
+
+  // Blocked conviction panel
+  const blocked = queue.filter(c => {
+    const bd = c.score_breakdown || {};
+    return bd.redundancy_pen > 0 || bd.conc_pen > 0;
+  });
+  const blockedHtml = blocked.length > 0 ? `<div class="dq-blocked-panel">
+    <button class="dq-blocked-toggle" onclick="_dqToggleBlocked()">
+      ▸ Blocked Conviction Opportunities (${blocked.length})
+    </button>
+    <div class="dq-blocked-body" id="dq-blocked-body">
+      <div class="dq-blocked-intro">
+        Strong conviction holdings intentionally suppressed by mandate constraints.
+        These are not deployment candidates under current allocations but remain in the
+        analytical universe. No action is implied — shown for situational awareness only.
+      </div>
+      <table class="dq-blocked-table">
+        <thead><tr>
+          <th>Symbol</th><th>Tier</th><th>Score</th>
+          <th>Penalty</th><th>Reason</th>
+        </tr></thead>
+        <tbody>
+          ${blocked.map(c => {
+            const bd = c.score_breakdown || {};
+            const penParts = [];
+            if (bd.redundancy_pen > 0) penParts.push(`OW node −${bd.redundancy_pen.toFixed(0)}`);
+            if (bd.conc_pen > 0) penParts.push(`conc −${bd.conc_pen.toFixed(0)}`);
+            const reason = c.notes || "—";
+            const tierShort = c.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL" : "HCA";
+            return `<tr>
+              <td style="font-family:monospace;font-weight:700">${escHtml(c.symbol)}</td>
+              <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
+              <td style="font-weight:600;color:var(--muted)">${parseFloat(c.deployment_score).toFixed(1)}</td>
+              <td style="color:var(--sev-high);font-weight:600">${penParts.join(", ")}</td>
+              <td style="font-size:0.8rem;color:var(--muted)">${escHtml(reason)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>` : "";
+
+  el.innerHTML = `<div class="dq-panel">
+    <div class="dq-section-header">
+      <span class="dq-section-title">Capital Deployment Queue</span>
+      <span class="dq-version-badge">${escHtml(dq.queue_version || "CW-DAS-1.0")}</span>
+      <span class="dq-advisory-note">Guidance only — not a trade instruction</span>
+    </div>
+    ${summaryHtml}
+    ${cashContextHtml}
+    ${cashSummaryHtml}
+    <div class="da-action-section">
+      <div class="da-action-section-header">Recommended Actions — Top 10</div>
+      ${actionCardsHtml}
+    </div>
+    ${tableHtml}
+    ${blockedHtml}
+    <div class="dp-generate-row">
+      <button class="dp-generate-btn" id="dp-generate-btn" onclick="_dpGeneratePlan()">
+        ↺ Recalculate with Custom Cash Amount
+      </button>
+      <span class="dp-generate-hint">Override: allocate custom amount instead of ${formatMV(_adjDeployableMv)}</span>
+    </div>
+  </div>`;
+
+  // Render initial rows
+  _dqRenderTableRows(queue, tableId, DQ_DEFAULT_ROWS);
+}
+
+// Phase 7.5F — Cash deployment summary strip
+function _daCashSummaryHtml(plan) {
+  const pi    = plan.portfolio_impact || {};
+  const recs  = plan.recommendations  || [];
+  const posWithAlloc = recs.filter(r => (r.suggested_add || 0) > 0).length;
+  const t1    = (plan.tier_summaries || []).find(t => t.tier === "TIER_1") || {};
+  const t2    = (plan.tier_summaries || []).find(t => t.tier === "TIER_2") || {};
+  const t3    = (plan.tier_summaries || []).find(t => t.tier === "TIER_3") || {};
+
+  return `<div class="da-cash-summary">
+    <div class="da-cash-label">Deployment Plan — Cash Allocation</div>
+    <div class="da-cash-row">
+      <div class="da-cash-card da-cash-avail">
+        <div class="da-cash-val">${formatMV(plan.deployable_cash)}</div>
+        <div class="da-cash-lbl">Available to Deploy</div>
+      </div>
+      <div class="da-cash-card da-cash-deployed">
+        <div class="da-cash-val">${formatMV(pi.total_deployed)}</div>
+        <div class="da-cash-lbl">Allocated</div>
+      </div>
+      <div class="da-cash-card da-cash-remaining">
+        <div class="da-cash-val">${formatMV(pi.unallocated_cash)}</div>
+        <div class="da-cash-lbl">Remaining</div>
+      </div>
+      <div class="da-cash-card">
+        <div class="da-cash-val">${posWithAlloc}</div>
+        <div class="da-cash-lbl">Positions Allocated</div>
+      </div>
+      <div class="da-cash-card">
+        <div class="da-cash-val">${pi.cash_before_pct != null ? parseFloat(pi.cash_before_pct).toFixed(1) : "—"}% → ${pi.cash_after_pct != null ? parseFloat(pi.cash_after_pct).toFixed(1) : "—"}%</div>
+        <div class="da-cash-lbl">Cash Wt Before → After</div>
+      </div>
+    </div>
+    <div class="da-tier-row">
+      ${t1.candidate_count ? `<span class="da-tier-badge da-tier-t1">T1 ${t1.candidate_count} pos ${formatMV(t1.total_allocated)} (${t1.pct_of_plan.toFixed(0)}%)</span>` : ""}
+      ${t2.candidate_count ? `<span class="da-tier-badge da-tier-t2">T2 ${t2.candidate_count} pos ${formatMV(t2.total_allocated)} (${t2.pct_of_plan.toFixed(0)}%)</span>` : ""}
+      ${t3.candidate_count ? `<span class="da-tier-badge da-tier-t3">T3 ${t3.candidate_count} pos ${formatMV(t3.total_allocated)} (${t3.pct_of_plan.toFixed(0)}%)</span>` : ""}
+    </div>
+  </div>`;
+}
+
+// Phase 7.5F — Action cards for top N deployment candidates
+function _daRenderActionCards(queue, dpBySymbol, limit) {
+  const _ucfBySymbol = (_analysisResult && _analysisResult.ucf_verdicts_by_symbol) || {};
+  // Use plan recs sorted by rank for card order; fill up to limit
+  const planRecs = Object.values(dpBySymbol).sort((a, b) => a.rank - b.rank).slice(0, limit);
+
+  if (planRecs.length === 0) return `<div class="da-no-plan-hint">No recommended actions available.</div>`;
+
+  const cards = planRecs.map(rec => {
+    const sym  = rec.symbol;
+    const cand = queue.find(c => c.symbol === sym) || {};
+    const ucf  = _ucfBySymbol[sym] || {};
+
+    const tierShort = _dqTierShort(cand.narrative_tier || "");
+    const tierDp    = rec.deployment_tier || "TIER_3";
+    const dpTierLabel = tierDp === "TIER_1" ? "DP·T1" : tierDp === "TIER_2" ? "DP·T2" : "DP·T3";
+
+    const addAmt = rec.suggested_add || 0;
+    const curWt  = rec.current_weight_pct  != null ? parseFloat(rec.current_weight_pct).toFixed(2)  : "—";
+    const projWt = rec.projected_weight_pct != null ? parseFloat(rec.projected_weight_pct).toFixed(2) : "—";
+    const curMV  = rec.current_market_value  != null ? formatMV(rec.current_market_value)  : "—";
+    const projMV = rec.projected_market_value != null ? formatMV(rec.projected_market_value) : "—";
+
+    // Reason chips
+    const reasons = [];
+    if ((cand.narrative_tier || "").includes("CORE")) reasons.push({t:"CORE CONVICTION", cls:"da-reason-ccl"});
+    else if ((cand.narrative_tier || "").includes("HIGH")) reasons.push({t:"HIGH CONVICTION", cls:"da-reason-hca"});
+    if (cand.replay_supported) reasons.push({t:"Replay Backed", cls:"da-reason-pos"});
+    if ((parseFloat(cand.trim_score) || 99) <= 20) reasons.push({t:"Low Trim Pressure", cls:"da-reason-pos"});
+    if (ucf.ucf_label === "CORE_CONVICTION_LEADER") reasons.push({t:"UCF: CCL", cls:"da-reason-ucf"});
+    const bd = cand.score_breakdown || {};
+    if (!bd.conc_pen && !bd.redundancy_pen) reasons.push({t:"No Conflicts", cls:"da-reason-pos"});
+
+    const reasonsHtml = reasons.slice(0, 4).map(r =>
+      `<span class="da-reason-chip ${r.cls}">${escHtml(r.t)}</span>`
+    ).join("");
+
+    const rankBadge = rec.rank <= 2 ? " da-card-top" : "";
+
+    return `<div class="da-action-card${rankBadge}">
+      <div class="da-card-header">
+        <span class="da-card-action">BUY</span>
+        <span class="da-card-sym">${escHtml(sym)}</span>
+        <span class="da-card-badges">
+          <span class="dq-tier dq-tier-${tierShort}">${tierShort}</span>
+          <span class="da-dp-tier">${dpTierLabel}</span>
+        </span>
+      </div>
+      <div class="da-card-amount">+${formatMV(addAmt)}</div>
+      <div class="da-card-weights">
+        <span class="da-wt-cur">${curWt}%</span>
+        <span class="da-wt-arrow">→</span>
+        <span class="da-wt-proj">${projWt}%</span>
+      </div>
+      <div class="da-card-mv">${curMV} → ${projMV}</div>
+      <div class="da-card-reasons">${reasonsHtml}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="da-action-grid">${cards}</div>`;
+}
+
+function _dqStatus(cand) {
+  const bd = cand.score_breakdown || {};
+  const blocked = parseFloat(cand.current_weight_pct) >= 6.0 || bd.conc_pen > 0;
+  const owNode  = bd.redundancy_pen > 0;
+  if (blocked && owNode) return "BLOCKED";
+  if (owNode)  return "OW_NODE";
+  if (blocked) return "BLOCKED";
+  return "DEPLOYABLE";
+}
+
+function _dqStatusLabel(status) {
+  if (status === "OW_NODE")    return "OW NODE";
+  if (status === "BLOCKED")    return "BLOCKED";
+  return "DEPLOYABLE";
+}
+
+function _dqTierShort(tier) {
+  if (tier === "CORE_CONVICTION_LEADER") return "CCL";
+  if (tier === "HIGH_CONVICTION_ANCHOR") return "HCA";
+  return tier || "—";
+}
+
+function _dqScoreClass(score) {
+  if (score >= 85) return "dq-score-high";
+  if (score >= 70) return "dq-score-mid";
+  return "dq-score-low";
+}
+
+function _dqRenderTableRows(queue, tbodyId, limit) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+
+  // Phase 7.5E — Build signal lookup maps for the transparency panel
+  const _ucfBySymbol = (_analysisResult && _analysisResult.ucf_verdicts_by_symbol) || {};
+  const _ovBySymbol  = {};
+  // Use _lastAnalysisData for overlays — it has the full set of enriched fields (danelfin_score, etc.)
+  const _ovSource = (_lastAnalysisData && _lastAnalysisData.security_overlays) ||
+                    (_analysisResult  && _analysisResult.security_overlays) || [];
+  for (const ov of _ovSource) {
+    _ovBySymbol[ov.symbol] = ov;
+  }
+  // Phase 7.5F — deployment plan lookup for action columns
+  const _dpBySymbol = {};
+  for (const r of (((_analysisResult && _analysisResult.deployment_plan) || {}).recommendations || [])) {
+    _dpBySymbol[r.symbol] = r;
+  }
+  // Phase 7.5N — consensus and fidelity lookups for agreement panel
+  const _consBySymbol = (_lastAnalysisData && _lastAnalysisData.analyst_consensus_by_symbol) || {};
+  const _fidBySymbol2 = (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol) || {};
+
+  const rows = queue.slice(0, limit).map((c, i) => {
+    const bdId    = `dq-bd-${i}`;
+    const status  = _dqStatus(c);
+    const tierShort = _dqTierShort(c.narrative_tier);
+    const score   = parseFloat(c.deployment_score);
+    const rankCls = c.rank === 1 ? " dq-row-rank1" : "";
+    const rankNumCls = c.rank === 1 ? " rank1" : "";
+    const bd      = c.score_breakdown || {};
+
+    // Phase 7.5F — action column: Add $ and Wt% → Proj
+    const sym = c.symbol;
+    const dp  = _dpBySymbol[sym] || null;
+    const addAmt    = dp ? parseFloat(dp.suggested_add || 0) : null;
+    const curWtDisp = c.current_weight_pct != null ? parseFloat(c.current_weight_pct).toFixed(1) + "%" : "—";
+    const projWtDisp = dp && dp.projected_weight_pct != null
+      ? parseFloat(dp.projected_weight_pct).toFixed(1) + "%"
+      : null;
+    const addAmtDisp = addAmt != null && addAmt > 0
+      ? `<span class="da-add-amt">+${formatMV(addAmt)}</span>`
+      : (status === "DEPLOYABLE" ? `<span class="da-add-na">—</span>` : `<span class="da-add-blocked">✕</span>`);
+    const wtDisp = projWtDisp
+      ? `${curWtDisp}<span class="da-wt-arr"> → </span>${projWtDisp}`
+      : curWtDisp;
+
+    // Phase 7.5E — Signal profile data
+    const ucf = _ucfBySymbol[sym] || {};
+    const ov  = _ovBySymbol[sym]  || {};
+    const ucfScore   = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score).toFixed(1) : "—";
+    const ucfRank    = ucf.ucf_rank   != null ? "#" + ucf.ucf_rank : "—";
+    const ucfLabel   = ucf.ucf_label  || "—";
+    const ucfLabelShort = ucfLabel.replace(/_/g, " ");
+    const ucfSummary = ucf.signal_summary || "";
+    const essText    = ov.ess_score_text  || c.ess_score_text  || "—";
+    const zacks      = ov.zacks_rating    || c.zacks_rating    || "—";
+    const danelfin   = ov.danelfin_score  || "—";
+    const replayPct  = ov.replay_percentile != null ? parseFloat(ov.replay_percentile).toFixed(0) + "th" : "—";
+    const compScore  = c.composite_score  != null ? parseFloat(c.composite_score).toFixed(2) : "—";
+    const projWt     = dp && dp.projected_weight_pct != null
+                       ? parseFloat(dp.projected_weight_pct).toFixed(2) + "%"
+                       : (c.current_weight_pct != null ? pct(c.current_weight_pct) + " (cur)" : "—");
+    const trim = parseFloat(c.trim_score || 0);
+
+    // Phase 7.5N — native value labels for signal cards
+    const ac2 = _consBySymbol[sym] || _consBySymbol[(sym || "").toUpperCase()] || null;
+    const fs2 = _fidBySymbol2[sym] || _fidBySymbol2[(sym || "").toUpperCase()] || null;
+    const zRank2 = _zacksNativeRank(zacks);
+    const danRaw2 = _danelfinNativeRaw(danelfin);
+    const essNative   = essText !== "—" ? essText.replace(/_/g, " ") : "—";
+    const zacksNative = zRank2 != null
+      ? `#${zRank2} ${_zacksRankLabel(zRank2)}`
+      : (zacks !== "—" ? zacks : "—");
+    const danNative  = danRaw2 != null ? `${danRaw2} / 10` : (danelfin !== "—" ? danelfin : "—");
+    const abrNative2 = ac2 && ac2.abr != null
+      ? `ABR ${parseFloat(ac2.abr).toFixed(2)}${ac2.consensus_label ? " · " + ac2.consensus_label.replace(/_/g, " ") : ""}`
+      : null;
+
+    return `<tr class="dq-data-row${rankCls}" onclick="_dqToggleBreakdown('${bdId}')">
+      <td><span class="dq-rank-num${rankNumCls}">#${c.rank}</span></td>
+      <td><span class="dq-sym">${escHtml(c.symbol)}</span></td>
+      <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span></td>
+      <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
+      <td style="text-align:right;white-space:nowrap">${wtDisp}</td>
+      <td style="text-align:right;font-weight:600">${c.composite_score != null ? parseFloat(c.composite_score).toFixed(2) : "—"}</td>
+      <td><span class="${c.replay_supported ? "dq-replay-yes" : "dq-replay-no"}">${c.replay_supported ? "YES" : "NO"}</span></td>
+      <td style="text-align:right">${addAmtDisp}</td>
+      <td><span class="dq-status dq-status-${status}">${_dqStatusLabel(status)}</span></td>
+    </tr>
+    <tr class="dq-breakdown-row" id="${bdId}">
+      <td colspan="9">
+        <div class="dq-signal-profile-header">Signal Profile — ${escHtml(sym)}</div>
+        <div class="dq-signal-grid">
+          <div class="dq-sig-card dq-sig-ucf">
+            <div class="dq-sig-val">${escHtml(ucfScore)}</div>
+            <div class="dq-sig-lbl">UCF Score</div>
+          </div>
+          <div class="dq-sig-card dq-sig-ucf">
+            <div class="dq-sig-val dq-sig-rank">${escHtml(ucfRank)}</div>
+            <div class="dq-sig-lbl">UCF Rank</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val dq-sig-label">${escHtml(ucfLabelShort)}</div>
+            <div class="dq-sig-lbl">UCF Label</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(compScore)}</div>
+            <div class="dq-sig-lbl">Composite</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(essText)}</div>
+            <div class="dq-sig-sublabel">Primary Signal (55%)</div>
+            <div class="dq-sig-lbl">ESS</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(danNative)}</div>
+            <div class="dq-sig-sublabel">${danRaw2 != null ? "AI Score" : "Normalized 1–5"}</div>
+            <div class="dq-sig-lbl">Danelfin</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(zacksNative)}</div>
+            <div class="dq-sig-sublabel">Normalized ${zacks !== "—" ? parseFloat(zacks).toFixed(1) + " / 5" : "—"}</div>
+            <div class="dq-sig-lbl">Zacks</div>
+          </div>
+          ${abrNative2 != null ? `<div class="dq-sig-card">
+            <div class="dq-sig-val" style="font-size:0.80rem">${escHtml(abrNative2)}</div>
+            <div class="dq-sig-sublabel">Not in v1 composite</div>
+            <div class="dq-sig-lbl">Yahoo ABR</div>
+          </div>` : ""}
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(replayPct)}</div>
+            <div class="dq-sig-lbl">Replay Pctile</div>
+          </div>
+          <div class="dq-sig-card">
+            <div class="dq-sig-val">${escHtml(projWt)}</div>
+            <div class="dq-sig-lbl">Proj. Weight</div>
+          </div>
+        </div>
+        ${ucfSummary ? `<div class="dq-signal-summary">${escHtml(ucfSummary)}</div>` : ""}
+        ${_signalAgreementPanelHtml(ov, ac2, fs2)}
+        <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)}</div>
+        <div class="dq-breakdown-grid">
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${bd.signal != null ? bd.signal.toFixed(1) : "—"}</div>
+            <div class="dq-bd-lbl">Signal<br>/30</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${bd.replay != null ? bd.replay.toFixed(0) : "—"}</div>
+            <div class="dq-bd-lbl">Replay<br>/20</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${bd.conviction != null ? bd.conviction.toFixed(0) : "—"}</div>
+            <div class="dq-bd-lbl">Conviction<br>/35</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${bd.sizing != null ? bd.sizing.toFixed(1) : "—"}</div>
+            <div class="dq-bd-lbl">Sizing<br>/8</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${bd.momentum != null ? bd.momentum.toFixed(1) : "—"}</div>
+            <div class="dq-bd-lbl">Momentum<br>/10</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val${bd.redundancy_pen > 0 ? " dq-penalty" : ""}">${bd.redundancy_pen != null ? "−" + bd.redundancy_pen.toFixed(0) : "—"}</div>
+            <div class="dq-bd-lbl">Redund.<br>Pen</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val${bd.conc_pen > 0 ? " dq-penalty" : ""}">${bd.conc_pen != null ? "−" + bd.conc_pen.toFixed(0) : "—"}</div>
+            <div class="dq-bd-lbl">Conc.<br>Pen</div>
+          </div>
+          <div class="dq-bd-card">
+            <div class="dq-bd-val">${trim.toFixed(0)}</div>
+            <div class="dq-bd-lbl">Trim<br>Score</div>
+          </div>
+        </div>
+        <div class="dq-breakdown-notes">${escHtml(c.notes || "")}</div>
+      </td>
+    </tr>`;
+  }).join("");
+
+  tbody.innerHTML = rows;
+}
+
+function _dqToggleBreakdown(bdId) {
+  const row = document.getElementById(bdId);
+  if (row) row.classList.toggle("open");
+}
+
+function _dqToggleViewAll() {
+  const dq = _analysisResult && _analysisResult.deployment_queue;
+  if (!dq || !Array.isArray(dq.queue)) return;
+
+  _dqShowAll = !_dqShowAll;
+  const limit = _dqShowAll ? dq.queue.length : DQ_DEFAULT_ROWS;
+  _dqRenderTableRows(dq.queue, "dq-queue-table-body", limit);
+
+  const btn = document.getElementById("dq-view-all-btn");
+  if (btn) {
+    btn.textContent = _dqShowAll
+      ? `▲ Show top ${DQ_DEFAULT_ROWS} only`
+      : `▼ View all ${dq.queue.length} candidates`;
+  }
+}
+
+function _dqToggleBlocked() {
+  const body = document.getElementById("dq-blocked-body");
+  const btn  = body ? body.previousElementSibling : null;
+  if (!body) return;
+  const open = body.classList.toggle("open");
+  if (btn) btn.textContent = (open ? "▾" : "▸") + btn.textContent.slice(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 7.5D — Capital Deployment Plan
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _dpPlanVisible = false;
+
+function _dpGeneratePlan() {
+  // Use pre-computed plan if embedded in current analysis result
+  const plan = _analysisResult && _analysisResult.deployment_plan;
+  if (plan && plan.recommendations && plan.recommendations.length > 0) {
+    _dpRenderPlan(plan);
+    return;
+  }
+  // Fallback: fetch on-demand from backend
+  const run_id = _analysisResult && _analysisResult.run_id;
+  if (!run_id) return;
+
+  const btn = document.getElementById("dp-generate-btn");
+  if (btn) btn.disabled = true;
+
+  fetch("/api/portfolio/deployment-plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ run_id }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      _dpRenderPlan(data);
+    })
+    .catch(err => {
+      const el = document.getElementById("deploymentPlanContainer");
+      if (el) {
+        el.style.display = "block";
+        el.innerHTML = `<div class="dq-panel"><p style="color:var(--sev-high);padding:1rem">
+          Failed to generate deployment plan: ${escHtml(String(err))}</p></div>`;
+      }
+    })
+    .finally(() => { if (btn) btn.disabled = false; });
+}
+
+function _dpRenderPlan(plan) {
+  const el = document.getElementById("deploymentPlanContainer");
+  if (!el) return;
+
+  _dpPlanVisible = !_dpPlanVisible;
+
+  if (!_dpPlanVisible) {
+    el.style.display = "none";
+    const btn = document.getElementById("dp-generate-btn");
+    if (btn) btn.textContent = "▶ Generate Deployment Plan";
+    return;
+  }
+
+  const btn = document.getElementById("dp-generate-btn");
+  if (btn) btn.textContent = "▲ Hide Deployment Plan";
+
+  const impact = plan.portfolio_impact || {};
+  const recs   = plan.recommendations || [];
+  const tiers  = plan.tier_summaries  || [];
+
+  // Portfolio impact strip
+  const impactHtml = `<div class="dp-impact-strip">
+    <div class="dp-impact-card">
+      <div class="dp-impact-val dp-gold">${formatMV(plan.total_allocated)}</div>
+      <div class="dp-impact-lbl">Total Allocated</div>
+    </div>
+    <div class="dp-impact-card">
+      <div class="dp-impact-val">${pct(impact.cash_before_pct)} → <span class="dp-green">${pct(impact.cash_after_pct)}</span></div>
+      <div class="dp-impact-lbl">Cash %  (before → after)</div>
+    </div>
+    <div class="dp-impact-card">
+      <div class="dp-impact-val">${impact.positions_at_warn_before} → ${impact.positions_at_warn_after}</div>
+      <div class="dp-impact-lbl">Positions ≥ ${WARN_POSITION_PCT || 6}% (warn)</div>
+    </div>
+    <div class="dp-impact-card">
+      <div class="dp-impact-val${impact.unallocated_cash > 100 ? "" : " dp-green"}">${formatMV(impact.unallocated_cash)}</div>
+      <div class="dp-impact-lbl">Unallocated Cash</div>
+    </div>
+  </div>`;
+
+  // Tier summary pills
+  const tierLabels = { TIER_1: "Tier 1 — CCL (Highest)", TIER_2: "Tier 2 — HCA Top", TIER_3: "Tier 3 — Optional" };
+  const tierBadge  = { TIER_1: "dq-tier-CCL", TIER_2: "dq-tier-HCA", TIER_3: "dp-tier-T3" };
+
+  let tiersHtml = "";
+  for (const t of tiers) {
+    if (!t.candidate_count) continue;
+    const label = tierLabels[t.tier] || t.tier;
+    const badge = tierBadge[t.tier] || "";
+    const tierRecs = recs.filter(r => r.deployment_tier === t.tier && r.suggested_add > 0);
+
+    tiersHtml += `<div class="dp-tier-section">
+      <div class="dp-tier-header">
+        <span class="dq-tier ${badge}">${t.tier.replace("_", " ")}</span>
+        <span class="dp-tier-label">${escHtml(label)}</span>
+        <span class="dp-tier-total">${formatMV(t.total_allocated)}</span>
+        <span class="dp-tier-pct">${t.pct_of_plan.toFixed(1)}% of plan</span>
+      </div>
+      <table class="dp-table">
+        <thead><tr>
+          <th>Rank</th><th>Symbol</th><th>Current $</th><th>Current %</th>
+          <th>Suggested Add</th><th>Projected $</th><th>Projected %</th>
+          <th>Headroom Left</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${tierRecs.map(r => `<tr>
+            <td><span class="dq-rank-num${r.rank === 1 ? " rank1" : ""}">#${r.rank}</span></td>
+            <td><span class="dq-sym">${escHtml(r.symbol)}</span></td>
+            <td style="text-align:right">${formatMV(r.current_market_value)}</td>
+            <td style="text-align:right">${pct(r.current_weight_pct)}</td>
+            <td style="text-align:right;font-weight:700;color:var(--accent-gold)">${formatMV(r.suggested_add)}</td>
+            <td style="text-align:right">${formatMV(r.projected_market_value)}</td>
+            <td style="text-align:right;font-weight:600;${r.projected_weight_pct >= 6 ? "color:var(--sev-med)" : "color:var(--accent-green)"}">${pct(r.projected_weight_pct)}</td>
+            <td style="text-align:right">${formatMV(r.headroom_to_warn)}</td>
+            <td><span class="dq-status dq-status-${r.constraint_status}">${r.constraint_status.replace("_", " ")}</span></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  el.innerHTML = `<div class="dq-panel">
+    <div class="dq-section-header">
+      <span class="dq-section-title">Capital Deployment Plan</span>
+      <span class="dq-version-badge">${escHtml(plan.planner_version || "DP-1.0")}</span>
+      <span class="dq-advisory-note">Guidance only — not a trade instruction</span>
+    </div>
+    ${impactHtml}
+    <div class="dp-advisory">${escHtml(plan.plan_advisory || "")}</div>
+    ${tiersHtml}
+  </div>`;
+  el.style.display = "block";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

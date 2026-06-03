@@ -35,8 +35,13 @@ from .mandate import (
     get_cash_interpretation,
     get_mandate,
 )
+from .analyst_consensus import load_analyst_consensus, compute_conflict_badge
+from .fidelity_signal import load_fidelity_signals, compute_consensus_matrix
 from .models import PortfolioAnalysisRun
 from .reconciliation import run_reconciliation
+from .deployment_queue import build_deployment_queue, compute_deployable_cash, CW_DAS_VERSION
+from .deployment_planner import build_deployment_plan, PLANNER_VERSION
+from .unified_conviction import build_ucf_verdicts, UCF_VERSION
 from .recommendations import build_security_overlays, generate_recommendations, generate_recommendations_with_phase_e_warnings, identify_funding_sources
 from .scoring import compute_multi_dimensional_score, detect_intentional_asymmetry
 from .trim_intelligence import build_strategic_profiles, validate_trim_intelligence_consistency
@@ -46,6 +51,10 @@ _INGESTION_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion"
 _CURRENT_UNIVERSE = str(_REPO_ROOT / "data" / "current" / "analytical_universe.csv")
 _TARGETS_CSV = str(_REPO_ROOT / "data" / "current" / "strategic_allocation_targets.csv")
 _OVERLAYS_CSV = str(_REPO_ROOT / "data" / "current" / "tactical_overlays.csv")
+_YAHOO_SUPPLEMENTAL = _REPO_ROOT / "data" / "signals" / "yahoo" / "latest_yahoo_supplemental.csv"
+_SIGNAL_SNAPSHOT    = _REPO_ROOT / "data" / "current" / "signal_snapshot.csv"
+_ZACKS_LATEST       = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.csv"
+_DANELFIN_LATEST    = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
 
 
 def _run_id(snapshot_date: str) -> str:
@@ -432,6 +441,7 @@ def _build_drilldown_data(
                 "composite_score":           _to_float(_fld(overlay, "composite_score")),
                 "ess_score_text":            _fld(overlay, "ess_score_text", ""),
                 "zacks_rating":              _fld(overlay, "zacks_rating", ""),
+                "danelfin_score":            _fld(overlay, "danelfin_score", ""),
                 "signal_direction":          signal_dir,
                 "opportunity_flag":          _fld(overlay, "opportunity_flag", ""),
                 "flag_rationale":            _fld(overlay, "flag_rationale", ""),
@@ -543,6 +553,23 @@ def run_analysis(
     enriched = enrich_holdings(raw_holdings, universe_csv=_CURRENT_UNIVERSE)
     # ── Phase 6.1C — Aggregate duplicate symbols ───────────────────────────────────
     enriched = normalize_and_aggregate_holdings(enriched)
+
+    # ── Phase 22D.10 — Apply settlement governance attribute ──────────────────
+    # safe_to_offset_cash = True for ACCOUNTING_ADJUSTMENT rows with negative MV.
+    # These rows represent pending purchase settlements: cash already economically
+    # committed at trade placement and not available for redeployment.
+    # MV=0 rows (net-zero transfer artifacts) remain False — offsetting $0 is a
+    # noop but explicitly excluded to preserve governance intent.
+    # Default False is conservative: unrecognized patterns are excluded until reviewed.
+    enriched = [
+        dataclasses.replace(
+            h,
+            safe_to_offset_cash=(
+                h.operational_state == "ACCOUNTING_ADJUSTMENT" and h.market_value < 0
+            ),
+        )
+        for h in enriched
+    ]
 
     # ── Phase 6.1B — Separate investable from operational/audit-only rows ───────
     _INVESTABLE_STATES = frozenset({"ACTIVE_POSITION", "CASH_EQUIVALENT"})
@@ -691,6 +718,68 @@ def run_analysis(
         if rid in optimizer_scores:
             rd["optimizer_metadata"] = optimizer_scores[rid]
 
+    # ── Phase 7.5B — Capital Deployment Queue (additive; does not alter any existing data) ──
+    deployment_queue = build_deployment_queue(
+        portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
+        holdings=investable,
+        overlays=overlays,
+        strategic_profiles=strategic_profiles,
+        alignment_results=alignment,
+        total_market_value=snapshot.total_market_value,
+    )
+    # Resolve mandate cash target for deployable cash computation (fail-closed).
+    # archetype_targets is already loaded above; "CASH" key holds the mandate target %.
+    _cash_target_pct = archetype_targets.get("CASH") if archetype_targets else None
+    if _cash_target_pct is None:
+        raise ValueError(
+            f"Mandate profile for '{mandate_type}' is missing a CASH node target. "
+            "Add 'CASH: <target_pct>' to the mandate's allocation_models YAML before running."
+        )
+    cash_context = compute_deployable_cash(
+        holdings=investable,
+        total_market_value=snapshot.total_market_value,
+        mandate_cash_target_pct=_cash_target_pct,
+    )
+
+    # ── Phase 22D.10 — Settlement adjustment (D2) ────────────────────────────
+    # Sum the absolute market values of all excluded holdings that are flagged
+    # as safe_to_offset_cash.  These represent pending purchase settlements:
+    # cash debited at trade placement but not yet reflected in the SPAXX balance.
+    # Original cash_context values are preserved; adjusted_* fields are additive.
+    _settlement_adjustment = round(
+        sum(abs(h.market_value) for h in excluded_operational if h.safe_to_offset_cash),
+        2,
+    )
+    _adjusted_cash_mv = round(
+        max(0.0, cash_context["cash_mv"] - _settlement_adjustment), 2
+    )
+    _adjusted_deployable_mv = round(
+        max(0.0, cash_context["deployable_mv"] - _settlement_adjustment), 2
+    )
+    _adjusted_deployable_pct = round(
+        _adjusted_deployable_mv / snapshot.total_market_value * 100.0
+        if snapshot.total_market_value else 0.0,
+        4,
+    )
+    # Extend cash_context with settlement-aware fields (original fields unchanged)
+    cash_context = {
+        **cash_context,
+        "settlement_adjustment":   _settlement_adjustment,
+        "adjusted_cash_mv":        _adjusted_cash_mv,
+        "adjusted_deployable_mv":  _adjusted_deployable_mv,
+        "adjusted_deployable_pct": _adjusted_deployable_pct,
+    }
+
+    dq_payload = {
+        "run_id": run_id,
+        "queue_version": f"CW-DAS-{CW_DAS_VERSION}",
+        "generated_at": now_utc,
+        "total_market_value": snapshot.total_market_value,
+        "cash_context": cash_context,
+        "candidate_count": len(deployment_queue),
+        "queue": [dataclasses.asdict(c) for c in deployment_queue],
+    }
+
     # ── Persist outputs ───────────────────────────────────────────────────────
     out_dir = _INGESTION_ROOT / "analysis_runs" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -699,6 +788,11 @@ def run_analysis(
     snap_dict = dataclasses.asdict(snapshot)
     snap_dict["run_id"] = run_id
     snap_dict["normalization_warnings"] = list(snap_dict["normalization_warnings"])
+    # Phase 22D.10 (D4): embed settlement lineage in snapshot for operator audit
+    snap_dict["settlement_adjustment"]   = _settlement_adjustment
+    snap_dict["adjusted_cash_mv"]        = _adjusted_cash_mv
+    snap_dict["adjusted_deployable_mv"]  = _adjusted_deployable_mv
+    snap_dict["adjusted_deployable_pct"] = _adjusted_deployable_pct
     with open(out_dir / "snapshot.json", "w") as fh:
         json.dump(snap_dict, fh, indent=2)
 
@@ -733,6 +827,81 @@ def run_analysis(
             overlays,
             list(dataclasses.asdict(overlays[0]).keys()),
         )
+
+    # deployment_queue.json
+    with open(out_dir / "deployment_queue.json", "w") as fh:
+        json.dump(dq_payload, fh, indent=2, default=str)
+
+    # ── Phase 7.5D — Capital Deployment Planner (additive; guidance only) ────
+    # Phase 22D.10 (D3): CW-DAS uses adjusted_deployable_mv as the budget.
+    # If no settlement obligations exist (_settlement_adjustment == 0), this
+    # equals deployable_mv and behavior is identical to pre-22D.10.
+    deployment_plan = build_deployment_plan(
+        deployment_queue_data=dq_payload,
+        deployable_cash=_adjusted_deployable_mv,  # Phase 22D.10: settlement-adjusted
+    )
+    dp_payload = {
+        "run_id": run_id,
+        "planner_version": f"DP-{PLANNER_VERSION}",
+        "generated_at": deployment_plan.generated_at,
+        "deployable_cash": deployment_plan.deployable_cash,
+        "total_market_value": deployment_plan.total_market_value,
+        "total_allocated": deployment_plan.total_allocated,
+        "plan_advisory": deployment_plan.plan_advisory,
+        "tier_summaries": [dataclasses.asdict(t) for t in deployment_plan.tier_summaries],
+        "portfolio_impact": dataclasses.asdict(deployment_plan.portfolio_impact),
+        "recommendations": [dataclasses.asdict(r) for r in deployment_plan.recommendations],
+    }
+    with open(out_dir / "deployment_plan.json", "w") as fh:
+        json.dump(dp_payload, fh, indent=2, default=str)
+
+    # ── Phase 7.5E — UCF Verdicts (additive signal transparency layer) ───────
+    ucf_verdicts = build_ucf_verdicts(
+        profiles=strategic_profiles or [],
+        overlays=overlays,
+        deployment_queue=dq_payload,
+    )
+    ucf_payload = {
+        "run_id": run_id,
+        "ucf_version": UCF_VERSION,
+        "queue_size": len(dq_payload.get("queue", [])),
+        "total_holdings": len(ucf_verdicts),
+        "generated_at": now_utc,
+        "label_counts": {},
+        "verdicts": [],
+    }
+    # tally label counts and build verdicts list
+    _lbl_counts: dict[str, int] = {}
+    _verdicts_dicts: list[dict] = []
+    for v in ucf_verdicts:
+        _lbl_counts[v.ucf_label] = _lbl_counts.get(v.ucf_label, 0) + 1
+        _verdicts_dicts.append({
+            "symbol": v.symbol,
+            "ucf_label": v.ucf_label,
+            "ucf_score": round(v.ucf_score, 4),
+            "ucf_rank": v.ucf_rank,
+            "conflict_flags": v.conflict_flags,
+            "source_signals": {
+                "narrative_tier": v.narrative_tier,
+                "composite_score": v.composite_score,
+                "signal_direction": v.signal_direction,
+                "replay_supported": v.replay_supported,
+                "replay_percentile": v.replay_percentile,
+                "trim_priority_score": v.trim_priority_score,
+                "cw_das_score": v.cw_das_score,
+                "cw_das_rank": v.cw_das_rank,
+            },
+            "deployment": {
+                "deployment_eligible": v.deployment_eligible,
+                "deployment_blocked": v.deployment_blocked,
+                "deployment_block_reason": v.deployment_block_reason,
+            },
+            "signal_summary": v.signal_summary,
+        })
+    ucf_payload["label_counts"] = _lbl_counts
+    ucf_payload["verdicts"] = _verdicts_dicts
+    with open(out_dir / "ucf_verdicts.json", "w") as fh:
+        json.dump(ucf_payload, fh, indent=2, default=str)
 
     # ── Phase 6.4 — Reconciliation ────────────────────────────────────────────
     reconciliation = run_reconciliation(
@@ -864,6 +1033,121 @@ def run_analysis(
         # Phase 7.3A — Parallel optimizer scores (metadata only)
         # Governance: does not affect recommendation ordering, content, or UI.
         "optimizer_scores": optimizer_scores,
+        # Phase 7.5B — Capital Deployment Queue (additive; guidance artifact only)
+        # Governance: does not affect STI, recs, overlays, or optimizer output.
+        "deployment_queue": dq_payload,
+        # Phase 7.5D — Capital Deployment Planner (additive; guidance only)
+        # Governance: read-only. No trade generation, no execution authority.
+        "deployment_plan": dp_payload,
+        # Phase 7.5E — UCF Verdicts (additive signal transparency layer)
+        # Governance: read-only synthesis of existing signals.
+        "ucf_verdicts_by_symbol": {v["symbol"]: v for v in ucf_payload["verdicts"]},
+        # Phase 7.5J — Analyst Consensus Transparency (additive; display-only)
+        # Governance: no scoring, no ranking, no deployment queue changes.
+        "analyst_consensus_by_symbol": _build_consensus_payload(),
+        # Phase 7.5K — Fidelity Analyst Transparency (additive; display-only)
+        # Governance: ESS reformatted as analyst language + 3-signal consensus matrix.
+        "fidelity_signals_by_symbol": _build_fidelity_payload(),
+        # Phase 7.5N — Signal Source Metadata (additive; display-only)
+        # Governance: refresh dates for Zacks/Danelfin freshness display. No scoring impact.
+        "signal_source_metadata": _build_signal_source_metadata(),
+    }
+
+
+def _build_consensus_payload() -> dict:
+    """Load Yahoo supplemental and build a serializable analyst_consensus_by_symbol dict.
+
+    Each value is a dict with keys matching AnalystConsensus fields plus
+    a pre-computed 'conflict_badge' field (informational only).
+    """
+    consensus_map = load_analyst_consensus(_YAHOO_SUPPLEMENTAL)
+    result: dict[str, dict] = {}
+    for sym, ac in consensus_map.items():
+        result[sym] = {
+            "symbol": ac.symbol,
+            "abr": ac.abr,
+            "analyst_count": ac.analyst_count,
+            "price_target": ac.price_target,
+            "current_price": ac.current_price,
+            "upside_pct": ac.upside_pct,
+            "consensus_label": ac.consensus_label,
+            "consensus_strength": ac.consensus_strength,
+            "refresh_date": ac.refresh_date,
+        }
+    return result
+
+
+def _build_fidelity_payload() -> dict:
+    """Load signal_snapshot and build a serializable fidelity_signals_by_symbol dict.
+
+    Each value is a dict with FidelitySignal fields plus a pre-computed
+    consensus_matrix entry (informational only).  The Yahoo supplemental is also
+    loaded so the consensus_matrix can incorporate the ABR direction.
+    """
+    if not _SIGNAL_SNAPSHOT.exists():
+        return {}
+
+    fidelity_map  = load_fidelity_signals(_SIGNAL_SNAPSHOT)
+    consensus_map = load_analyst_consensus(_YAHOO_SUPPLEMENTAL) if _YAHOO_SUPPLEMENTAL.exists() else {}
+
+    # Also load the latest Zacks data for the 3-signal matrix
+    _zacks_latest = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.csv"
+    zacks_map: dict[str, float | None] = {}
+    if _zacks_latest.exists():
+        import csv as _csv
+        with open(_zacks_latest, newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                sym = (row.get("symbol") or "").strip().upper()
+                try:
+                    zacks_map[sym] = float(row.get("zacks_score") or "")
+                except (ValueError, TypeError):
+                    zacks_map[sym] = None
+
+    result: dict[str, dict] = {}
+    for sym, fs in fidelity_map.items():
+        ac = consensus_map.get(sym)
+        consensus_label = ac.consensus_label if ac else "NO_CONSENSUS"
+        zacks_score = zacks_map.get(sym)
+        matrix = compute_consensus_matrix(fs.ess_text, consensus_label, zacks_score)
+        result[sym] = {
+            "symbol": fs.symbol,
+            "ess_text": fs.ess_text,
+            "ess_numeric": fs.ess_numeric,
+            "fidelity_rating": fs.fidelity_rating,
+            "fidelity_direction": fs.fidelity_direction,
+            "refresh_date": fs.refresh_date,
+            "coverage_domain": fs.coverage_domain,
+            "consensus_matrix": matrix,
+        }
+    return result
+
+
+def _build_signal_source_metadata() -> dict:
+    """Build signal refresh-date metadata for display purposes.
+
+    Phase 7.5N — Signal Provenance, Lineage & Freshness (display-only).
+    No scoring or ranking impact. Supplies Zacks and Danelfin refresh dates
+    (ESS and Yahoo dates are already embedded per-symbol in their respective
+    fidelity_signals_by_symbol and analyst_consensus_by_symbol payloads).
+    """
+
+    def _latest_date(path: Path, date_col: str) -> str:
+        if not path.exists():
+            return ""
+        try:
+            latest = ""
+            with open(path, newline="", encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    d = (row.get(date_col) or "").strip()
+                    if d > latest:
+                        latest = d
+            return latest
+        except Exception:
+            return ""
+
+    return {
+        "zacks_refresh_date": _latest_date(_ZACKS_LATEST, "sourced_date"),
+        "danelfin_refresh_date": _latest_date(_DANELFIN_LATEST, "sourced_date"),
     }
 
 
@@ -981,6 +1265,35 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
     opath = run_dir / "security_overlays.csv"
     if opath.exists():
         result["security_overlays"] = list(csv.DictReader(open(opath)))
+
+    # deployment_queue.json (Phase 7.5B — additive, absent for pre-7.5B runs)
+    dq_path = run_dir / "deployment_queue.json"
+    if dq_path.exists():
+        with open(dq_path) as fh:
+            result["deployment_queue"] = json.load(fh)
+
+    # deployment_plan.json (Phase 7.5D — additive, absent for pre-7.5D runs)
+    dp_path = run_dir / "deployment_plan.json"
+    if dp_path.exists():
+        with open(dp_path) as fh:
+            result["deployment_plan"] = json.load(fh)
+
+    # ucf_verdicts.json (Phase 7.5E — additive, absent for pre-7.5E runs)
+    ucf_path = run_dir / "ucf_verdicts.json"
+    if ucf_path.exists():
+        with open(ucf_path) as fh:
+            ucf_data = json.load(fh)
+        verdicts_list = ucf_data.get("verdicts", [])
+        result["ucf_verdicts_by_symbol"] = {v["symbol"]: v for v in verdicts_list}
+
+    # analyst_consensus (Phase 7.5J — always loaded from latest Yahoo supplemental)
+    result["analyst_consensus_by_symbol"] = _build_consensus_payload()
+
+    # fidelity_signals (Phase 7.5K — always loaded from latest signal_snapshot)
+    result["fidelity_signals_by_symbol"] = _build_fidelity_payload()
+
+    # signal_source_metadata (Phase 7.5N — display-only refresh dates)
+    result["signal_source_metadata"] = _build_signal_source_metadata()
 
     # For pre-upgrade runs that lack embedded drilldown, compute on demand
     recs_list = result.get("recommendations", [])

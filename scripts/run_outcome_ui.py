@@ -47,15 +47,21 @@ _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
 
 
 def _sourced_date(csv_path: Path) -> str | None:
-    """Return the first sourced_date value found in csv_path, or None."""
+    """Return the maximum sourced_date value found in csv_path, or None.
+
+    Reads all rows and returns the latest date rather than the first to guard
+    against unsorted files where an older row appears before newer data.
+    """
     if not csv_path.exists():
         return None
     try:
+        latest: str | None = None
         with csv_path.open("r", encoding="utf-8", newline="") as fh:
             for row in csv.DictReader(fh):
                 val = str(row.get("sourced_date", "")).strip()
-                if val:
-                    return val
+                if val and (latest is None or val > latest):
+                    latest = val
+        return latest
     except Exception:
         pass
     return None
@@ -392,6 +398,61 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(result)
             except Exception as exc:
                 self._json_response({"status": "REJECTED", "error": str(exc)}, 422)
+        elif path == "/api/portfolio/deployment-plan":
+            # On-demand deployment plan computation for existing runs.
+            # Accepts: {"run_id": "...", "deployable_cash": float (optional)}
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            run_id = str(payload.get("run_id", "")).strip()
+            if not run_id:
+                self._json_response({"error": "run_id required"}, 400)
+                return
+            cash_override = payload.get("deployable_cash")
+            try:
+                import sys as _sys
+                import dataclasses as _dc
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                run_dir = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs" / run_id
+                dq_path = run_dir / "deployment_queue.json"
+                if not dq_path.exists():
+                    self._json_response({"error": "deployment_queue not found for run"}, 404)
+                    return
+                with open(dq_path) as fh:
+                    dq_data = json.load(fh)
+                # Phase 22D.10 (D4): when no manual override, use adjusted_deployable_mv
+                # from the stored cash_context if present (settlement-aware sizing).
+                # Falls back to deployable_mv for pre-22D.10 runs that lack the field.
+                if cash_override is not None:
+                    cash_arg = float(cash_override)
+                else:
+                    _cc = dq_data.get("cash_context") or {}
+                    if "adjusted_deployable_mv" in _cc:
+                        cash_arg = float(_cc["adjusted_deployable_mv"])
+                    else:
+                        cash_arg = None  # deployment_planner reads deployable_mv itself
+                from src.portfolio.deployment_planner import build_deployment_plan, PLANNER_VERSION
+                plan = build_deployment_plan(dq_data, deployable_cash=cash_arg)
+                result = {
+                    "run_id": plan.run_id,
+                    "planner_version": f"DP-{PLANNER_VERSION}",
+                    "generated_at": plan.generated_at,
+                    "deployable_cash": plan.deployable_cash,
+                    "total_market_value": plan.total_market_value,
+                    "total_allocated": plan.total_allocated,
+                    "plan_advisory": plan.plan_advisory,
+                    "tier_summaries": [_dc.asdict(t) for t in plan.tier_summaries],
+                    "portfolio_impact": _dc.asdict(plan.portfolio_impact),
+                    "recommendations": [_dc.asdict(r) for r in plan.recommendations],
+                }
+                self._json_response(result)
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
         else:
             self.send_error(404)
 

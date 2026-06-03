@@ -352,7 +352,7 @@ def _compute_replay_alignment(
         )
     else:
         qual_score = 0.0
-        expl = "No replay percentile data available for supported holdings."
+        expl = "Replay quality unavailable — no cohort percentile scores found for supported holdings."
     components.append(ScoreComponent(
         component_name="Replay Quality",
         raw_score=qual_score,

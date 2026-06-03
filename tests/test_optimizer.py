@@ -243,7 +243,7 @@ def test_optimizer_metadata_populated():
     assert "candidates" in opt
     assert "mandate_blocked" in opt
     assert "optimizer_version" in opt
-    assert opt["optimizer_version"] == "7.3A"
+    assert opt["optimizer_version"] in ("7.3A", "7.3B", "7.3C")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -204,6 +204,7 @@ def enrich_holdings(
                 composite_score=_safe_float(u.get("composite_score")),
                 ess_score_text=u.get("ess_score_text") or None,
                 zacks_rating=u.get("zacks_rating") or None,
+                danelfin_score=u.get("danelfin_score") or None,
                 benchmark_id=u.get("benchmark_id") or None,
                 investable_vehicle_id=u.get("investable_vehicle_id") or None,
                 exposure_geography_mix=decomposition.exposure_geography_mix,

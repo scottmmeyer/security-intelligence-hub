@@ -74,6 +74,7 @@ class PortfolioHolding:
     decomposition_source: str = ""             # REGISTRY | DIRECT_CLASSIFICATION | HEURISTIC_FALLBACK | UNRESOLVED
     decomposition_confidence_tier: str = ""    # HIGH | MEDIUM | LOW | UNKNOWN
     strategic_role: str = ""                   # e.g. CORE_BROAD_US | AGGRESSIVE_GROWTH_CONCENTRATION
+    danelfin_score: Optional[str] = None       # Phase 7.5E — raw Danelfin score from analytical_universe
 
     # Phase 6.1 — Operational state and cash classification
     operational_state: str = "ACTIVE_POSITION"
@@ -84,6 +85,14 @@ class PortfolioHolding:
     # CLOSED_POSITION       — zero market-value closed position, excluded from analytics
     # NON_ANALYZABLE        — any other non-investment row
     is_cash_equivalent: bool = False           # True for money-market sweep funds and operational cash
+
+    # Phase 22D.10 — Settlement governance attribute
+    # True only for ACCOUNTING_ADJUSTMENT rows with market_value < 0 that represent
+    # pending purchase settlements — i.e., cash already economically committed and
+    # not available for redeployment.  Default False is conservative: unknown or
+    # future adjustment types are excluded from the settlement offset calculation
+    # until explicitly reviewed and approved.
+    safe_to_offset_cash: bool = False
 
 
 @dataclass(frozen=True)
@@ -485,6 +494,7 @@ class SecurityIntelligenceOverlay:
     opportunity_flag: str                    # TRIM | HOLD | ACCUMULATE | WATCH
     flag_rationale: str
     created_at_utc: str
+    danelfin_score: Optional[str] = None     # Phase 7.5E — raw Danelfin score from analytical_universe
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -580,3 +590,56 @@ class PortfolioAnalysisRun:
     status: str                              # COMPLETE | PARTIAL | FAILED
     warnings: tuple
     created_at_utc: str
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 7.5J — Analyst Consensus Transparency
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class AnalystConsensus:
+    """Normalized analyst consensus profile sourced from Yahoo supplemental data.
+
+    Transparency-only model.  No scoring, ranking, or deployment logic uses
+    these fields.  Exposed to the operator via the Signal Profile UI panel.
+    """
+
+    symbol: str
+
+    # ABR = Average Broker Recommendation (Yahoo Finance scale 1.0–5.0)
+    abr: Optional[float]                    # 1.0=Strong Buy … 5.0=Sell; None if unavailable
+
+    # analyst_count sourced separately; not available in current Yahoo data feed
+    analyst_count: Optional[int]
+
+    price_target: Optional[float]           # Consensus price target (USD)
+    current_price: Optional[float]          # Price at sourced_date
+    upside_pct: Optional[float]             # Implied upside to consensus target (%)
+
+    # Derived labels
+    consensus_label: str                    # STRONG_BUY | BUY | MODERATE_BUY | HOLD | SELL | NO_CONSENSUS
+    consensus_strength: str                 # HIGH | MODERATE | LOW | NONE
+
+    refresh_date: str                       # sourced_date from Yahoo supplemental
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 7.5K — Fidelity Analyst Transparency
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class FidelitySignalModel:
+    """ESS-based Fidelity analyst opinion for a single symbol.
+
+    Transparency-only model.  Derived from the StarMine ESS already stored in
+    signal_snapshot.csv; reformats that data into analyst-language terminology.
+    No scoring, ranking, or deployment logic uses these fields.
+    """
+
+    symbol: str
+    ess_text: str                     # VERY_BULLISH / BULLISH / NEUTRAL / BEARISH / VERY_BEARISH
+    ess_numeric: Optional[float]      # 1.0–5.0 normalised scale
+    fidelity_rating: str              # STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL / UNKNOWN
+    fidelity_direction: str           # BULLISH / NEUTRAL / BEARISH / UNKNOWN
+    refresh_date: str                 # snapshot_date from signal_snapshot
+    coverage_domain: str              # STARMINE_COVERED / NON_STARMINE_ANALYST / UNKNOWN
