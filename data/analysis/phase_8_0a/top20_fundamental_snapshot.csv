@@ -1,0 +1,25 @@
+symbol,composite_score,multi_signal_rank,sector,price_jun1,market_cap_approx,revenue_growth_ttm_pct,eps_growth_ttm_pct,forward_pe,peg_ratio,analyst_count,analyst_consensus,price_target,pt_upside_pct,fcf_margin_pct,ebitda_margin_pct,fundamental_data_quality,fundamental_classification,data_source,notes
+IESC,5.000,1,INDUSTRIALS,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+IDR,4.944,2,BASIC MATERIALS,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+MCHP,4.944,3,TECHNOLOGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+TXN,4.944,4,TECHNOLOGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+ARW,4.889,5,TECHNOLOGY,217.51,10.3B,20.49,92.60,12.36,0.20,4,Hold,214.50,-1.38,3.4,3.4,HIGH,C_FUNDAMENTALS_AHEAD_OF_ANALYST_CONSENSUS,stockanalysis.com,"Recovery from FY2023 trough; EPS $7.29→$17.61E; deeply discounted 12x FwdPE; 4 analysts only; BofA upgraded May 2026"
+MYRG,4.889,6,INDUSTRIALS,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+RBB,4.889,7,FINANCIAL SERVICES,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+SHBI,4.889,8,FINANCIAL SERVICES,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+GNE,4.846,9,,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+CSTM,4.833,10,BASIC MATERIALS,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+CTS,4.833,11,TECHNOLOGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+CVE,4.833,12,ENERGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+FIX,4.833,13,INDUSTRIALS,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+FLEX,4.833,14,TECHNOLOGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+INSW,4.833,15,ENERGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+MSBI,4.833,16,FINANCIAL SERVICES,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+TNK,4.833,17,ENERGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+ARKO,4.778,18,CONSUMER CYCLICAL,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+ATLC,4.778,19,FINANCIAL SERVICES,82.61,1.3B,68.59,73.31,8.64,,5,Strong Buy,104.00,+25.89,34.31,8.30,HIGH,A_SIGNAL_FUNDAMENTALS_ALIGNED_GROWTH,stockanalysis.com,"Consumer credit fintech; 69-73% Rev/EPS growth; FCF $790M vs $1.3B mktcap=extraordinary yield; 5 analysts all Buy/Strong Buy; PT +26%"
+CHRD,4.778,20,ENERGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA,,No fundamental data gathered — not an operator symbol
+SNX,4.778,26,TECHNOLOGY,270.50,16.3B,10.39,50.19,16.06,,8,Buy,257.88,-4.67,,,HIGH,A_SIGNAL_FUNDAMENTALS_ALIGNED_RECOVERY,stockanalysis.com,"IT distribution; EPS acceleration FY2025 +50%; FY2026E EPS $16.84 +69%; 8 analysts Buy; steady revenue growth"
+PSX,4.722,47,ENERGY,180.24,72.7B,-2.38,-5.96,10.53,,20,Buy,188.37,+4.51,0.09,4.36,HIGH,B_SIGNAL_AHEAD_OF_FUNDAMENTALS,stockanalysis.com,"Refining/commodity cycle; declining revenue trend; FCF collapsed $2.7B→$119M FY2025; EPS FY2026E +59% recovery expected; FY2027E EPS -2.7% back down"
+VRT,4.556,83,TECHNOLOGY,323.39,124.2B,29.0,131.4,47.39,1.46,25,Buy,369.41,+14.23,21.04,21.98,HIGH,A_SIGNAL_FUNDAMENTALS_ALIGNED_GROWTH,stockanalysis.com,"AI power/cooling infra; Rev 14→36% accelerating growth; EPS $1.28→$5.83E; FCF $2.28B TTM; PEG 1.46; dominant AI cycle beneficiary"
+SANM,4.278,153,TECHNOLOGY,,,,,,,,,,,,,NONE,E_INSUFFICIENT_DATA_OPERATOR_SYMBOL,,"Operator symbol; fundamental data not gathered in Phase 8.0A; EMS company; needs separate analysis"

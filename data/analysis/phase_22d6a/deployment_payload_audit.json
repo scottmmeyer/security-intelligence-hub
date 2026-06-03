@@ -1,0 +1,136 @@
+{
+  "audit_metadata": {
+    "phase": "22D.6A",
+    "audit_date": "2026-06-02",
+    "audited_run_id": "PAR-20260602-A991571C",
+    "artifact_path": "data/portfolio_ingestion/analysis_runs/PAR-20260602-A991571C/deployment_queue.json",
+    "plan_artifact_path": "data/portfolio_ingestion/analysis_runs/PAR-20260602-A991571C/deployment_plan.json",
+    "verdict": "STALE_PRE_22D6_ARTIFACT",
+    "constraint": "READ_ONLY_AUDIT_NO_CODE_MODIFICATIONS"
+  },
+
+  "actual_cash_context": {
+    "_comment": "Verbatim from deployment_queue.json cash_context block — pre-Phase 22D.6 artifact",
+    "cash_mv": 41279.15,
+    "cash_pct": 8.6115,
+    "floor_mv": 9586.95,
+    "deployable_mv": 31692.2,
+    "deployable_pct": 6.6115,
+    "mandate_cash_target_pct": "__MISSING__",
+    "effective_floor_pct": "__MISSING__",
+    "excess_pct": "__MISSING__",
+    "excess_mv": "__MISSING__"
+  },
+
+  "expected_cash_context": {
+    "_comment": "What a Phase 22D.6-generated artifact would contain using current code",
+    "cash_mv": 41279.15,
+    "cash_pct": 8.6115,
+    "mandate_cash_target_pct": 7.0,
+    "effective_floor_pct": 7.0,
+    "floor_mv": 33554.33,
+    "excess_mv": 7724.82,
+    "excess_pct": 1.6115,
+    "deployable_mv": 7724.82,
+    "deployable_pct": 1.6115
+  },
+
+  "actual_deployment_plan_impact": {
+    "_comment": "Verbatim from deployment_plan.json portfolio_impact — poisoned by stale artifact",
+    "total_market_value": 479347.59,
+    "cash_before_pct": 8.6115,
+    "cash_after_pct": 2.0,
+    "cash_before_mv": 41279.15,
+    "cash_after_mv": 9586.97,
+    "positions_at_warn_before": 1,
+    "positions_at_warn_after": 1,
+    "total_deployed": 31692.18,
+    "unallocated_cash": 0.02,
+    "deployable_cash": 31692.2
+  },
+
+  "expected_deployment_plan_impact": {
+    "_comment": "Expected values after fresh re-run with mandate-aware code",
+    "total_market_value": 479347.59,
+    "cash_before_pct": 8.6115,
+    "cash_after_pct": 7.0,
+    "cash_before_mv": 41279.15,
+    "cash_after_mv": 33554.33,
+    "total_deployed": 7724.82,
+    "deployable_cash": 7724.82
+  },
+
+  "field_delta": {
+    "deployable_mv": {
+      "actual": 31692.2,
+      "expected": 7724.82,
+      "delta": -23967.38,
+      "root_cause": "floor_mv used 2.0% governance floor instead of 7.0% mandate target"
+    },
+    "floor_mv": {
+      "actual": 9586.95,
+      "expected": 33554.33,
+      "delta": -23967.38,
+      "root_cause": "pre-22D6 code: floor = MIN_CASH_PCT (2.0%) only"
+    },
+    "cash_after_pct": {
+      "actual": 2.0,
+      "expected": 7.0,
+      "delta": -5.0,
+      "root_cause": "deployment_plan depletes cash to 2% (old floor), not 7% (mandate)"
+    },
+    "mandate_cash_target_pct": {
+      "actual": "__MISSING__",
+      "expected": 7.0,
+      "root_cause": "field did not exist in pre-22D6 compute_deployable_cash() return dict"
+    },
+    "excess_pct": {
+      "actual": "__MISSING__",
+      "expected": 1.6115,
+      "root_cause": "field did not exist in pre-22D6 compute_deployable_cash() return dict"
+    },
+    "excess_mv": {
+      "actual": "__MISSING__",
+      "expected": 7724.82,
+      "root_cause": "field did not exist in pre-22D6 compute_deployable_cash() return dict"
+    },
+    "effective_floor_pct": {
+      "actual": "__MISSING__",
+      "expected": 7.0,
+      "root_cause": "field did not exist in pre-22D6 compute_deployable_cash() return dict"
+    }
+  },
+
+  "math_verification": {
+    "total_market_value": 479347.59,
+    "cash_mv": 41279.15,
+    "cash_pct": 8.6115,
+    "mandate_target_pct": 7.0,
+    "mandate_target_mv": 33554.33,
+    "governance_floor_pct": 2.0,
+    "governance_floor_mv": 9586.95,
+    "operative_floor_pct": 7.0,
+    "operative_floor_mv": 33554.33,
+    "excess_above_mandate": {
+      "excess_mv": 7724.82,
+      "excess_pct": 1.6115,
+      "formula": "cash_mv - (mandate_target_pct / 100 * total_mv)"
+    },
+    "deployable_correct": {
+      "deployable_mv": 7724.82,
+      "formula": "max(0, cash_mv - operative_floor_mv)"
+    }
+  },
+
+  "ui_symptom_mapping": {
+    "Deployable_Cash_shown": "$31,692.20",
+    "Deployable_Cash_expected": "$7,724.82",
+    "Cash_Wt_Before_shown": "8.6%",
+    "Cash_Wt_After_shown": "2.0%",
+    "Cash_Wt_After_expected": "7.0%",
+    "Mandate_Target_shown": "—  (blank)",
+    "Mandate_Target_expected": "7.0%",
+    "Excess_vs_Target_shown": "—  (blank)",
+    "Excess_vs_Target_expected": "+1.61% ($7,724.82)"
+  }
+}

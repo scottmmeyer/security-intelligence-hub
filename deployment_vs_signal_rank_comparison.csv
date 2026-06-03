@@ -1,0 +1,21 @@
+symbol,pure_signal_rank,ucf_rank,cw_das_rank,deployment_rank,rank_delta_cw_vs_psr,rank_inflation_direction,framework_benefit
+VRT,14,1,1,1,+13,INFLATED,CCL conviction bonus + thin replay treated as strong
+ARW,11,2,2,2,+9,INFLATED,Thin replay treated as strong; no redundancy penalty
+SNX,18,3,3,3,+15,INFLATED,Thin replay; no redundancy penalty; PSR rank severely understates CW-DAS priority
+ATLC,3,4,4,4,-1,ACCURATE,Strong replay (261d) aligns with pure signal rank
+PSX,27,5,5,5,+22,INFLATED,Thin replay; no redundancy; large composite but weak Danelfin drag
+CBOE,5,6,6,6,-1,ACCURATE,Strong replay (261d) aligns closely with pure signal rank
+AVT,2,7,7,7,-5,UNDERVALUED,Best-in-class signal but limited by HCA cap (28 vs 35 for CCL)
+LRCX,19,8,8,8,+11,INFLATED,Thin replay; strong composite but weak Danelfin score
+CAH,4,9,9,9,-5,UNDERVALUED,261-day validation; pure signal rank 4 but penalized by HCA tier
+DELL,29,11,10,10,+19,INFLATED,Thin replay; medium composite; no redundancy
+SANM,35,10,11,11,+24,INFLATED,Worst inflation in field; Zacks=5; thin replay; BULLISH (not VB); PSR=35
+PCB,1,12,12,12,-11,UNDERVALUED,Highest pure signal score (76.67); limited by HCA tier and lack of CCL
+CIEN,8,13,13,13,-5,UNDERVALUED,Strong 261-day replay; PSR=8 but limited to CW-DAS rank 13
+NUE,21,14,14,14,+7,MILDLY_INFLATED,Weak Danelfin (2.5) and Zacks=5 drag PSR; strong replay partially compensates
+GFF,22,16,15,15,+7,MILDLY_INFLATED,Smaller position; weak Danelfin; composite gap vs PSR
+ALNT,6,15,16,16,-10,UNDERVALUED,Best Danelfin in top-20 (4.5); strong replay; pure signal rank 6
+MTZ,7,17,17,17,-10,UNDERVALUED,Best Danelfin in top-20 (4.5); strong replay; pure signal rank 7
+CRS,9,18,18,18,-9,UNDERVALUED,Strong 261-day replay; high Danelfin; PSR=9
+CMCO,12,19,19,19,-7,UNDERVALUED,261-day replay; very low trim score; pure signal rank 12
+ANGO,23,20,20,20,+3,ACCURATE,Modest inflation; weak Danelfin; replay strong; acceptable alignment

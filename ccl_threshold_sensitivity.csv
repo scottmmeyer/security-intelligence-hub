@@ -1,0 +1,5 @@
+scenario,threshold_pct,ccl_count,hca_count,ccl_symbols,promoted_from_c150,demoted_from_c150,top1_sym,top1_alloc,top1_pct,top5_alloc,top5_pct,top10_alloc,top10_pct,r_composite_alloc,r_weight_alloc,total_deployed
+A_100,1.00,8,34,"CAH;CIEN;CVE;DELL;GTX;MU;TSM;VRT","CAH;CIEN;DELL","",CAH,6806.00,20.51,19724.00,59.45,23565.00,71.02,0.4014,0.5083,33175.19
+B_125,1.25,6,36,"CVE;DELL;GTX;MU;TSM;VRT","DELL","",DELL,7973.00,24.03,17352.00,52.30,21837.00,65.83,0.3847,0.6462,33175.19
+C_150,1.50,5,37,"CVE;GTX;MU;TSM;VRT","","",VRT,8822.00,26.59,15276.00,46.04,20322.00,61.25,0.4080,0.8721,33175.19
+D_200,2.00,4,38,"CVE;MU;TSM;VRT","","GTX",VRT,8822.00,26.59,15276.00,46.04,20322.00,61.25,0.4080,0.8721,33175.19

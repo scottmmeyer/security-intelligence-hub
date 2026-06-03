@@ -1,0 +1,82 @@
+symbol,replay_appearances,replay_type,replay_source,max_coverage_days,min_coverage_days,top_basket_return,avg_basket_return,replay_depth_tier,top_replay_bucket,replay_supported_in_ucf,cw_das_score,cw_das_rank,ucf_label,ucf_score,notes
+VRT,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,0.667199,0.357209,STRONG,LARGE.INDUSTRIALS,True,95.5,1,CORE_CONVICTION_LEADER,91.13,Full 365-day window; strong evidence
+ARW,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,0.452908,0.246552,STRONG,SMALL.TECHNOLOGY,True,94.12,2,HIGH_CONVICTION_ANCHOR,92.78,Full 365-day window; strong evidence
+SNX,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.246479,0.637028,STRONG,MID.TECHNOLOGY,True,93.48,3,HIGH_CONVICTION_ANCHOR,92.14,Full 365-day window; strong evidence
+ATLC,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.138013,0.138013,STRONG,MICRO.FINANCIAL SERVICES,True,93.47,4,HIGH_CONVICTION_ANCHOR,92.13,Full 365-day window; strong evidence
+PSX,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,0.499206,0.263392,STRONG,MID.ENERGY,True,93.35,5,HIGH_CONVICTION_ANCHOR,92.07,Full 365-day window; strong evidence
+CBOE,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.176962,0.176962,STRONG,MID.FINANCIAL SERVICES,True,93.08,6,HIGH_CONVICTION_ANCHOR,91.81,Full 365-day window; strong evidence
+AVT,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.452908,0.452908,STRONG,SMALL.TECHNOLOGY,True,92.12,7,HIGH_CONVICTION_ANCHOR,90.77,Full 365-day window; strong evidence
+LRCX,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.337438,0.692328,STRONG,LARGE.TECHNOLOGY,True,91.74,8,HIGH_CONVICTION_ANCHOR,90.38,Full 365-day window; strong evidence
+CAH,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.150165,0.150165,STRONG,MID.HEALTHCARE,True,91.62,9,HIGH_CONVICTION_ANCHOR,90.23,Full 365-day window; strong evidence
+SANM,1,CURRENT_RECOMMENDATION,internal_replay_engine,6,6,0.040196,0.040196,THIN,SMALL.ALL,True,90.78,11,HIGH_CONVICTION_ANCHOR,89.53,Very thin evidence; near-binary equivalent
+DELL,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.337438,0.692328,STRONG,LARGE.TECHNOLOGY,True,90.91,10,HIGH_CONVICTION_ANCHOR,89.41,Full 365-day window; strong evidence
+PCB,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.138013,0.138013,STRONG,MICRO.FINANCIAL SERVICES,True,90.75,12,HIGH_CONVICTION_ANCHOR,89.4,Full 365-day window; strong evidence
+CIEN,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,1.246479,1.246479,STRONG,MID.TECHNOLOGY,True,90.07,13,HIGH_CONVICTION_ANCHOR,88.61,Full 365-day window; strong evidence
+NUE,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.395779,0.395779,STRONG,MID.BASIC MATERIALS,True,89.61,14,HIGH_CONVICTION_ANCHOR,88.31,Full 365-day window; strong evidence
+ALNT,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.122252,0.122252,STRONG,MICRO.TECHNOLOGY,True,88.45,16,HIGH_CONVICTION_ANCHOR,87.38,Full 365-day window; strong evidence
+GFF,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.770390,0.770390,STRONG,SMALL.INDUSTRIALS,True,88.5,15,HIGH_CONVICTION_ANCHOR,87.36,Full 365-day window; strong evidence
+MTZ,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.488020,0.488020,STRONG,MID.INDUSTRIALS,True,88.35,17,HIGH_CONVICTION_ANCHOR,87.26,Full 365-day window; strong evidence
+CRS,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.488020,0.488020,STRONG,MID.INDUSTRIALS,True,88.2,18,HIGH_CONVICTION_ANCHOR,87.17,Full 365-day window; strong evidence
+CMCO,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.228567,0.228567,STRONG,MICRO.INDUSTRIALS,True,87.96,19,HIGH_CONVICTION_ANCHOR,86.94,Full 365-day window; strong evidence
+ANGO,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.187602,0.187602,STRONG,MICRO.HEALTHCARE,True,87.89,20,HIGH_CONVICTION_ANCHOR,86.58,Full 365-day window; strong evidence
+FSLR,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,1.246479,1.246479,STRONG,MID.TECHNOLOGY,True,87.49,21,HIGH_CONVICTION_ANCHOR,86.25,Full 365-day window; strong evidence
+UHS,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.232661,0.232661,STRONG,SMALL.HEALTHCARE,True,87.34,22,HIGH_CONVICTION_ANCHOR,86.24,Full 365-day window; strong evidence
+HALO,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.232661,0.232661,STRONG,SMALL.HEALTHCARE,True,87.06,23,HIGH_CONVICTION_ANCHOR,85.8,Full 365-day window; strong evidence
+STLD,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.395779,0.395779,STRONG,MID.BASIC MATERIALS,True,86.6,25,HIGH_CONVICTION_ANCHOR,85.39,Full 365-day window; strong evidence
+DVN,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.499206,0.499206,STRONG,MID.ENERGY,True,86.42,28,HIGH_CONVICTION_ANCHOR,85.06,Full 365-day window; strong evidence
+ANIP,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.187602,0.187602,STRONG,MICRO.HEALTHCARE,True,86.22,30,HIGH_CONVICTION_ANCHOR,84.91,Full 365-day window; strong evidence
+BSVN,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.138013,0.138013,STRONG,MICRO.FINANCIAL SERVICES,True,86.75,24,HIGH_CONVICTION_ANCHOR,84.29,Full 365-day window; strong evidence
+MU,3,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.132955,0.767544,STRONG,MEGA.TECHNOLOGY,True,78.16,35,HIGH_CONVICTION_ANCHOR,82.89,Full 365-day window; strong evidence
+ASML,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,1.132955,1.132955,STRONG,MEGA.TECHNOLOGY,True,78.09,36,HIGH_CONVICTION_ANCHOR,80.68,Full 365-day window; strong evidence
+CVE,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.499206,0.499206,STRONG,MID.ENERGY,True,83.79,32,HIGH_CONVICTION_ANCHOR,78.73,Full 365-day window; strong evidence
+STNG,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.520740,0.520740,STRONG,SMALL.ENERGY,True,76.16,37,HIGH_CONVICTION_ANCHOR,77.58,Full 365-day window; strong evidence
+SIMO,0,N/A,N/A,0,0,,,NONE,N/A,True,75.53,38,HIGH_CONVICTION_ANCHOR,77.02,Not selected in any US AVAILABLE replay basket
+TSM,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,1.132955,1.132955,STRONG,MEGA.TECHNOLOGY,True,81.61,33,HIGH_CONVICTION_ANCHOR,76.6,Full 365-day window; strong evidence
+GTX,0,N/A,N/A,0,0,,,NONE,N/A,True,80.47,34,HIGH_CONVICTION_ANCHOR,75.61,Not selected in any US AVAILABLE replay basket
+AVGO,3,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.132955,0.767544,STRONG,MEGA.TECHNOLOGY,True,72.1,39,HIGH_CONVICTION_ANCHOR,74.6,Full 365-day window; strong evidence
+NVDA,3,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.132955,0.767544,STRONG,MEGA.TECHNOLOGY,True,69.74,41,HIGH_CONVICTION_ANCHOR,71.38,Full 365-day window; strong evidence
+SBS,0,N/A,N/A,0,0,,,NONE,N/A,True,65.65,42,HIGH_CONVICTION_ANCHOR,64.65,Not selected in any US AVAILABLE replay basket
+AGEN,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.187602,0.187602,STRONG,MICRO.HEALTHCARE,True,86.57,26,DEPLOYMENT_CANDIDATE,80.54,Full 365-day window; strong evidence
+YELP,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,-0.389682,-0.389682,STRONG,MICRO.COMMUNICATION SERVICES,True,86.43,27,DEPLOYMENT_CANDIDATE,80.36,Full 365-day window; strong evidence
+UTHR,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.150165,0.150165,STRONG,MID.HEALTHCARE,True,86.36,29,DEPLOYMENT_CANDIDATE,80.27,Full 365-day window; strong evidence
+AZZ,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.770390,0.770390,STRONG,SMALL.INDUSTRIALS,True,86.1,31,DEPLOYMENT_CANDIDATE,79.93,Full 365-day window; strong evidence
+AEIS,1,CURRENT_RECOMMENDATION,internal_replay_engine,6,6,0.040196,0.040196,THIN,SMALL.ALL,True,None,None,DEPLOYMENT_CANDIDATE,58.61,Very thin evidence; near-binary equivalent
+XYZ,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,1.246479,1.246479,STRONG,MID.TECHNOLOGY,True,None,None,TACTICAL_GROWTH,62.44,Full 365-day window; strong evidence
+PRG,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,61.0,Not selected in any US AVAILABLE replay basket
+MKSI,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,57.84,Not selected in any US AVAILABLE replay basket
+HCI,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,55.32,Not selected in any US AVAILABLE replay basket
+LMAT,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,54.1,Not selected in any US AVAILABLE replay basket
+JBL,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,53.78,Not selected in any US AVAILABLE replay basket
+AMZN,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,0.273493,0.155108,STRONG,MEGA.CONSUMER CYCLICAL,True,None,None,TACTICAL_GROWTH,53.07,Full 365-day window; strong evidence
+IVZ,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,53.03,Not selected in any US AVAILABLE replay basket
+FHI,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,50.48,Not selected in any US AVAILABLE replay basket
+MCB,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,49.75,Not selected in any US AVAILABLE replay basket
+SMR,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,45.69,Not selected in any US AVAILABLE replay basket
+PLTR,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,44.41,Not selected in any US AVAILABLE replay basket
+AMG,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,41.27,Not selected in any US AVAILABLE replay basket
+FIS,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,34.19,Not selected in any US AVAILABLE replay basket
+NVS,1,HISTORICAL_VALIDATION,internal_replay_engine,365,365,0.069972,0.069972,STRONG,LARGE.HEALTHCARE,False,None,None,TACTICAL_GROWTH,31.17,Full 365-day window; strong evidence
+KGC,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TACTICAL_GROWTH,20.05,Not selected in any US AVAILABLE replay basket
+MSFT,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,1.132955,0.584839,STRONG,MEGA.TECHNOLOGY,True,70.43,40,MAINTAIN,57.92,Full 365-day window; strong evidence
+M26CNT069,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,16.05,Not selected in any US AVAILABLE replay basket
+FSOL,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,16.02,Not selected in any US AVAILABLE replay basket
+XRP,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,16.01,Not selected in any US AVAILABLE replay basket
+FCPGX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,15.98,Not selected in any US AVAILABLE replay basket
+FMCSX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,15.78,Not selected in any US AVAILABLE replay basket
+FETH,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,15.63,Not selected in any US AVAILABLE replay basket
+FBTC,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,15.3,Not selected in any US AVAILABLE replay basket
+VWO,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,14.97,Not selected in any US AVAILABLE replay basket
+BND,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,14.86,Not selected in any US AVAILABLE replay basket
+BNDX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,14.75,Not selected in any US AVAILABLE replay basket
+VO,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,12.98,Not selected in any US AVAILABLE replay basket
+VB,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,9.71,Not selected in any US AVAILABLE replay basket
+FXAIX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,2.64,Not selected in any US AVAILABLE replay basket
+SPAXX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,0.0,Not selected in any US AVAILABLE replay basket
+VOO,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,MAINTAIN,0.0,Not selected in any US AVAILABLE replay basket
+TSLA,2,CURRENT_RECOMMENDATION|HISTORICAL_VALIDATION,internal_replay_engine,365,6,0.273493,0.155108,STRONG,MEGA.CONSUMER CYCLICAL,True,None,None,TRIM_WATCH,19.51,Full 365-day window; strong evidence
+PRIM,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,17.5,Not selected in any US AVAILABLE replay basket
+DODFX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,0.0,Not selected in any US AVAILABLE replay basket
+FIGFX,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,0.0,Not selected in any US AVAILABLE replay basket
+TTNDY,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,0.0,Not selected in any US AVAILABLE replay basket
+VEA,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,0.0,Not selected in any US AVAILABLE replay basket
+VXUS,0,N/A,N/A,0,0,,,NONE,N/A,False,None,None,TRIM_WATCH,0.0,Not selected in any US AVAILABLE replay basket

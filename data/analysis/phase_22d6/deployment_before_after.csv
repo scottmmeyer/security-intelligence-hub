@@ -1,0 +1,14 @@
+metric,before_fix,after_fix,delta,note
+total_portfolio_mv,475779.42,475779.42,0.00,unchanged
+cash_mv,41198.92,41198.92,0.00,same cash position
+cash_pct,8.6592,8.6592,0.0000,same cash %
+governance_floor_pct,2.0,2.0,0.0,MIN_CASH_PCT unchanged
+mandate_cash_target_pct,N/A (not tracked),7.0,+7.0,now tracked in cash_context
+effective_floor_pct,2.0,7.0,+5.0,mandate target now operative
+floor_mv,9515.59,33304.56,+23788.97,floor increased by mandate target
+excess_mv,N/A,7894.36,N/A,new field: excess above mandate target
+excess_pct,N/A,1.6592,N/A,new field: excess as % of total
+deployable_mv,31683.33,7894.36,-23788.97,correct figure — excess above mandate target
+deployable_pct,6.6592,1.6592,-5.0000,correct % — excess above 7% target
+cash_after_full_deploy_pct,2.00,7.00,+5.00,landing zone after deploying all deployable
+deployable_reduction_pct,N/A,75.1,N/A,(31683-7894)/31683 = 75.1% less capital offered

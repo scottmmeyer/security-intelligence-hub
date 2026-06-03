@@ -1,0 +1,6 @@
+signal_bucket,bucket_label,ess_n_30d,ess_avg_pct_30d,ess_median_pct_30d,ess_win_rate_pct_30d,ess_vol_pct_30d,ess_ret_vol_30d,zacks_n_3d,zacks_avg_pct_3d,zacks_median_pct_3d,zacks_win_rate_pct_3d,zacks_vol_pct_3d,zacks_ret_vol_3d,danelfin_n_7d,danelfin_avg_pct_7d,danelfin_median_pct_7d,danelfin_win_rate_pct_7d,danelfin_vol_pct_7d,danelfin_ret_vol_7d
+1,1_WEAKEST,2065,2.5159,0.4329,51.19,18.6317,0.135,0,,,,,,7,4.9514,2.2072,100.0,5.8029,0.8533
+2,2_WEAK,5147,1.3061,-0.4537,47.52,16.3547,0.0799,0,,,,,,322,1.7267,1.0129,65.84,4.6734,0.3695
+3,3_NEUTRAL,8564,1.7999,0.2593,51.17,18.4176,0.0977,0,,,,,,147,1.988,1.0191,66.67,4.8426,0.4105
+4,4_STRONG,10626,1.8154,0.6615,53.43,13.8635,0.1309,0,,,,,,199,3.3957,2.0807,79.4,6.2632,0.5422
+5,5_STRONGEST,6403,1.984,0.7963,54.13,13.4754,0.1472,0,,,,,,8,1.8474,1.6094,75.0,3.137,0.5889

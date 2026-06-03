@@ -1,0 +1,260 @@
+file_path,category,git_status,phase_attribution,modified_date,classification_reason
+.gitignore,CONFIG,M,CONFIG,2026-06-02,Added .env to gitignore — security hygiene
+scripts/run_outcome_ui.py,SOURCE,M,PHASE_22D.10,2026-06-02,Phase 22D.10 D4: cash_arg reads adjusted_deployable_mv from cash_context
+src/history/analytical_universe_manager.py,SOURCE,M,MULTI_PHASE,2026-06-01,Phase 7.4D + 22D.2: industry replay routing fix + replay percentile computation
+src/portfolio/enrichment.py,SOURCE,M,PHASE_7.5E,2026-06-01,Phase 7.5E: wires danelfin_score from analytical_universe row
+src/portfolio/models.py,SOURCE,M,MULTI_PHASE,2026-06-02,Phase 22D.10 D1: safe_to_offset_cash; Phase 7.5E: danelfin_score; Phase 7.5J: AnalystConsensus dataclass
+src/portfolio/optimizer.py,SOURCE,M,PHASE_7.3C,2026-05-30,Phase 7.3C: _build_preferred_display() + optimizer_version 7.3C
+src/portfolio/recommendations.py,SOURCE,M,MULTI_PHASE,2026-06-01,Coverage-aware dedup: STARMINE_COVERED always wins over NON_STARMINE_ANALYST
+src/portfolio/runner.py,SOURCE,M,MULTI_PHASE,2026-06-02,Phase 22D.10 D2/D3/D4: settlement engine + adjusted_deployable_mv; earlier: deployment queue integration
+src/portfolio/scoring.py,SOURCE,M,MINOR,2026-06-02,Minor wording fix: replay quality unavailability message
+tests/test_optimizer.py,TEST,M,PHASE_7.3C,2026-06-02,Loosened version assertion to accept 7.3A/7.3B/7.3C
+ui/portfolio_alignment/app.js,UI,M,MULTI_PHASE,2026-06-02,Phases 7.3C-22D.10 D5: deployment queue UI + cash context + settlement disclosure
+ui/portfolio_alignment/index.html,UI,M,MULTI_PHASE,2026-06-02,Phases 7.3C-22D.10 D5: CSS additions for deployment queue + settlement strips
+src/portfolio/analyst_consensus.py,SOURCE,??,PHASE_7.5J,2026-06-01,Phase 7.5J: AnalystConsensus transparency model (new file)
+src/portfolio/deployment_planner.py,SOURCE,??,PHASE_7.5D,2026-06-01,Phase 7.5D: deployment planner engine (new file — 373 lines)
+src/portfolio/deployment_queue.py,SOURCE,??,PHASE_7.5B,2026-06-01,Phase 7.5B: deployment queue builder (new file — 452 lines)
+src/portfolio/fidelity_signal.py,SOURCE,??,PHASE_7.5E,2026-06-01,Phase 7.5E: Fidelity signal integration (new file — 202 lines)
+src/portfolio/unified_conviction.py,SOURCE,??,PHASE_7.7A,2026-06-01,Phase 7.7A: Unified Conviction Framework (new file — 664 lines)
+tests/test_7_3c_optimizer_preferred.py,TEST,??,PHASE_7.3C,2026-05-30,Phase 7.3C: optimizer preferred display test
+tests/test_7_4d_replay_evidence_routing.py,TEST,??,PHASE_7.4D,2026-06-01,Phase 7.4D: replay routing validation
+tests/test_7_5b_deployment_queue.py,TEST,??,PHASE_7.5B,2026-06-01,Phase 7.5B: deployment queue tests
+tests/test_7_5d_deployment_planner.py,TEST,??,PHASE_7.5D,2026-06-01,Phase 7.5D: deployment planner tests
+tests/test_7_5e_signal_transparency.py,TEST,??,PHASE_7.5E,2026-06-01,Phase 7.5E: signal transparency tests
+tests/test_7_5f_deployment_actionability.py,TEST,??,PHASE_7.5F,2026-06-01,Phase 7.5F: deployment actionability tests
+tests/test_7_7a_ucf_foundation.py,TEST,??,PHASE_7.7A,2026-06-01,Phase 7.7A: UCF foundation tests
+scripts/phase_7_5w_simulation.py,SCRIPT,??,PHASE_7.5W,2026-06-01,Phase 7.5W: simulation analysis script
+scripts/phase_7_8a_persistence.py,SCRIPT,??,PHASE_7.8A,2026-06-01,Phase 7.8A: persistence analysis script
+scripts/phase_8_0b0_fmp_probe.py,SCRIPT,??,PHASE_8.0B.0,2026-06-01,Phase 8.0B.0: FMP capability probe
+scripts/phase_8_0b0_stable_probe.py,SCRIPT,??,PHASE_8.0B.0,2026-06-01,Phase 8.0B.0: stable data probe
+scripts/ucf_7_7b_analysis.py,SCRIPT,??,PHASE_7.7B,2026-06-01,Phase 7.7B: UCF analysis script
+scripts/ucf_validation_probe.py,SCRIPT,??,PHASE_7.7A,2026-06-01,UCF validation probe script
+ui/ucf_operator_dashboard/,UI,??,PHASE_7.7A,2026-06-01,Phase 7.7A: UCF operator dashboard (index.html)
+.env.example,CONFIG,??,CONFIG,2026-06-01,API key template documenting required env vars — safe to commit
+data/analysis/phase_22d10a/phase_22d10a_deployment_workflow_audit.md,GOVERNANCE,??,PHASE_22D10A,2026-06-02,Phase 22D.10A governance document — expected output
+data/analysis/phase_22d10a/phase_22d10a_final_verdict.md,GOVERNANCE,??,PHASE_22D10A,2026-06-02,Phase 22D.10A governance document — expected output
+data/analysis/phase_22d10a/phase_22d10a_frontend_cache_audit.md,GOVERNANCE,??,PHASE_22D10A,2026-06-02,Phase 22D.10A governance document — expected output
+data/analysis/phase_22d10a/phase_22d10a_remediation_validation.md,GOVERNANCE,??,PHASE_22D10A,2026-06-02,Phase 22D.10A governance document — expected output
+data/analysis/phase_22d10a/phase_22d10a_runtime_reload_audit.md,GOVERNANCE,??,PHASE_22D10A,2026-06-02,Phase 22D.10A governance document — expected output
+data/analysis/phase_22d4/cash_deployment_trace.md,GOVERNANCE,??,PHASE_22D4,2026-05-31,Phase 22D.4 governance document — expected output
+data/analysis/phase_22d4/cash_governance_analysis.md,GOVERNANCE,??,PHASE_22D4,2026-05-31,Phase 22D.4 governance document — expected output
+data/analysis/phase_22d4/cash_math_validation.csv,GOVERNANCE,??,PHASE_22D4,2026-05-31,Phase 22D.4 governance document — expected output
+data/analysis/phase_22d4/cash_target_trace.md,GOVERNANCE,??,PHASE_22D4,2026-05-31,Phase 22D.4 governance document — expected output
+data/analysis/phase_22d4/phase_22d4_final_verdict.md,GOVERNANCE,??,PHASE_22D4,2026-05-31,Phase 22D.4 governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_allocation_reconciliation.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_deployment_governance.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_equivalent_parity_report.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_governance_certification_report.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_regression_validation.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_replay_governance.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/cash_ui_certification.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/spaxx_asset_type_audit.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d4_workstream_b/spaxx_lineage_trace.md,GOVERNANCE,??,PHASE_22D4_WORKSTREAM_B,2026-05-31,Phase 22D.4-WB governance document — expected output
+data/analysis/phase_22d5/cash_floor_lineage_report.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/cash_floor_scenario_analysis.csv,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/cash_floor_scenario_report.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/cash_governance_inventory.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/dca_policy_design_options.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/deployment_policy_impact_analysis.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/governance_recommendation.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d5/strategic_vs_tactical_cash_analysis.md,GOVERNANCE,??,PHASE_22D5,2026-06-01,Phase 22D.5 governance document — expected output
+data/analysis/phase_22d6/cash_governance_implementation_trace.md,GOVERNANCE,??,PHASE_22D6,2026-06-02,Phase 22D.6 governance document — expected output
+data/analysis/phase_22d6/cash_governance_regression_report.md,GOVERNANCE,??,PHASE_22D6,2026-06-02,Phase 22D.6 governance document — expected output
+data/analysis/phase_22d6/cash_governance_validation_report.md,GOVERNANCE,??,PHASE_22D6,2026-06-02,Phase 22D.6 governance document — expected output
+data/analysis/phase_22d6/cash_target_integration_report.md,GOVERNANCE,??,PHASE_22D6,2026-06-02,Phase 22D.6 governance document — expected output
+data/analysis/phase_22d6/deployment_before_after.csv,GOVERNANCE,??,PHASE_22D6,2026-06-02,Phase 22D.6 governance document — expected output
+data/analysis/phase_22d6a/cash_target_runtime_trace.md,GOVERNANCE,??,PHASE_22D6A,2026-06-02,Phase 22D.6A governance document — expected output
+data/analysis/phase_22d7/phase_22d7_scope_audit.md,GOVERNANCE,??,PHASE_22D7,2026-06-02,Phase 22D.7 governance document — expected output
+data/analysis/phase_22d8/deployment_queue_integration_report.md,GOVERNANCE,??,PHASE_22D8,2026-06-02,Phase 22D.8 governance document — expected output
+data/analysis/phase_22d8/deployment_queue_integration_trace.md,GOVERNANCE,??,PHASE_22D8,2026-06-02,Phase 22D.8 governance document — expected output
+data/analysis/phase_22d8/phase_22d8_final_verdict.md,GOVERNANCE,??,PHASE_22D8,2026-06-02,Phase 22D.8 governance document — expected output
+data/analysis/phase_22d9/phase_22d9_scope_audit.md,GOVERNANCE,??,PHASE_22D9,2026-06-02,Phase 22D.9 governance document — expected output
+data/analysis/phase_22d10/phase_22d10_settlement_engine_design.md,GOVERNANCE,??,PHASE_22D10,2026-06-02,Phase 22D.10 governance document — expected output
+data/analysis/phase_22d10/phase_22d10_settlement_governance.md,GOVERNANCE,??,PHASE_22D10,2026-06-02,Phase 22D.10 governance document — expected output
+data/exports/archive/deployment_queue_export_20260601.csv,GENERATED_ARTIFACT,??,EXPORT,2026-06-01,Export archive output — generated artifact
+data/exports/archive/holdings_export_20260601.csv,GENERATED_ARTIFACT,??,EXPORT,2026-06-01,Export archive output — generated artifact
+data/exports/archive/snapshot_export_20260601.json,GENERATED_ARTIFACT,??,EXPORT,2026-06-01,Export archive output — generated artifact
+data/portfolio_ingestion/analysis_runs/ [175 dirs / 1411 files / 91MB],GENERATED_ARTIFACT,??,ALL_PHASES,2026-06-03,PAR-* run outputs (snapshot.json / deployment_queue.json / deployment_plan.json / holdings.csv) — DO NOT COMMIT
+aeis_postmortem_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+aeis_signal_lineage_trace.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+allocation_concentration_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+allocation_curve_calibration_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+allocation_curve_models.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data from Phases 7.x-22D.x — candidate for relocation to data/analysis/
+allocation_sensitivity_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+analyst_consensus_alignment_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+arw_vrt_investment_case.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+authentic_replay_readiness.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+capital_concentration_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report from Phases 7.x-22D.x — candidate for relocation to docs/
+capital_deployment_queue_design.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level design document from Phases 7.x-22D.x — candidate for relocation to docs/
+ccl_promotion_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ccl_threshold_sensitivity.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ccl_threshold_sensitivity_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+comparative_monotonicity_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+comparative_persistence_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+comparative_signal_authority_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+comparative_signal_common_universe.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+comparative_signal_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+comparative_signal_readiness_roadmap.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+concentrated_alpha_philosophy_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+concentration_driver_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+consensus_transparency_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_capital_deployment_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_consistency_audit.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_consistency_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+conviction_decomposition.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+conviction_framework_design.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level design document — candidate for relocation to docs/
+conviction_framework_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_influence_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_model_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_multiplier_calibration_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_multiplier_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+conviction_transparency_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+current_allocation_curve.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+danelfin_lineage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_actionability_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_plan_before_after.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+deployment_planner_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_queue_certification_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_queue_render_audit.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_queue_ui_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_queue_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_rank_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+deployment_vs_signal_rank_comparison.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_30day_effectiveness.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_archive_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_archive_manifest.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_archive_preservation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_authority_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_coverage_tiers.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_effectiveness_study_final_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_fallback_end_to_end_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_history_master.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_lineage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_monotonicity_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_persistence_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_projection_consistency_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_quintile_spread_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_research_dataset_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_research_readiness.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_stability_preview.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_symbol_history_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ess_transition_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ess_transition_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+fidelity_alignment_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+fidelity_transparency_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+final_threshold_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+framework_implications_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+freshness_governance_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+freshness_remediation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+historical_ess_opportunity_assessment.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+historical_signal_coverage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+incumbency_sensitivity_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+mandate_fit_scorecard.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+multiplier_calibration_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+multiplier_distribution_comparison.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+multiplier_vs_curve_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+operator_conviction_dashboard_design.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level design document — candidate for relocation to docs/
+operator_signal_governance.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level governance document — candidate for relocation to docs/
+phase_22d1_final_verdict.md,ROOT_REPORT,??,PHASE_22D1,unknown,Phase 22D.1 verdict at root — candidate for relocation to data/analysis/phase_22d1/
+phase_22d2_validation_report.md,ROOT_REPORT,??,PHASE_22D2,unknown,Phase 22D.2 report at root — candidate for relocation to data/analysis/phase_22d2/
+phase_22d3_final_verdict.md,ROOT_REPORT,??,PHASE_22D3,unknown,Phase 22D.3 verdict at root — candidate for relocation to data/analysis/phase_22d3/
+phase_7_3c_validation_report.md,ROOT_REPORT,??,PHASE_7.3C,unknown,Phase 7.3C report at root — candidate for relocation to data/analysis/phase_7_3c/
+phase_7_4a_analysis.py,ROOT_ANALYSIS_PY,??,PHASE_7.4A,unknown,Root-level phase analysis script — candidate for relocation to scripts/
+phase_7_4b_analysis.py,ROOT_ANALYSIS_PY,??,PHASE_7.4B,unknown,Root-level phase analysis script — candidate for relocation to scripts/
+phase_7_4c_validation.py,ROOT_ANALYSIS_PY,??,PHASE_7.4C,unknown,Root-level phase validation script — candidate for relocation to scripts/
+phase_7_4d_lineage_trace_report.md,ROOT_REPORT,??,PHASE_7.4D,unknown,Phase 7.4D report at root — candidate for relocation to data/analysis/phase_7_4d/
+phase_7_4d_runtime_validation_report.md,ROOT_REPORT,??,PHASE_7.4D,unknown,Phase 7.4D report at root — candidate for relocation to data/analysis/phase_7_4d/
+phase_7_4e_execution_path_audit.md,ROOT_REPORT,??,PHASE_7.4E,unknown,Phase 7.4E report at root — candidate for relocation to data/analysis/phase_7_4e/
+phase_7_4f_replay_consistency_audit.md,ROOT_REPORT,??,PHASE_7.4F,unknown,Phase 7.4F report at root — candidate for relocation to data/analysis/phase_7_4f/
+planner_model_comparison.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+portfolio_manager_signal_archive_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+pure_signal_allocation_models.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+pure_signal_integration_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+pure_signal_ranking.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+recommendation_narrative_audit.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+recommendation_transparency_remediation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_alignment_gap_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_alignment_remediation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_alignment_staleness_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_authority_calibration_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_authority_reassessment.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_coverage_expansion_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_depth_distribution.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_depth_model_comparison.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+replay_evidence_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+replay_evidence_quality_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_evidence_routing_fix_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_expansion_opportunities.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_governance_consistency_review.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_historical_signal_integrity_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_history_coverage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_impact_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_influence_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_integrity_classification.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_lineage_trace.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_percentile_lineage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_percentile_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_percentile_trace_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_quality_score_validation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_signal_provenance_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+replay_snapshot_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+replay_source_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_support_explanation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+replay_validation_gap_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+return_data_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+sanm_bucket_routing_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+sanm_counterfactual_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+sanm_historical_replay_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+sanm_replay_lineage.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_30day_effectiveness_comparison.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_archive_governance_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_archive_quality_gates.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_archive_schema.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level schema/design document — candidate for relocation to docs/
+signal_authority_framework_v1.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level framework document — candidate for relocation to docs/
+signal_authority_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_authority_recommendation.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_authority_scorecard.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_capital_alignment_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_capture_cadence_plan.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level operational plan — candidate for relocation to docs/
+signal_capture_operator_runbook.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level operator runbook — candidate for relocation to docs/
+signal_confidence_model_design.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level design document — candidate for relocation to docs/
+signal_coverage_audit.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_coverage_remediation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_disagreement_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_freshness_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_integrity_audit_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+signal_leadership_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_predictive_assessment.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_provenance_design.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level design document — candidate for relocation to docs/
+signal_transparency_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+signal_trust_certification.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level certification document — candidate for relocation to docs/
+signal_underserved_curve_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+starmine_overwrite_audit.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+starmine_overwrite_remediation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+thin_replay_population_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+top20_rank_validation_inventory.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+top20_replay_percentile_audit.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+top20_signal_integrity.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+top20_signal_reconciliation.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ucf_comparison_matrix.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+ucf_foundation_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ucf_information_loss_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ucf_operator_coverage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ucf_operator_dashboard_validation_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ucf_readiness_assessment.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ucf_sufficiency_assessment.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+ui_data_path_trace.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level UI audit — candidate for relocation to docs/
+ui_field_mapping_audit.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level UI audit — candidate for relocation to docs/
+vrt_arw_multiplier_table.csv,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis data — candidate for relocation to data/analysis/
+vrt_curve_sensitivity.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+vrt_rank_attribution_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+vrt_vs_arw_conviction_case_study.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+winner_loser_analysis.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+yahoo_fidelity_readiness_matrix.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+yahoo_lineage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+zacks_danelfin_archive_inventory.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+zacks_lineage_report.md,ROOT_REPORT,??,MULTI_PHASE,unknown,Root-level analysis/report — candidate for relocation to docs/
+untitled folder/api_response_22d3.json,SCRATCH,??,PHASE_22D.3,2026-06-01,Raw API response captured during Phase 22D.3 debug — do not commit
+untitled folder/smoke_22d2.py,SCRATCH,??,PHASE_22D.2,2026-06-01,Smoke test script for Phase 22D.2 — do not commit
+untitled folder/trace_22d3.py,SCRATCH,??,PHASE_22D.3,2026-06-01,Trace/debug script for Phase 22D.3 — do not commit

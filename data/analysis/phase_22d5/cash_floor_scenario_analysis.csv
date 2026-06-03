@@ -1,0 +1,5 @@
+scenario,floor_pct,floor_mv,deployable_mv,deployable_pct,cash_after_deployment_pct,cash_after_deployment_mv,hhi_before,hhi_after,hhi_change,description
+A,2.0,9515.59,31683.33,6.6592,2.0,9516.09,223.2149,237.1942,+13.9793,"Current: deploy all above 2% floor"
+B,5.0,23788.97,17409.95,3.6594,5.0,23789.47,223.2149,230.3473,+7.1324,"Moderate: keep 5% as operating reserve"
+C,7.0,33304.56,7894.36,1.6592,7.0,33304.56,223.2149,226.2830,+3.0681,"Aligned: respect strategic mandate target"
+D,10.0,47577.94,0.0,0.0,8.66,41198.92,223.2149,223.2149,0.0,"Strategic: below floor — no deployment"

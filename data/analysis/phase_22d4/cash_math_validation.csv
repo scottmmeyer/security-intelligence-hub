@@ -1,0 +1,26 @@
+metric,value,unit,source,notes
+run_id,PAR-20260602-1BF2ADA5,,deployment_plan.json,Baseline PAR analysis run
+mandate,CONCENTRATED_ALPHA,,concentrated_alpha_profile.yaml,Active mandate profile
+total_market_value,475779.42,USD,deployment_queue.json cash_context.total_market_value,Total portfolio value at time of run
+cash_before_mv,41198.92,USD,deployment_plan.json portfolio_impact.cash_before_mv,Cash MV before deployment (SPAXX)
+cash_before_pct,8.6592,pct,deployment_plan.json portfolio_impact.cash_before_pct,"= 41198.92 / 475779.42 × 100"
+cash_before_pct_rounded,8.7,pct,,UI display value (1 decimal)
+floor_mv,9515.59,USD,deployment_queue.json cash_context.floor_mv,"= 475779.42 × 2.0 / 100 = 9515.588..."
+floor_pct,2.0000,pct,,= 9515.59 / 475779.42 × 100
+deployable_mv,31683.33,USD,deployment_queue.json cash_context.deployable_mv,"= 41198.92 − 9515.59 = 31683.33"
+deployable_pct,6.6592,pct,deployment_queue.json cash_context.deployable_pct,"= 31683.33 / 475779.42 × 100"
+total_allocated,31683.31,USD,deployment_plan.json total_allocated,Sum of all suggested_add amounts across recommendations
+unallocated_cash,0.02,USD,deployment_plan.json portfolio_impact.unallocated_cash,$0.02 rounding residual — effectively zero
+cash_after_mv,9515.61,USD,deployment_plan.json portfolio_impact.cash_after_mv,"= 41198.92 − 31683.31 = 9515.61 (≈ floor_mv ± $0.02)"
+cash_after_pct,2.0000,pct,deployment_plan.json portfolio_impact.cash_after_pct,"= 9515.61 / 475779.42 × 100 = 2.0000%"
+cash_after_pct_rounded,2.0,pct,,UI display value (1 decimal)
+strategic_cash_target_pct,7.0,pct,concentrated_alpha_profile.yaml nodes.CASH,CONCENTRATED_ALPHA allocation model target for CASH
+tactical_cash_floor_pct,2.0,pct,allocation_policy.yaml structural_policy.cash_floor_pct + deployment_queue.py MIN_CASH_PCT,Policy minimum / never deployed below
+gap_strategic_vs_floor_pct,5.0,pct,,7.0% target − 2.0% floor
+gap_current_vs_strategic_pct,1.6592,pct,,8.6592% current − 7.0% target (overweight cash by 1.66pp)
+gap_current_vs_floor_pct,6.6592,pct,,8.6592% current − 2.0% floor = deployable_pct
+floor_breach_after_deploy,0.0200,USD,"",floor_gap = cash_after_mv − floor_mv = 9515.61 − 9515.59 (rounding artifact; floor honored)
+formula_cash_after,"cash_mv_before - total_deployed",,,deployment_planner.py line 329
+formula_floor_mv,"total_mv × MIN_CASH_PCT / 100",,,deployment_queue.py compute_deployable_cash()
+formula_deployable,"max(0, cash_mv - floor_mv)",,,deployment_queue.py compute_deployable_cash()
+math_check_passes,TRUE,,,cash_after_mv ≈ floor_mv within rounding tolerance ($0.02)

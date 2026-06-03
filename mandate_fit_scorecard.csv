@@ -1,0 +1,8 @@
+model,ccl_mult,hca_mult,concentrated_alpha,signal_responsiveness,operator_intuition,capital_diversification,incumbency_risk,total,rank
+A,3.00,1.00,10,2,3,2,2,19,7
+B,2.50,1.00,10,4,5,4,2,25,6
+C,2.00,1.00,10,4,8,6,2,30,5
+D,2.00,1.25,10,4,10,6,2,32,4
+E,1.75,1.25,8,6,10,8,2,34,2
+F,1.50,1.00,8,6,10,8,2,34,2
+G,1.00,1.00,6,8,7,10,4,35,1

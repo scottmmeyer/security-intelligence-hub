@@ -1,0 +1,17 @@
+symbol,revenue_growth,revenue_history,eps_growth,eps_history,analyst_estimates,analyst_count,forward_pe,peg_ratio,earnings_surprise,fcf,fcf_growth,coverage_score,notes
+VRT,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+ARW,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+SNX,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+ATLC,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+PSX,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+CBOE,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+AVT,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+LRCX,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+CAH,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+DELL,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+SANM,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+PCB,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+CIEN,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+TSM,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+MU,N,N,N,N,N,N,N,N,N,N,N,0/11,All endpoints BLOCKED (legacy v3) or 402 (stable)
+COVERAGE_PCT,0%,0%,0%,0%,0%,0%,0%,0%,0%,0%,0%,0%,Uniform zero coverage across all 15 symbols

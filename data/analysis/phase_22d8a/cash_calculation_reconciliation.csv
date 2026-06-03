@@ -1,0 +1,31 @@
+metric,value,notes
+run_id,PAR-20260602-8CF1CB84,
+source_file,Portfolio_Positions_Jun-02-2026 (2).csv,
+total_market_value_reported,480298.55,snapshot.total_market_value; includes PENDING ACTIVITY at -3566.55
+total_market_value_without_pending,483865.10,counterfactual if PENDING were excluded from ingestion sum
+spaxx_brokerage_raw,69.51,from raw CSV (X20548022 brokerage account)
+spaxx_individual_raw,41209.64,from raw CSV (Z35123695 individual account)
+spaxx_combined_ingested,41279.15,sum of both SPAXX rows after dedup; is_cash_equivalent=True
+pending_activity_mv,-3566.55,from raw CSV; operational_state=ACCOUNTING_ADJUSTMENT; is_cash_equivalent=False
+prg_mv_in_holdings,3622.00,recently purchased position; PRG=PROG HOLDINGS INC; already in investable holdings
+,,
+reported_cash_mv,41279.15,sum(h.market_value for h in investable if h.is_cash_equivalent); SPAXX only
+adjusted_cash_mv,37712.60,reported_cash_mv + pending_activity_mv; 41279.15 + (-3566.55)
+cash_overstatement,3566.55,reported_cash_mv - adjusted_cash_mv
+,,
+mandate_cash_target_pct,7.0,from concentrated_alpha_profile.yaml nodes.CASH
+governance_minimum_pct,2.0,MIN_CASH_PCT constant in deployment_queue.py
+effective_floor_pct,7.0,max(governance_minimum_pct; mandate_cash_target_pct) = max(2.0; 7.0)
+,,
+floor_mv_reported,33620.90,effective_floor_pct / 100 * total_market_value_reported = 0.07 * 480298.55
+floor_mv_adjusted,33620.90,identical; floor uses total_market_value which already includes PENDING
+,,
+reported_deployable_mv,7658.25,max(0; reported_cash_mv - floor_mv) = max(0; 41279.15 - 33620.90)
+adjusted_deployable_mv,4091.70,max(0; adjusted_cash_mv - floor_mv) = max(0; 37712.60 - 33620.90)
+deployable_mv_overstatement,3566.55,reported_deployable_mv - adjusted_deployable_mv; exactly equals pending_activity_mv
+,,
+reported_cash_pct,8.5945,reported_cash_mv / total_market_value_reported * 100
+adjusted_cash_pct,7.8541,adjusted_cash_mv / total_market_value_reported * 100
+,,
+reported_deployable_pct,1.5945,reported_deployable_mv / total_market_value_reported * 100
+adjusted_deployable_pct,0.8519,adjusted_deployable_mv / total_market_value_reported * 100

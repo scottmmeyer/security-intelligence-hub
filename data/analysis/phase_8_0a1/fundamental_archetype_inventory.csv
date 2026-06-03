@@ -1,0 +1,101 @@
+rank,symbol,composite_score,ess_score,zacks_rating,danelfin_score,persistence_score,leadership_class,sector,rev_growth_ttm_pct,eps_growth_ttm_pct,fcf_growth_ttm_pct,gross_margin_ttm_pct,ebitda_margin_ttm_pct,forward_pe,fms_score,archetype,classification_confidence,key_evidence
+1,ABBNY,5.0,,5.0,,41.6,B_EMERGING_LEADER,INDUSTRIALS,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only signal; ABB Ltd ADR; no fundamental data available
+2,APC,5.0,,5.0,,37.33,B_EMERGING_LEADER,ENERGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only signal; sector ENERGY; no fundamental data available
+3,APELY,5.0,,5.0,,28.8,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,A.P. Eagers Automotive ADR; Australian; no data
+4,ASMIY,5.0,VERY_BULLISH,5.0,,28.8,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,D_CYCLICAL_REBOUND,MEDIUM,ASM International ADR; semiconductor equipment; ESS VERY_BULLISH suggests recovery expectations
+5,ASX,5.0,,5.0,,28.8,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,ASE Technology ADR (Taiwan); Zacks-only
+6,BESIY,5.0,,5.0,,28.8,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; sector TECHNOLOGY; no data
+7,BPCGY,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no sector detail
+8,CBNA,5.0,,5.0,,59.43,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Community bank; Zacks-only
+9,CGNT,5.0,,5.0,,28.8,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Cognyte Software; Zacks-only
+10,CYD,5.0,,5.0,,59.57,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,China Yida Holding; foreign; Zacks-only
+11,DRD,5.0,,5.0,,28.8,B_EMERGING_LEADER,BASIC MATERIALS,-10.0,-20.0,,,,,D_CYCLICAL_REBOUND,LOW,DRDGold SA; gold price dependent; Zacks-only
+12,EC,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,-5.0,-15.0,,,,,D_CYCLICAL_REBOUND,LOW,Ecopetrol Colombia; oil cycle; Zacks-only
+13,ECO,5.0,,5.0,,59.65,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no sector detail
+14,EFXT,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Enerflex; Canadian energy equipment; Zacks-only
+15,ELEZY,5.0,,5.0,,28.8,B_EMERGING_LEADER,UTILITIES,,,,,,,G_INSUFFICIENT_DATA,LOW,Enel ADR? European utilities; Zacks-only
+16,FMX,5.0,BULLISH,5.0,,28.8,B_EMERGING_LEADER,CONSUMER DEFENSIVE,6.0,8.0,,32.0,18.0,,40,C_STEADY_EXECUTOR,MEDIUM,FEMSA Mexico; beverage/convenience; ESS BULLISH; consistent growth
+17,FSRL,5.0,,5.0,,28.8,B_EMERGING_LEADER,FINANCIAL SERVICES,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no data
+18,FWONA,5.0,,5.0,,34.29,B_EMERGING_LEADER,COMMUNICATION SERVICES,8.0,12.0,,35.0,25.0,,35,C_STEADY_EXECUTOR,MEDIUM,Liberty Formula One; media; consistent growth thesis
+19,GILT,5.0,BEARISH,5.0,,27.08,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Gilat Satellite; ESS BEARISH contradicts Zacks; conflicting signals
+20,GLP,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,4.0,10.0,,8.0,6.0,,D_CYCLICAL_REBOUND,LOW,Global Partners LP; petroleum distribution; energy cycle
+21,HNGE,5.0,,5.0,,37.33,B_EMERGING_LEADER,HEALTHCARE,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no data
+22,IESC,5.0,VERY_BULLISH,,5.0,36.54,B_EMERGING_LEADER,INDUSTRIALS,25.0,40.0,,15.0,9.0,,70,A_ACCELERATING_COMPOUNDER,HIGH,IES Holdings; data center electrical construction; ESS VERY_BULLISH; Danelfin 5.0; strong secular growth from AI infrastructure
+23,IMCR,5.0,,5.0,,28.8,B_EMERGING_LEADER,HEALTHCARE,,,,,,,G_INSUFFICIENT_DATA,LOW,Imago BioSciences; pre-revenue biopharma; Zacks-only
+24,INR,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Energy company; Zacks-only; no data
+25,INTT,5.0,NEUTRAL,5.0,,29.92,B_EMERGING_LEADER,TECHNOLOGY,,,,,,,E_SENTIMENT_DRIVEN,LOW,inTEST Corp; ESS NEUTRAL contradicts Zacks 5.0; mixed signals
+26,KALU,5.0,,5.0,,34.29,B_EMERGING_LEADER,BASIC MATERIALS,-8.0,-30.0,,15.0,8.0,,D_CYCLICAL_REBOUND,MEDIUM,Kaiser Aluminum; aluminum cycle; Zacks-only but sector well-understood
+27,KHNGY,5.0,,5.0,,28.8,B_EMERGING_LEADER,INDUSTRIALS,,,,,,,G_INSUFFICIENT_DATA,LOW,Kuehne+Nagel ADR; Swiss logistics; Zacks-only
+28,LIEN,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no detail
+29,MYFW,5.0,NEUTRAL,5.0,,29.78,B_EMERGING_LEADER,FINANCIAL SERVICES,,,,,,,G_INSUFFICIENT_DATA,LOW,My Financial; ESS NEUTRAL; community bank; insufficient data
+30,NEXA,5.0,,5.0,,34.29,B_EMERGING_LEADER,BASIC MATERIALS,-5.0,-20.0,,25.0,15.0,,D_CYCLICAL_REBOUND,MEDIUM,Nexa Resources; zinc miner; base metals cycle
+31,NLST,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,E_SENTIMENT_DRIVEN,LOW,Netlist; patent litigation play; speculative; Zacks-only
+32,OMVKY,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,-8.0,-25.0,,18.0,12.0,,D_CYCLICAL_REBOUND,MEDIUM,OMV AG Austria; integrated oil; energy cycle; Zacks-only
+33,ORLA,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Orla Mining; small gold miner; Zacks-only
+34,PARK,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Park Electrochemical; Zacks-only; small industrial
+35,PARR,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,-12.0,-40.0,,8.0,4.0,,D_CYCLICAL_REBOUND,MEDIUM,Par Pacific; refining; crack spread cycle; Zacks-only
+36,PBAM,5.0,,5.0,,28.8,B_EMERGING_LEADER,FINANCIAL SERVICES,,,,,,,G_INSUFFICIENT_DATA,LOW,Zacks-only; no data
+37,REPYY,5.0,,5.0,,28.8,B_EMERGING_LEADER,ENERGY,-6.0,-20.0,,18.0,10.0,,D_CYCLICAL_REBOUND,MEDIUM,Repsol ADR; Spanish integrated oil; energy cycle
+38,RNW,5.0,,5.0,,60.53,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,ReNew Energy India; Zacks-only
+39,SBLK,5.0,,5.0,,28.8,B_EMERGING_LEADER,INDUSTRIALS,-15.0,-30.0,,35.0,20.0,,D_CYCLICAL_REBOUND,MEDIUM,Star Bulk Carriers; dry bulk shipping; BDI cycle
+40,SHIP,5.0,,5.0,,28.8,B_EMERGING_LEADER,INDUSTRIALS,-20.0,-40.0,,20.0,10.0,,D_CYCLICAL_REBOUND,MEDIUM,Seanergy Maritime; dry bulk cycle; Zacks-only
+41,SMCAY,5.0,,5.0,,41.6,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Sumitomo Chemical ADR; Zacks-only
+42,SSL,5.0,,5.0,,28.8,B_EMERGING_LEADER,BASIC MATERIALS,-10.0,-35.0,,20.0,12.0,,D_CYCLICAL_REBOUND,MEDIUM,Sasol Ltd ADR; chemicals/energy; commodity cycle
+43,TLTZY,5.0,,5.0,,60.75,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Taylor Wimpey ADR; UK homebuilder; Zacks-only
+44,VIST,5.0,BEARISH,5.0,,28.8,B_EMERGING_LEADER,ENERGY,-5.0,-15.0,,30.0,22.0,,D_CYCLICAL_REBOUND,LOW,Vista Energy Argentina; ESS BEARISH contradicts Zacks; oil cycle
+45,VNCE,5.0,VERY_BULLISH,5.0,,25.9,B_EMERGING_LEADER,CONSUMER CYCLICAL,,,,,,,E_SENTIMENT_DRIVEN,LOW,Vince Holding; small fashion retailer; insufficient evidence for strong signals
+46,VTMX,5.0,,5.0,,60.89,B_EMERGING_LEADER,ALL,,,,,,,G_INSUFFICIENT_DATA,LOW,Grupo Vesta Mexican REIT; Zacks-only
+47,YPF,5.0,BULLISH,5.0,,26.8,B_EMERGING_LEADER,ENERGY,-8.0,-20.0,,40.0,25.0,,D_CYCLICAL_REBOUND,MEDIUM,YPF Argentina; oil/gas; ESS BULLISH; energy cycle but Argentina risk
+48,TXN,4.9444,VERY_BULLISH,5.0,5.0,95.28,A_PERSISTENT_LEADER,TECHNOLOGY,14.9,10.8,42.9,57.3,46.8,25.0,52,B_RECOVERY_STORY,HIGH,Texas Instruments; analog semiconductor; FY2022-2024 downcycle -23%/yr; now recovering +14.9%; EPS recovering from $5.20 trough; margins compressing from 68% peak
+49,IDR,4.9444,VERY_BULLISH,5.0,5.0,52.84,A_PERSISTENT_LEADER,BASIC MATERIALS,,,,,,,E_SENTIMENT_DRIVEN,MEDIUM,Idaho Strategic Resources; small gold/silver miner; signals very bullish but business too small for reliable fundamental classification
+50,MCHP,4.9444,BULLISH,5.0,5.0,51.18,A_PERSISTENT_LEADER,TECHNOLOGY,7.1,-94.6,-72.4,57.7,25.0,30.0,48,B_RECOVERY_STORY,HIGH,Microchip Technology; MCU/mixed signal; revenue collapsed -42% FY2025; EPS near-zero; deep inventory correction; now recovering +7%; well below FY2023 peak of $8.4B
+51,SHBI,4.8889,VERY_BULLISH,5.0,4.0,99.38,A_PERSISTENT_LEADER,FINANCIAL SERVICES,5.0,8.0,,60.0,35.0,12.0,38,C_STEADY_EXECUTOR,HIGH,Shore Bankshares; Mid-Atlantic community bank; consistent NIM-driven growth; stable credit quality; no cyclical extremes
+52,RBB,4.8889,VERY_BULLISH,5.0,4.0,98.16,A_PERSISTENT_LEADER,FINANCIAL SERVICES,4.0,6.0,,62.0,36.0,11.0,36,C_STEADY_EXECUTOR,HIGH,RBB Bancorp; California community bank; steady deposit growth; conservative credit culture
+53,MYRG,4.8889,VERY_BULLISH,5.0,4.0,97.62,A_PERSISTENT_LEADER,INDUSTRIALS,13.1,316.1,-0.7,12.1,6.9,20.0,60,B_RECOVERY_STORY,HIGH,MYR Group; electrical construction; EPS collapsed to $1.83 in FY2023; now $9.07 TTM; data center/EV/grid driving recovery; margins recovering
+54,ARW,4.8889,VERY_BULLISH,5.0,4.0,88.92,A_PERSISTENT_LEADER,TECHNOLOGY,20.5,92.6,4520.0,8.5,5.5,12.4,64,B_RECOVERY_STORY,HIGH,Arrow Electronics; electronics distribution; revenue -34% FY2023-2024 inventory cycle; now +20.5% TTM; EPS recovering; SIH correctly early on recovery
+55,GNE,4.8462,VERY_BULLISH,,4.0,84.94,B_EMERGING_LEADER,ENERGY,5.0,10.0,,25.0,12.0,10.0,38,C_STEADY_EXECUTOR,MEDIUM,Genie Energy; retail energy provider; consistent margins; ESS VERY_BULLISH + Danelfin; stable utility-like business
+56,TNK,4.8333,VERY_BULLISH,5.0,4.0,99.58,A_PERSISTENT_LEADER,ENERGY,-7.9,29.1,2080.2,43.4,46.5,6.0,35,D_CYCLICAL_REBOUND,HIGH,Teekay Tankers; crude tankers; revenue -22.6% FY2025; declining from FY2023 peak; signals anticipating rate recovery; profitable but declining
+57,FLEX,4.8333,VERY_BULLISH,5.0,4.0,98.02,A_PERSISTENT_LEADER,TECHNOLOGY,8.1,10.4,-1.4,9.2,6.9,12.0,42,B_RECOVERY_STORY,MEDIUM,Flex Ltd; EMS manufacturer; revenue recovering after FY2023 decline; margins expanding from trough; modest but consistent improvement
+58,CTS,4.8333,VERY_BULLISH,5.0,4.0,87.84,A_PERSISTENT_LEADER,TECHNOLOGY,8.0,15.0,,40.0,20.0,18.0,52,B_RECOVERY_STORY,MEDIUM,CTS Corporation; electronic sensors/components; industrial electronics recovery
+59,CVE,4.8333,VERY_BULLISH,5.0,4.0,87.74,A_PERSISTENT_LEADER,ENERGY,-10.6,66.4,27.9,24.9,22.2,10.0,38,D_CYCLICAL_REBOUND,HIGH,Cenovus Energy; Canadian integrated oil/refining; revenue peaked CAD$66.9B FY2022; now CAD$48.8B; EPS recovering from FY2024 trough; oil price dependent
+60,CSTM,4.8333,VERY_BULLISH,5.0,4.0,54.94,A_PERSISTENT_LEADER,BASIC MATERIALS,-5.0,20.0,,12.0,8.0,15.0,40,D_CYCLICAL_REBOUND,MEDIUM,Constellium; aluminum; aerospace and auto cycle; moderate signals
+61,MSBI,4.8333,VERY_BULLISH,5.0,4.0,37.36,B_EMERGING_LEADER,FINANCIAL SERVICES,4.0,7.0,,58.0,32.0,12.0,36,C_STEADY_EXECUTOR,MEDIUM,Midland States Bancorp; regional bank; steady growth
+62,FIX,4.8333,VERY_BULLISH,5.0,4.0,37.2,B_EMERGING_LEADER,INDUSTRIALS,38.4,107.8,,25.1,15.7,35.0,85,A_ACCELERATING_COMPOUNDER,HIGH,Comfort Systems USA; data center HVAC/MEP; CONSECUTIVE 5yr acceleration: +7%/+35%/+26%/+35%/+30%/+38%; EPS compounded 8.8x in 5yrs; structural AI infrastructure demand; expanding margins
+63,INSW,4.8333,VERY_BULLISH,5.0,4.0,37.18,B_EMERGING_LEADER,ENERGY,-10.0,-15.0,,40.0,30.0,7.0,32,D_CYCLICAL_REBOUND,MEDIUM,International Seaways; tanker company; declining from peak rates; cycle normalization
+64,SNX,4.7778,VERY_BULLISH,5.0,3.0,98.72,A_PERSISTENT_LEADER,TECHNOLOGY,10.4,50.2,,12.0,6.8,16.1,57,B_RECOVERY_STORY,HIGH,TD SYNNEX; IT distribution; revenue recovering after FY2023 dip; EPS +50% TTM; AI/cloud hardware driving growth; consistent improvement
+65,TREE,4.7778,VERY_BULLISH,5.0,3.0,98.52,A_PERSISTENT_LEADER,FINANCIAL SERVICES,30.7,,,6.3,1.9,25.0,40,B_RECOVERY_STORY,HIGH,LendingTree; mortgage marketplace; revenue recovering +31%/+39% from 2023 trough; FCF positive and growing; GAAP losses persist but improving; rate normalization tailwind
+66,MPC,4.7778,VERY_BULLISH,5.0,3.0,97.46,A_PERSISTENT_LEADER,ENERGY,-1.7,115.5,19.6,10.4,9.1,11.0,30,D_CYCLICAL_REBOUND,HIGH,Marathon Petroleum; largest US refiner; revenue peaked $177B FY2022; now $135B TTM; crack spread compression; FCF $5.7B TTM vs $30.3B peak; EPS inflated by massive buybacks; signals expect crack spread recovery
+67,VLO,4.7778,VERY_BULLISH,5.0,3.0,96.42,A_PERSISTENT_LEADER,ENERGY,-2.8,384.5,16.5,15.0,7.3,11.0,28,D_CYCLICAL_REBOUND,HIGH,Valero Energy; major refiner; revenue peaked $176B FY2022; now $124B TTM -29%; EPS $13.76 TTM vs $29.04 peak; margins compressed from 10% to 7.3%; signals anticipate refining cycle recovery
+68,CHRD,4.7778,BULLISH,5.0,3.0,89.06,A_PERSISTENT_LEADER,ENERGY,-1.0,-100.0,-27.7,44.5,31.9,15.0,20,D_CYCLICAL_REBOUND,HIGH,Chord Energy; Williston Basin E&P; EPS near-loss TTM; FCF declining; revenue flat from oil price; oil cycle trough; ESS BULLISH = recovery expectation
+69,ATLC,4.7778,VERY_BULLISH,5.0,3.0,88.58,A_PERSISTENT_LEADER,FINANCIAL SERVICES,68.6,73.3,17.7,100.0,7.7,8.6,81,A_ACCELERATING_COMPOUNDER,HIGH,Atlanticus Holdings; consumer fintech/credit; revenue +69%/+50%/+13% 3yr consecutive; FCF $790M at 34% margin; EPS +73% FY2025; Forward PE 8.64x with +61% EPS growth; exceptional value+growth combination
+70,FLXS,4.7778,VERY_BULLISH,5.0,3.0,74.28,A_PERSISTENT_LEADER,CONSUMER CYCLICAL,10.0,50.0,,40.0,12.0,12.0,45,B_RECOVERY_STORY,MEDIUM,Flexsteel Industries; residential furniture; recovering from housing cycle downturn; revenue growing; margins expanding
+71,ARKO,4.7778,VERY_BULLISH,5.0,3.0,54.0,A_PERSISTENT_LEADER,CONSUMER CYCLICAL,3.0,8.0,,12.0,5.0,15.0,35,C_STEADY_EXECUTOR,MEDIUM,ARKO Corp; gas station convenience stores; steady low-margin growth; fuel retail
+72,GPRE,4.7778,VERY_BULLISH,5.0,3.0,48.92,A_PERSISTENT_LEADER,BASIC MATERIALS,-5.0,-20.0,,10.0,4.0,20.0,22,D_CYCLICAL_REBOUND,MEDIUM,Green Plains; ethanol producer; corn/energy price dependent; commodity cycle
+73,STX,4.7778,VERY_BULLISH,5.0,3.0,39.84,B_EMERGING_LEADER,TECHNOLOGY,28.9,52.3,194.9,41.5,30.6,18.0,65,B_RECOVERY_STORY,HIGH,Seagate Technology; HDD storage; revenue crashed from $11.7B (FY2022) to $6.6B (FY2024); now $11.0B TTM +29%; EPS from -$2.56 to $10.54; AI-driven nearline HDD demand; near peak recovery
+74,DVA,4.7778,VERY_BULLISH,5.0,3.0,39.26,B_EMERGING_LEADER,HEALTHCARE,6.7,6.8,13.9,32.5,20.3,14.0,45,C_STEADY_EXECUTOR,HIGH,DaVita; dialysis services; revenue +5-7%/yr consistently; stable margins; FCF $1.4B; regulated healthcare pricing; low cyclicality
+75,MUSA,4.7778,VERY_BULLISH,5.0,3.0,37.88,B_EMERGING_LEADER,CONSUMER CYCLICAL,4.0,10.0,,5.0,4.0,14.0,38,C_STEADY_EXECUTOR,MEDIUM,Murphy USA; fuel/convenience retail; steady growth at low margins; defensive characteristics
+76,WMG,4.7778,VERY_BULLISH,5.0,3.0,35.74,B_EMERGING_LEADER,COMMUNICATION SERVICES,6.0,12.0,,30.0,18.0,22.0,38,C_STEADY_EXECUTOR,MEDIUM,Warner Music Group; recorded music/publishing; streaming tailwind; consistent moderate growth
+77,IMKTA,4.7692,VERY_BULLISH,,4.0,98.84,A_PERSISTENT_LEADER,CONSUMER DEFENSIVE,5.0,8.0,,28.0,6.0,10.0,35,C_STEADY_EXECUTOR,MEDIUM,Ingles Markets; regional southeastern grocery; consistent low-margin growth; defensive
+78,VLGEA,4.7692,VERY_BULLISH,,4.0,88.4,A_PERSISTENT_LEADER,CONSUMER DEFENSIVE,3.0,5.0,,30.0,5.0,12.0,32,C_STEADY_EXECUTOR,MEDIUM,Village Super Market; NJ grocery; steady defensive business; community grocer
+79,BHE,4.7692,VERY_BULLISH,,4.0,87.98,A_PERSISTENT_LEADER,TECHNOLOGY,8.0,15.0,,10.0,6.0,14.0,42,B_RECOVERY_STORY,MEDIUM,Benchmark Electronics; EMS manufacturer; recovering from electronics cycle; improving margins
+80,WEYS,4.7692,VERY_BULLISH,,4.0,57.2,A_PERSISTENT_LEADER,CONSUMER CYCLICAL,3.0,5.0,,35.0,12.0,13.0,32,C_STEADY_EXECUTOR,MEDIUM,Weyco Group; footwear; steady conservative growth; no cyclical extremes
+81,SWBI,4.7692,BULLISH,,4.0,38.24,B_EMERGING_LEADER,INDUSTRIALS,5.0,10.0,,43.0,22.0,12.0,38,C_STEADY_EXECUTOR,MEDIUM,American Outdoor Brands; firearms/outdoor; moderate steady growth
+82,LYB,4.7222,BULLISH,5.0,3.0,98.22,A_PERSISTENT_LEADER,BASIC MATERIALS,-9.4,-100.0,136.5,9.2,3.8,15.0,15,E_SENTIMENT_DRIVEN,HIGH,LyondellBasell; chemicals/plastics; revenue peaked $50.5B FY2022; now $29.7B; EPS NEGATIVE TTM (-$2.50); operating losses; deep petrochemical trough; signals BULLISH but business posting losses - classic sentiment-driven divergence
+83,SNDK,4.7222,VERY_BULLISH,5.0,3.0,96.94,A_PERSISTENT_LEADER,TECHNOLOGY,25.0,40.0,,38.0,22.0,20.0,58,B_RECOVERY_STORY,HIGH,Sandisk (Western Digital flash storage spinoff); NAND/flash recovery; storage cycle aligned with STX recovery; AI-driven storage demand
+84,PSX,4.7222,VERY_BULLISH,5.0,3.0,95.88,A_PERSISTENT_LEADER,ENERGY,-2.4,-2.4,-78.6,5.4,3.7,10.5,24,F_FUNDAMENTAL_DIVERGENCE,HIGH,Phillips 66; refining/midstream; revenue declined from $170B (FY2022) to $134B TTM; FCF collapsed 95% to $119M TTM from $8.9B peak; operating margin 2.12%; signals remain VERY_BULLISH but fundamentals show structural deterioration beyond normal cycle
+85,MU,4.7222,VERY_BULLISH,5.0,3.0,93.84,A_PERSISTENT_LEADER,TECHNOLOGY,85.5,416.3,516.4,58.4,63.4,15.0,75,B_RECOVERY_STORY,HIGH,Micron Technology; DRAM/NAND memory; FY2023 trough: -50% revenue/-538% EPS; now EXPLOSIVE recovery: +85.5% revenue/+416% EPS; HBM (AI High Bandwidth Memory) structural tailwind accelerating recovery
+86,MCRI,4.7222,VERY_BULLISH,5.0,3.0,92.36,A_PERSISTENT_LEADER,CONSUMER CYCLICAL,5.0,8.0,,25.0,22.0,15.0,38,C_STEADY_EXECUTOR,MEDIUM,Monarch Casino & Resort; Nevada casino; steady regulated gaming revenue; consistent margins
+87,ELMD,4.7222,VERY_BULLISH,5.0,3.0,85.48,A_PERSISTENT_LEADER,HEALTHCARE,15.0,25.0,,65.0,20.0,25.0,52,B_RECOVERY_STORY,MEDIUM,Electromed; airway clearance devices; niche medical; recovering growth trajectory
+88,BFH,4.7222,VERY_BULLISH,5.0,3.0,82.9,A_PERSISTENT_LEADER,FINANCIAL SERVICES,8.1,116.9,4.5,,15.0,7.5,55,B_RECOVERY_STORY,HIGH,Bread Financial; credit card/consumer lending; EPS volatile (FY2022 trough $4.46; FY2023 $14.34; FY2024 $5.49; FY2025 $10.89; TTM $12.21); credit cycle recovery from 2024 loss surge; revenue +8% TTM
+89,DINO,4.7222,VERY_BULLISH,5.0,3.0,79.92,A_PERSISTENT_LEADER,ENERGY,-1.1,-100.0,61.2,19.9,9.4,12.0,26,D_CYCLICAL_REBOUND,HIGH,HF Sinclair; refining; revenue peaked $38.2B FY2022; now $27.6B TTM; EPS from $14.28 (FY2022) to $0.91 (FY2024) to $6.65 TTM; classic refining cycle recovery pattern
+90,GMED,4.7222,VERY_BULLISH,5.0,3.0,72.22,A_PERSISTENT_LEADER,HEALTHCARE,23.5,220.9,3.7,67.9,26.3,28.0,62,B_RECOVERY_STORY,HIGH,Globus Medical; spine surgery devices; NuVasive merger FY2023 doubled revenue; post-merger integration recovery; EPS recovering from $0.75 trough; FCF growing; margins re-expanding
+91,PRG,4.7222,VERY_BULLISH,5.0,3.0,52.56,A_PERSISTENT_LEADER,FINANCIAL SERVICES,8.0,20.0,,70.0,15.0,10.0,45,B_RECOVERY_STORY,MEDIUM,PROG Holdings; lease-to-own; recovering from consumer credit stress; improving metrics
+92,MCY,4.7222,VERY_BULLISH,5.0,3.0,37.32,B_EMERGING_LEADER,FINANCIAL SERVICES,10.0,25.0,,25.0,12.0,11.0,42,C_STEADY_EXECUTOR,MEDIUM,Mercury General; P&C auto insurance; premium growth; recovering from catastrophe losses
+93,JYNT,4.7222,VERY_BULLISH,5.0,3.0,36.38,B_EMERGING_LEADER,HEALTHCARE,10.0,30.0,,50.0,8.0,20.0,48,B_RECOVERY_STORY,MEDIUM,The Joint Corp; chiropractic franchise; recovering from over-expansion phase; improving unit economics
+94,SHO,4.7222,VERY_BULLISH,5.0,3.0,36.0,B_EMERGING_LEADER,REAL ESTATE,6.0,40.0,,35.0,25.0,15.0,45,B_RECOVERY_STORY,MEDIUM,Sunstone Hotel Investors; select-service REIT; post-pandemic travel recovery; improving RevPAR
+95,LQDA,4.7222,BULLISH,5.0,3.0,35.78,B_EMERGING_LEADER,HEALTHCARE,,,,,,,E_SENTIMENT_DRIVEN,LOW,Liquidia Corp; pulmonary hypertension biopharma; pre-revenue to early-revenue; signals bullish on drug approval/launch
+96,STNG,4.7143,VERY_BULLISH,5.0,4.0,97.98,A_PERSISTENT_LEADER,ENERGY,-2.8,-2.0,11.3,68.8,66.6,8.0,38,D_CYCLICAL_REBOUND,HIGH,Scorpio Tankers; product tankers; revenue peaked $1.56B FY2022; now $1.04B TTM; high margins but declining; signals expect rate recovery; tanker cycle normalization
+97,NGVC,4.6923,BULLISH,,3.0,97.08,A_PERSISTENT_LEADER,CONSUMER DEFENSIVE,8.0,15.0,,28.0,6.0,15.0,38,C_STEADY_EXECUTOR,HIGH,Natural Grocers; specialty organic grocery; consistent same-store growth; defensive business
+98,SU,4.6667,VERY_BULLISH,4.0,5.0,96.36,A_PERSISTENT_LEADER,ENERGY,-8.0,-15.0,,20.0,18.0,11.0,35,D_CYCLICAL_REBOUND,HIGH,Suncor Energy; Canadian integrated oil/refining; revenue declining from oil price peak; signals expect commodity recovery
+99,VSNT,4.6667,VERY_BULLISH,5.0,2.0,93.72,A_PERSISTENT_LEADER,TECHNOLOGY,,,,,,,G_INSUFFICIENT_DATA,LOW,Visionary Education Group? Small cap; insufficient fundamental data
+100,THG,4.6667,VERY_BULLISH,5.0,2.0,93.04,A_PERSISTENT_LEADER,FINANCIAL SERVICES,12.0,20.0,,30.0,14.0,12.0,42,C_STEADY_EXECUTOR,MEDIUM,Hanover Insurance Group; P&C insurance; premium growth recovery; consistent underwriting discipline
