@@ -18,6 +18,20 @@ let _fileContent = null;
 let _fileName    = null;
 let _analysisResult = null;
 
+// Phase 23.0A — tax operator state
+let _taxState = {
+  net_realized_ytd: null,
+  potential_additional_losses: null,
+  capital_loss_carryforward: null,
+  tax_year: new Date().getFullYear(),
+};
+
+// Phase 23.0C — strategic exit state
+let _strategicExitSymbols = [];  // persisted via /api/operator/strategic-exits
+
+// Phase 23.2 — operator policy state
+let _operatorPolicies = {};  // { [symbol]: { policy_type, policy_annotation, status, ... } }
+
 const _STORAGE_KEY = "sih_portfolio_last_result";
 
 // Drilldown state: per-rec toggle + sort mode
@@ -70,6 +84,21 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (_analysisResult) {
       showStatus("warning", "Mandate changed — re-upload your portfolio CSV to analyze with the new mandate.");
     }
+  });
+
+  // Phase 23.0A — load persisted tax state
+  loadTaxState();
+
+  // Phase 23.0C — load persisted strategic exits
+  loadStrategicExits();
+
+  // Phase 23.2 — load persisted operator policies
+  loadOperatorPolicies();
+
+  // Tax input live-compute
+  ["taxNetRealizedYTD","taxPotentialLosses","taxCarryforward"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", updateTaxComputed);
   });
 
   // Restore last analysis if available
@@ -189,7 +218,785 @@ function clearAll() {
   document.getElementById("analyzeBtn").disabled = true;
   document.getElementById("clearBtn").style.display = "none";
   document.getElementById("resultsArea").style.display = "none";
+  const taxSection = document.getElementById("taxActionSection");
+  if (taxSection) taxSection.style.display = "none";
+  const pipelineSection = document.getElementById("portfolioActionPipelineSection");
+  if (pipelineSection) pipelineSection.style.display = "none";
   hideStatus();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 23.0A — Tax Position Panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toggleTaxPanel() {
+  const body    = document.getElementById("taxPanelBody");
+  const chevron = document.getElementById("taxPanelChevron");
+  if (!body) return;
+  const open = body.classList.toggle("open");
+  if (chevron) chevron.classList.toggle("open", open);
+}
+
+async function loadTaxState() {
+  try {
+    const resp = await fetch("/api/operator/tax-state");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && typeof data === "object" && !data.error) {
+      _taxState = { ..._taxState, ...data };
+      _populateTaxFields();
+      updateTaxComputed();
+    }
+  } catch (_) { /* best-effort */ }
+}
+
+function _populateTaxFields() {
+  const map = {
+    taxNetRealizedYTD:      "net_realized_ytd",
+    taxPotentialLosses:     "potential_additional_losses",
+    taxCarryforward:        "capital_loss_carryforward",
+    taxYear:                "tax_year",
+  };
+  for (const [elId, key] of Object.entries(map)) {
+    const el = document.getElementById(elId);
+    if (el && _taxState[key] != null) el.value = _taxState[key];
+  }
+}
+
+function updateTaxComputed() {
+  const ytd      = parseFloat(document.getElementById("taxNetRealizedYTD")?.value ?? "") || 0;
+  const addl     = Math.abs(parseFloat(document.getElementById("taxPotentialLosses")?.value ?? "") || 0);
+  const carry    = Math.abs(parseFloat(document.getElementById("taxCarryforward")?.value ?? "") || 0);
+
+  // Losses already realized shield future gains
+  const available  = Math.max(0, -ytd + carry);
+  const projected  = available + addl;
+
+  const elA = document.getElementById("taxAvailableCapacity");
+  const elP = document.getElementById("taxProjectedCapacity");
+  if (elA) elA.textContent = _formatTaxDollar(available);
+  if (elP) elP.textContent = _formatTaxDollar(projected);
+}
+
+function _formatTaxDollar(v) {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return (v < 0 ? "-$" : "$") + (abs / 1_000_000).toFixed(2) + "M";
+  if (abs >= 100_000)   return (v < 0 ? "-$" : "$") + (abs / 1_000).toFixed(1) + "K";
+  return (v < 0 ? "-$" : "$") + abs.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+function _readTaxInputs() {
+  return {
+    net_realized_ytd:              parseFloat(document.getElementById("taxNetRealizedYTD")?.value ?? "") || 0,
+    potential_additional_losses:   Math.abs(parseFloat(document.getElementById("taxPotentialLosses")?.value ?? "") || 0),
+    capital_loss_carryforward:     Math.abs(parseFloat(document.getElementById("taxCarryforward")?.value ?? "") || 0),
+    tax_year:                      parseInt(document.getElementById("taxYear")?.value ?? new Date().getFullYear(), 10),
+  };
+}
+
+async function saveTaxState() {
+  const inputs   = _readTaxInputs();
+  const statusEl = document.getElementById("taxSaveStatus");
+
+  try {
+    const resp = await fetch("/api/operator/tax-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(inputs),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      _taxState = { ..._taxState, ...inputs };
+      updateTaxComputed();
+      if (statusEl) {
+        statusEl.className = "tax-save-status";
+        statusEl.textContent = "✓ Saved";
+        setTimeout(() => { statusEl.textContent = ""; }, 3000);
+      }
+      // Re-render pipeline if analysis is loaded
+      if (_analysisResult) renderPortfolioActionPipeline(_analysisResult);
+    } else {
+      if (statusEl) {
+        statusEl.className = "tax-save-status error";
+        statusEl.textContent = "Save failed: " + (data.error || "unknown error");
+      }
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.className = "tax-save-status error";
+      statusEl.textContent = "Network error: " + err.message;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 23.0C — Strategic Exit Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadStrategicExits() {
+  try {
+    const resp = await fetch("/api/operator/strategic-exits");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && Array.isArray(data.strategic_exit_symbols)) {
+      _strategicExitSymbols = data.strategic_exit_symbols.map(s => s.toUpperCase());
+      _renderStrategicExitList();
+    }
+  } catch (_) { /* best-effort */ }
+}
+
+function _renderStrategicExitList() {
+  const el = document.getElementById("strategicExitList");
+  if (!el) return;
+  if (!_strategicExitSymbols.length) {
+    el.innerHTML = `<span style="color:var(--muted);font-style:italic;font-size:0.82rem;">No strategic exits configured.</span>`;
+    return;
+  }
+  el.innerHTML = _strategicExitSymbols.map(sym =>
+    `<span class="se-chip">
+       <span class="se-chip-sym">${escHtml(sym)}</span>
+       <button class="se-chip-rm" title="Remove ${escHtml(sym)}" onclick="removeStrategicExit('${escHtml(sym)}')">✕</button>
+     </span>`
+  ).join("");
+}
+
+async function addStrategicExit() {
+  const input = document.getElementById("strategicExitInput");
+  if (!input) return;
+  const sym = input.value.trim().toUpperCase();
+  if (!sym || !/^[A-Z0-9.]{1,12}$/.test(sym)) {
+    _setSeStatus("Invalid symbol.", "error");
+    return;
+  }
+  if (_strategicExitSymbols.includes(sym)) {
+    _setSeStatus(`${sym} already in list.`, "warn");
+    return;
+  }
+  try {
+    const resp = await fetch("/api/operator/strategic-exits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add", symbol: sym }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      _strategicExitSymbols = data.strategic_exit_symbols || [];
+      input.value = "";
+      _renderStrategicExitList();
+      _setSeStatus(`✓ ${sym} added.`, "ok");
+      if (_analysisResult) renderPortfolioActionPipeline(_analysisResult);
+    } else {
+      _setSeStatus("Save failed: " + (data.error || "unknown"), "error");
+    }
+  } catch (err) {
+    _setSeStatus("Network error: " + err.message, "error");
+  }
+}
+
+async function removeStrategicExit(sym) {
+  try {
+    const resp = await fetch("/api/operator/strategic-exits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "remove", symbol: sym }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      _strategicExitSymbols = data.strategic_exit_symbols || [];
+      _renderStrategicExitList();
+      _setSeStatus(`${sym} removed.`, "ok");
+      if (_analysisResult) renderPortfolioActionPipeline(_analysisResult);
+    }
+  } catch (_) {}
+}
+
+function _setSeStatus(msg, type) {
+  const el = document.getElementById("seStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "se-status se-status-" + type;
+  setTimeout(() => { el.textContent = ""; el.className = "se-status"; }, 3500);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 23.2 — Operator Policy Layer
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadOperatorPolicies() {
+  try {
+    const resp = await fetch("/api/operator/policies");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _operatorPolicies = {};
+    for (const p of (data.policies || [])) {
+      _operatorPolicies[p.symbol] = p;
+    }
+    _renderPolicyList();
+  } catch (_) {}
+}
+
+function _policyBadgeClass(policyType) {
+  if (!policyType) return "policy-badge";
+  const map = {
+    DO_NOT_SELL: "policy-badge policy-badge-do-not-sell",
+    SELL_LAST: "policy-badge policy-badge-sell-last",
+    CORE_ANCHOR: "policy-badge policy-badge-core-anchor",
+    PREFERRED_ACCUMULATION: "policy-badge policy-badge-preferred",
+  };
+  return map[policyType] || "policy-badge";
+}
+
+function _policyBadgeLabel(policyType) {
+  const map = {
+    DO_NOT_SELL: "🔒 DO_NOT_SELL",
+    SELL_LAST: "⏸ SELL_LAST",
+    CORE_ANCHOR: "⚓ CORE_ANCHOR",
+    PREFERRED_ACCUMULATION: "⭐ PREFERRED_ACCUMULATION",
+  };
+  return map[policyType] || policyType;
+}
+
+function _renderPolicyList() {
+  const container = document.getElementById("policyListContainer");
+  if (!container) return;
+  const policies = Object.values(_operatorPolicies).filter(p => p.status === "ACTIVE");
+  if (!policies.length) {
+    container.innerHTML = '<div style="color:var(--muted); font-size:0.82rem; padding:6px 0;">No active policies.</div>';
+    return;
+  }
+  container.innerHTML = policies.map(p => `
+    <div class="policy-row">
+      <span class="policy-row-symbol">${p.symbol}</span>
+      <span class="${_policyBadgeClass(p.policy_type)}">${_policyBadgeLabel(p.policy_type)}</span>
+      <span class="policy-row-rationale">${p.rationale || ''}</span>
+      <button class="policy-row-revoke" onclick="revokeOperatorPolicy('${p.symbol}')">Revoke</button>
+    </div>
+  `).join("");
+}
+
+async function addOperatorPolicy() {
+  const symbol = (document.getElementById("policySymbolInput")?.value || "").trim().toUpperCase();
+  const policyType = document.getElementById("policyTypeSelect")?.value || "";
+  const rationale = (document.getElementById("policyRationaleInput")?.value || "").trim();
+  if (!symbol || !policyType) {
+    _setPolicyStatus("Symbol and policy type are required.", "error");
+    return;
+  }
+  try {
+    const resp = await fetch("/api/operator/policies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, policy_type: policyType, rationale }),
+    });
+    const data = await resp.json();
+    if (resp.status === 409) {
+      _setPolicyStatus(`Conflict: ${data.error}`, "error");
+      return;
+    }
+    if (!resp.ok) {
+      _setPolicyStatus(data.error || "Error adding policy.", "error");
+      return;
+    }
+    _operatorPolicies[symbol] = data.policy;
+    _renderPolicyList();
+    document.getElementById("policySymbolInput").value = "";
+    document.getElementById("policyTypeSelect").value = "";
+    document.getElementById("policyRationaleInput").value = "";
+    _setPolicyStatus(`${symbol} → ${policyType} policy added.`, "ok");
+  } catch (e) {
+    _setPolicyStatus("Network error.", "error");
+  }
+}
+
+async function revokeOperatorPolicy(sym) {
+  try {
+    const resp = await fetch("/api/operator/policies/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol: sym }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      delete _operatorPolicies[sym];
+      _renderPolicyList();
+      _setPolicyStatus(`${sym} policy revoked.`, "ok");
+    }
+  } catch (_) {}
+}
+
+function togglePolicyPanel() {
+  const body = document.getElementById("policyPanelBody");
+  const chevron = document.getElementById("policyPanelChevron");
+  if (!body) return;
+  const isOpen = body.style.display !== "none";
+  body.style.display = isOpen ? "none" : "block";
+  if (chevron) chevron.textContent = isOpen ? "▼" : "▲";
+}
+
+function _setPolicyStatus(msg, type) {
+  const el = document.getElementById("policyStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = type === "error" ? "#c0392b" : "#2e7d32";
+  setTimeout(() => { el.textContent = ""; }, 3500);
+}
+
+
+
+// Conviction tiers that are PROTECTED — never appear as funding sources
+const _PROTECTED_CONVICTION_TIERS = new Set([
+  "HIGH_CONVICTION_ANCHOR",
+  "CORE_CONVICTION_LEADER",
+]);
+
+/**
+ * Build the four-category Portfolio Action Pipeline from analysis data.
+ * Returns { cat1, cat2, cat3, cat4 } arrays.
+ *
+ * Cat 1 — Signal Deterioration: holdings with BEARISH/VERY_BEARISH signal
+ * Cat 2 — Strategic Exit:       operator-designated symbols
+ * Cat 3 — Allocation Reduction: holdings mapped to REDUCE_OVERWEIGHT nodes
+ * Cat 4 — Funding Sources:      low-conviction, non-protected holdings
+ */
+function _computePortfolioActions(data) {
+  const overlays       = data.security_overlays || [];
+  const recommendations = data.recommendations || [];
+  const deploymentQueue = data.deployment_queue || {};
+  const dqEntries      = deploymentQueue.queue || [];
+
+  // Build conviction tier map from deployment_queue entries
+  const convictionTierBySymbol = {};
+  for (const entry of dqEntries) {
+    if (entry.symbol && entry.narrative_tier) {
+      convictionTierBySymbol[entry.symbol.toUpperCase()] = entry.narrative_tier;
+    }
+  }
+
+  // Build overlay map: symbol → overlay
+  const overlayBySymbol = {};
+  for (const ov of overlays) {
+    if (ov.symbol) overlayBySymbol[ov.symbol.toUpperCase()] = ov;
+  }
+
+  // Collect REDUCE_OVERWEIGHT nodes and their constituent symbols
+  const reduceNodes = [];
+  for (const rec of recommendations) {
+    if (rec.recommendation_type === "REDUCE_OVERWEIGHT") {
+      const nodeKey   = rec.affected_node_key || "";
+      const nodeLabel = (rec.drilldown && rec.drilldown.affected_node_label) || nodeKey;
+      const drift     = rec.drift_pct || 0;
+      const syms      = (rec.affected_symbols || []).map(s => s.toUpperCase());
+      if (nodeKey && syms.length) {
+        reduceNodes.push({ nodeKey, nodeLabel, drift, symbols: syms });
+      }
+    }
+  }
+  // For each symbol, find the node it belongs to (pick highest absolute drift node)
+  const reduceNodeBySymbol = {};
+  for (const node of reduceNodes) {
+    for (const sym of node.symbols) {
+      const existing = reduceNodeBySymbol[sym];
+      if (!existing || Math.abs(node.drift) > Math.abs(existing.drift)) {
+        reduceNodeBySymbol[sym] = node;
+      }
+    }
+  }
+
+  // ── Category 1: Signal Deterioration ──────────────────────────────────────
+  const cat1 = [];
+  // ── Category 5: Policy-Suppressed Actions ─────────────────────────────────
+  const cat5 = [];
+  for (const ov of overlays) {
+    const sym    = (ov.symbol || "").toUpperCase();
+    if (!sym) continue;
+    const flag   = ov.opportunity_flag || "";   // C1 FIX: was ov.recommended_action
+    const signal = ov.signal_direction || "UNKNOWN";
+    const ess    = ov.ess_score_text || "";
+    const tier   = convictionTierBySymbol[sym] || "";
+    const execState   = ov.execution_state || "EXECUTABLE";
+    const effAction   = ov.effective_action || flag || "HOLD";
+    const policyType  = ov.policy_type || "";
+    const policyBadge = ov.policy_annotation || "";
+
+    const isSignalDeteriorated = (
+      signal === "BEARISH" ||
+      ess === "VERY_BEARISH" ||
+      ess === "BEARISH" ||
+      flag === "TRIM"
+    );
+    if (!isSignalDeteriorated) continue;
+
+    // BLOCKED_BY_POLICY items are removed from the executable pipeline
+    // and recorded in Cat 5 (Policy-Suppressed Actions) instead
+    if (execState === "BLOCKED_BY_POLICY") {
+      cat5.push({
+        symbol:          sym,
+        ess,
+        signal,
+        flag,
+        original_action: flag,
+        policy_type:     policyType,
+        policy_badge:    policyBadge,
+        effective_action: effAction,
+        percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
+        composite_score:      parseFloat(ov.composite_score || 0),
+      });
+      continue;
+    }
+
+    const priority = flag === "TRIM" ? "HIGH" : (ess === "VERY_BEARISH" ? "HIGH" : "MEDIUM");
+    cat1.push({
+      symbol:   sym,
+      flag,
+      signal,
+      ess,
+      conviction_tier: tier,
+      percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
+      composite_score:      parseFloat(ov.composite_score || 0),
+      replay_supported:     ov.replay_supported === true || ov.replay_supported === "True",
+      replay_percentile:    ov.replay_percentile != null ? parseFloat(ov.replay_percentile) : null,
+      priority,
+      rationale: ov.flag_rationale || "",
+      execution_state:  execState,
+      effective_action: effAction,
+      policy_type:      policyType,
+      policy_badge:     policyBadge,
+    });
+  }
+  // Sort: DEFERRED_BY_POLICY last, then HIGH priority, then by composite_score asc (weakest first)
+  cat1.sort((a, b) => {
+    const aDeferred = a.execution_state === "DEFERRED_BY_POLICY" ? 1 : 0;
+    const bDeferred = b.execution_state === "DEFERRED_BY_POLICY" ? 1 : 0;
+    if (aDeferred !== bDeferred) return aDeferred - bDeferred;
+    if (a.priority !== b.priority) return a.priority === "HIGH" ? -1 : 1;
+    return a.composite_score - b.composite_score;
+  });
+
+  // ── Category 2: Strategic Exit ─────────────────────────────────────────────
+  const cat2 = [];
+  for (const sym of _strategicExitSymbols) {
+    const ov = overlayBySymbol[sym];
+    cat2.push({
+      symbol:   sym,
+      priority: "HIGH",
+      reason:   "Operator Designated Exit",
+      ov_flag:  ov ? (ov.opportunity_flag || "") : "",
+      ov_signal: ov ? (ov.signal_direction || "") : "",
+      percent_of_portfolio: ov ? parseFloat(ov.percent_of_portfolio || 0) : null,
+      composite_score:      ov ? parseFloat(ov.composite_score || 0) : null,
+    });
+  }
+
+  // ── Category 3: Allocation Reduction ──────────────────────────────────────
+  const cat3 = [];
+  const cat3Syms = new Set();
+  // Get the reduce node symbols that are actually in the portfolio overlay
+  for (const node of reduceNodes) {
+    const nodeSeverityScore = Math.abs(node.drift);
+    for (const sym of node.symbols) {
+      if (cat3Syms.has(sym)) continue;
+      const ov = overlayBySymbol[sym];
+      if (!ov) continue;  // Not in portfolio
+      const tier = convictionTierBySymbol[sym] || "";
+      // Include even protected tiers in allocation reduction (strategic context)
+      // but mark them as protected so UI can render with appropriate context
+      cat3Syms.add(sym);
+      cat3.push({
+        symbol:   sym,
+        node_key:   node.nodeKey,
+        node_label: node.nodeLabel,
+        drift_pct:  node.drift,
+        severity:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
+        priority:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
+        conviction_tier: tier,
+        is_protected: _PROTECTED_CONVICTION_TIERS.has(tier),
+        ov_flag:  ov.opportunity_flag || "",
+        ov_signal: ov.signal_direction || "",
+        percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
+        composite_score:      parseFloat(ov.composite_score || 0),
+      });
+    }
+  }
+  // Sort: higher drift (more overweight) first, then alpha
+  cat3.sort((a, b) => Math.abs(b.drift_pct) - Math.abs(a.drift_pct) || a.symbol.localeCompare(b.symbol));
+
+  // ── Category 4: Funding Sources ────────────────────────────────────────────
+  const cat4 = [];
+  const cat4Excl = new Set();
+  // Exclude anything in Cat 1 (signal deterioration) that's already a clear exit
+  // Exclude protected tiers
+  for (const ov of overlays) {
+    const sym  = (ov.symbol || "").toUpperCase();
+    if (!sym) continue;
+    const tier = convictionTierBySymbol[sym] || "";
+    if (_PROTECTED_CONVICTION_TIERS.has(tier)) continue;
+
+    // Only include holdings with meaningful size
+    const pct = parseFloat(ov.percent_of_portfolio || 0);
+    if (pct < 0.05) continue;
+
+    // Exclude cash-equivalents, money market
+    const flag   = ov.opportunity_flag || "";
+    const signal = ov.signal_direction || "UNKNOWN";
+    const score  = parseFloat(ov.composite_score || 0);
+    if (!score) continue;  // No signal data
+
+    // Exclude ACCUMULATE holdings that aren't already in Cat1
+    // Funding sources = HOLD, WATCH, TRIM — not ACCUMULATE unless also cat1
+    const isCat1 = cat1.some(c => c.symbol === sym);
+    if (flag === "ACCUMULATE" && !isCat1) continue;
+    if (cat4Excl.has(sym)) continue;
+
+    // Compute a funding priority score: lower composite = better funding candidate
+    // Also penalize if already in Cat3 (allocation reduction — useful cross-reference)
+    const isCat3 = cat3.some(c => c.symbol === sym);
+    const fundingReason = isCat1 ? "Signal Deterioration" : isCat3 ? "Allocation Reduction" : "Low Conviction";
+
+    cat4.push({
+      symbol:   sym,
+      flag,
+      signal,
+      composite_score: score,
+      percent_of_portfolio: pct,
+      conviction_tier: tier,
+      replay_supported: ov.replay_supported === true || ov.replay_supported === "True",
+      primary_category: isCat1 ? "SIGNAL_DETERIORATION" : isCat3 ? "ALLOCATION_REDUCTION" : null,
+      funding_reason: fundingReason,
+      priority: isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW",
+    });
+  }
+  // Sort: Cat1 cross-refs first (HIGH), then Cat3 cross-refs (MEDIUM), then by score asc
+  cat4.sort((a, b) => {
+    const priorityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    const po = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
+    if (po !== 0) return po;
+    return a.composite_score - b.composite_score;
+  });
+
+  return { cat1, cat2, cat3, cat4, cat5 };
+}
+
+function renderPortfolioActionPipeline(data) {
+  const section   = document.getElementById("portfolioActionPipelineSection");
+  const container = document.getElementById("portfolioActionPipelineContent");
+  if (!section || !container) return;
+
+  const { cat1, cat2, cat3, cat4, cat5 } = _computePortfolioActions(data);
+
+  const totalActions = cat1.length + cat2.length + cat3.length + cat4.length;
+  const categoriesActive = [cat1, cat2, cat3, cat4].filter(c => c.length > 0).length;
+
+  // Update header badge
+  const badge = document.getElementById("pipelineActionCount");
+  if (badge) badge.textContent = totalActions;
+  const catBadge = document.getElementById("pipelineCategoryCount");
+  if (catBadge) catBadge.textContent = categoriesActive;
+
+  if (totalActions === 0) {
+    section.style.display = "block";
+    container.innerHTML = `<div class="pap-empty">No portfolio actions identified. Portfolio is within signal and allocation parameters.</div>`;
+    return;
+  }
+
+  section.style.display = "block";
+
+  const html = [];
+
+  // ── Cat 1: Signal Deterioration ────────────────────────────────────────────
+  if (cat1.length > 0) {
+    const hasHigh = cat1.some(c => c.priority === "HIGH");
+    html.push(`
+      <div class="pap-category ${hasHigh ? "pap-auto-expand" : ""}">
+        <div class="pap-cat-header" onclick="this.closest('.pap-category').classList.toggle('pap-expanded')">
+          <span class="pap-cat-num">1</span>
+          <span class="pap-cat-label">Signal Deterioration</span>
+          <span class="pap-cat-count">${cat1.length} holding${cat1.length !== 1 ? "s" : ""}</span>
+          <span class="pap-cat-chevron">▾</span>
+        </div>
+        <div class="pap-cat-body">
+          <table class="pap-tbl">
+            <thead><tr>
+              <th>Symbol</th><th>ESS Signal</th><th>Flag</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>Policy</th><th>Effective Action</th><th>Rationale</th>
+            </tr></thead>
+            <tbody>
+              ${cat1.map(c => `<tr class="pap-row ${c.priority === "HIGH" && c.execution_state !== "DEFERRED_BY_POLICY" ? "pap-row-high" : ""} ${c.execution_state === "DEFERRED_BY_POLICY" ? "pap-row-deferred" : ""} ${c.execution_state === "INFORMATIONAL_ONLY" ? "pap-row-info-only" : ""}">
+                <td><span class="pap-sym">${escHtml(c.symbol)}</span></td>
+                <td><span class="ess-badge ess-${escHtml(c.ess || c.signal)}">${escHtml(c.ess || c.signal)}</span></td>
+                <td><span class="flag-${escHtml(c.flag)}">${escHtml(c.flag || "—")}</span></td>
+                <td>${c.composite_score.toFixed(2)}</td>
+                <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
+                <td>${c.policy_badge ? `<span class="policy-badge ${_policyBadgeClass(c.policy_type)}">${escHtml(c.policy_badge)}</span>` : '<span style="color:var(--muted);font-size:0.75rem">—</span>'}</td>
+                <td><span class="pap-exec-action pap-exec-${escHtml(c.execution_state)}">${escHtml(c.effective_action || c.flag || "—")}</span></td>
+                <td style="font-size:0.78rem;color:var(--muted)">${escHtml(c.rationale || "Signal below threshold")}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>`);
+  }
+
+  // ── Cat 2: Strategic Exit ───────────────────────────────────────────────────
+  if (cat2.length > 0 || true) {  // Always show C2 (has management UI)
+    html.push(`
+      <div class="pap-category pap-auto-expand">
+        <div class="pap-cat-header" onclick="this.closest('.pap-category').classList.toggle('pap-expanded')">
+          <span class="pap-cat-num">2</span>
+          <span class="pap-cat-label">Strategic Exit</span>
+          <span class="pap-cat-count">${cat2.length} holding${cat2.length !== 1 ? "s" : ""}</span>
+          <span class="pap-cat-chevron">▾</span>
+        </div>
+        <div class="pap-cat-body">
+          ${cat2.length === 0 ? '<div class="pap-cat-empty">No strategic exits designated.</div>' : `
+          <table class="pap-tbl">
+            <thead><tr>
+              <th>Symbol</th><th>Reason</th><th>Signal</th><th>Flag</th><th>% Port</th><th>Priority</th>
+            </tr></thead>
+            <tbody>
+              ${cat2.map(c => `<tr class="pap-row pap-row-high">
+                <td><span class="pap-sym">${escHtml(c.symbol)}</span></td>
+                <td style="font-size:0.82rem;color:var(--muted)">${escHtml(c.reason)}</td>
+                <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
+                <td>${c.ov_flag ? `<span class="flag-${escHtml(c.ov_flag)}">${escHtml(c.ov_flag)}</span>` : "—"}</td>
+                <td>${c.percent_of_portfolio != null ? c.percent_of_portfolio.toFixed(2) + "%" : "—"}</td>
+                <td><span class="pap-pri pap-pri-HIGH">HIGH</span></td>
+              </tr>`).join("")}
+            </tbody>
+          </table>`}
+          <div class="pap-se-manager">
+            <span class="pap-se-manager-label">Manage Strategic Exits</span>
+            <div class="pap-se-row">
+              <div id="strategicExitList" class="pap-se-chips"></div>
+            </div>
+            <div class="pap-se-add-row">
+              <input id="strategicExitInput" class="pap-se-input" type="text"
+                placeholder="Symbol (e.g. FIS)" maxlength="12"
+                onkeydown="if(event.key==='Enter')addStrategicExit()">
+              <button class="pap-se-btn" onclick="addStrategicExit()">Add</button>
+              <span id="seStatus" class="se-status"></span>
+            </div>
+          </div>
+        </div>
+      </div>`);
+  }
+
+  // ── Cat 3: Allocation Reduction ─────────────────────────────────────────────
+  if (cat3.length > 0) {
+    const hasHigh = cat3.some(c => c.severity === "HIGH");
+    html.push(`
+      <div class="pap-category ${hasHigh ? "pap-auto-expand" : ""}">
+        <div class="pap-cat-header" onclick="this.closest('.pap-category').classList.toggle('pap-expanded')">
+          <span class="pap-cat-num">3</span>
+          <span class="pap-cat-label">Allocation Reduction</span>
+          <span class="pap-cat-count">${cat3.length} holding${cat3.length !== 1 ? "s" : ""}</span>
+          <span class="pap-cat-chevron">▾</span>
+        </div>
+        <div class="pap-cat-body">
+          <table class="pap-tbl">
+            <thead><tr>
+              <th>Symbol</th><th>Overweight Node</th><th>Drift</th>
+              <th>Signal</th><th>% Port</th><th>Priority</th><th>Note</th>
+            </tr></thead>
+            <tbody>
+              ${cat3.map(c => `<tr class="pap-row ${c.severity === "HIGH" ? "pap-row-high" : ""}">
+                <td><span class="pap-sym">${escHtml(c.symbol)}</span>
+                    ${c.is_protected ? '<span class="pap-protected-badge" title="Protected conviction tier">🔒</span>' : ""}
+                </td>
+                <td style="font-size:0.8rem">${escHtml(c.node_label || c.node_key)}</td>
+                <td><span class="pap-drift">+${Math.abs(c.drift_pct).toFixed(1)}pp</span></td>
+                <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
+                <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td><span class="pap-pri pap-pri-${c.severity}">${c.severity}</span></td>
+                <td style="font-size:0.78rem;color:var(--muted)">${c.is_protected ? "Protected — consider reducing via index vehicles" : "Node overweight reduction candidate"}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>`);
+  }
+
+  // ── Cat 4: Funding Sources ──────────────────────────────────────────────────
+  if (cat4.length > 0) {
+    html.push(`
+      <div class="pap-category">
+        <div class="pap-cat-header" onclick="this.closest('.pap-category').classList.toggle('pap-expanded')">
+          <span class="pap-cat-num">4</span>
+          <span class="pap-cat-label">Funding Sources</span>
+          <span class="pap-cat-count">${cat4.length} holding${cat4.length !== 1 ? "s" : ""}</span>
+          <span class="pap-cat-chevron">▾</span>
+        </div>
+        <div class="pap-cat-body">
+          <div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;padding:6px 0;">
+            Holdings that can fund higher-conviction opportunities. Conviction anchors (🔒) are excluded.
+          </div>
+          <table class="pap-tbl">
+            <thead><tr>
+              <th>Symbol</th><th>Flag</th><th>Signal</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>Cross-Reference</th>
+            </tr></thead>
+            <tbody>
+              ${cat4.map(c => `<tr class="pap-row ${c.priority === "HIGH" ? "pap-row-high" : c.priority === "MEDIUM" ? "pap-row-med" : ""}">
+                <td><span class="pap-sym">${escHtml(c.symbol)}</span></td>
+                <td><span class="flag-${escHtml(c.flag)}">${escHtml(c.flag || "—")}</span></td>
+                <td>${c.signal ? `<span class="ess-badge ess-${escHtml(c.signal)}">${escHtml(c.signal)}</span>` : "—"}</td>
+                <td>${c.composite_score.toFixed(2)}</td>
+                <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
+                <td style="font-size:0.78rem;color:var(--muted)">
+                  ${c.primary_category
+                    ? `<span class="pap-xref pap-xref-${c.primary_category}">${escHtml(c.funding_reason)}</span>`
+                    : `<span style="color:var(--muted)">${escHtml(c.funding_reason)}</span>`}
+                </td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>`);
+  }
+
+  // ── Cat 5: Policy-Suppressed Actions ───────────────────────────────────────
+  if (cat5.length > 0) {
+    html.push(`
+      <div class="pap-category pap-cat-suppressed pap-auto-expand">
+        <div class="pap-cat-header" onclick="this.closest('.pap-category').classList.toggle('pap-expanded')">
+          <span class="pap-cat-num pap-cat-num-suppressed">🔒</span>
+          <span class="pap-cat-label">Policy-Suppressed Actions</span>
+          <span class="pap-cat-count">${cat5.length} holding${cat5.length !== 1 ? "s" : ""}</span>
+          <span class="pap-cat-chevron">▾</span>
+        </div>
+        <div class="pap-cat-body">
+          <div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+            These positions have intelligence signals that would normally trigger action,
+            but are blocked by operator policy. No execution action should be taken.
+            Intelligence is preserved for monitoring purposes only.
+          </div>
+          <table class="pap-tbl">
+            <thead><tr>
+              <th>Symbol</th><th>ESS Signal</th><th>Original Action</th>
+              <th>Policy</th><th>Effective Action</th><th>Score</th><th>% Port</th>
+            </tr></thead>
+            <tbody>
+              ${cat5.map(c => `<tr class="pap-row pap-row-suppressed">
+                <td><span class="pap-sym">${escHtml(c.symbol)}</span></td>
+                <td><span class="ess-badge ess-${escHtml(c.ess || c.signal)}">${escHtml(c.ess || c.signal)}</span></td>
+                <td><span class="flag-${escHtml(c.original_action)}">${escHtml(c.original_action || "—")}</span></td>
+                <td><span class="policy-badge ${_policyBadgeClass(c.policy_type)}">${escHtml(c.policy_badge || c.policy_type)}</span></td>
+                <td><span class="pap-exec-action pap-exec-BLOCKED_BY_POLICY">${escHtml(c.effective_action)}</span></td>
+                <td>${c.composite_score.toFixed(2)}</td>
+                <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>`);
+  }
+
+  container.innerHTML = html.join("\n");
+
+  // Re-render strategic exit chips (they live inside Cat 2's HTML)
+  _renderStrategicExitList();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +1015,11 @@ function renderResults(data) {
   renderRecommendations(data.recommendations || []);
   renderReplayAlignment(data);
   renderSecurityOverlays(data.security_overlays || []);
+  renderPortfolioActionPipeline(data);
+  // Phase 23.6B — Capital Rotation Advisor (auto-load after analysis)
+  loadCRAProposal();
+  // Phase 8.0B.X — load company context metadata (non-blocking)
+  _loadSecurityMetadata();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1380,6 +2192,10 @@ function renderRecommendations(recs) {
     const optimizerBadgesHtml = _buildOptimizerBadges(r);
     const optimizerViewHtml   = _buildOptimizerViewBlock(r);
 
+    // Phase 23.5 — Block Diagnostics + Next Best Action panel
+    // Replaces the old simple banner for MANDATE_BLOCKED / NO_CANDIDATES cases.
+    const blockDiagnosticsHtml = _renderBlockDiagnosticsPanel(r);
+
     // Drill-down toggle button — only shown when drilldown data exists
     const dd = r.drilldown;
     const holdingCount = dd && dd.holdings ? dd.holdings.length : 0;
@@ -1391,11 +2207,10 @@ function renderRecommendations(recs) {
     const recType = r.recommendation_type || "";
     const isPhaseE = _PHASE_E_TYPES.has(recType);
 
-    // Phase 22D.2 WS-C: visible blocked implementation banner (AC-C1, AC-C2).
-    // Shown when an INCREASE_UNDERWEIGHT recommendation has no actionable path
-    // because all vehicles failed optimizer gates or the mandate blocks deployment.
+    // Phase 22D.2 WS-C: Legacy simple banner kept only for NON-INCREASE_UNDERWEIGHT blocked recs.
+    // For INCREASE_UNDERWEIGHT, the full Block Diagnostics panel (blockDiagnosticsHtml) is used.
     let blockedWarningHtml = "";
-    if (recType === "INCREASE_UNDERWEIGHT" && r.optimizer_metadata) {
+    if (recType !== "INCREASE_UNDERWEIGHT" && r.optimizer_metadata) {
       const decision = r.optimizer_metadata.optimizer_decision || "";
       if (decision === "NO_CANDIDATES" || decision === "MANDATE_BLOCKED") {
         const isMandate = decision === "MANDATE_BLOCKED";
@@ -1416,6 +2231,7 @@ function renderRecommendations(recs) {
       <div class="rec-title">#${i+1} &nbsp; ${escHtml(r.title)}</div>
       <div class="rec-rationale">${escHtml(r.rationale)}</div>
       ${blockedWarningHtml}
+      ${blockDiagnosticsHtml}
       ${!isPhaseE && r.evidence_summary ? `<div class="rec-evidence">${escHtml(r.evidence_summary)}</div>` : ""}
       <div class="rec-meta">
         ${stateBadge}
@@ -2027,6 +2843,247 @@ function toggleOptimizerView(optId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase 23.5 — Block Diagnostics + Next Best Action panel
+// Presentation-layer only. No optimizer scores, CW-DAS scores, or mandate
+// logic is modified. All functions are additive display helpers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _buildNextBestAction(rec) {
+  // Returns an NBA object or null if not applicable.
+  const om      = rec.optimizer_metadata || {};
+  const decision = om.optimizer_decision || "";
+  const recType  = rec.recommendation_type || "";
+
+  if (recType !== "INCREASE_UNDERWEIGHT") return null;
+  if (decision !== "MANDATE_BLOCKED" && decision !== "NO_CANDIDATES") return null;
+
+  const targetNode  = om.target_node || "";
+  const mandateType = om.mandate_type || "";
+  const concTol     = om.concentration_tolerance;
+
+  // Pull deployment queue from shared analysis result (set before renderRecommendations)
+  const dqEntries = (
+    _lastAnalysisData &&
+    _lastAnalysisData.deployment_queue &&
+    _lastAnalysisData.deployment_queue.queue
+  ) || [];
+
+  // Filter to candidates whose allocation_node matches the target node
+  let alternatives = dqEntries.filter(e => {
+    const eNode = (e.allocation_node || "").toUpperCase();
+    const tNode = targetNode.toUpperCase();
+    return eNode === tNode || eNode.startsWith(tNode + ".");
+  });
+  const nodeFiltered = alternatives.length > 0;
+  // Fallback: top-5 overall if no node-matched candidates
+  if (!nodeFiltered) alternatives = dqEntries.slice(0, 5);
+  alternatives = alternatives.slice(0, 5);
+
+  if (decision === "MANDATE_BLOCKED") {
+    const tolStr = concTol != null ? (concTol * 100).toFixed(0) + "%" : "—";
+    return {
+      priority:     "HIGH",
+      headline:     "Mandate Block — INTENTIONAL_UNDERWEIGHT",
+      reason:       `Active mandate (${mandateType || "—"}) classifies this underweight as intentional at ` +
+                    `${tolStr} concentration tolerance. No deployment action is currently warranted.`,
+      action:       alternatives.length
+        ? "Deploy capital into top-ranked equity candidates in this node instead of legacy ETF vehicles."
+        : "No deployment queue candidates match this node. Review mandate parameters or widen portfolio coverage.",
+      alternatives,
+      nodeFiltered,
+      blockerType: "MANDATE_BLOCKED",
+    };
+  } else {
+    // NO_CANDIDATES — all ETF vehicles failed optimizer gates
+    const failedEtfs = (om.candidates || []).filter(
+      c => c.candidate_type === "ETF" && !String(c.etf_gate || "").startsWith("PASS")
+    );
+    const failSyms = failedEtfs.map(c => c.symbol).join(", ") || "—";
+    return {
+      priority:    "MEDIUM",
+      headline:    "ETF Gate Failure — No Actionable Vehicle",
+      reason:      `All implementation vehicles failed optimizer gates: ${failSyms}.`,
+      action:      alternatives.length
+        ? "Consider direct equity deployment into top-ranked candidates in this node from the deployment queue."
+        : "No deployment queue candidates found for this node. Review portfolio coverage gaps.",
+      alternatives,
+      nodeFiltered,
+      blockerType: "NO_CANDIDATES",
+    };
+  }
+}
+
+function _renderBlockDiagnosticsPanel(rec) {
+  const om      = rec.optimizer_metadata || {};
+  const decision = om.optimizer_decision || "";
+  const recType  = rec.recommendation_type || "";
+
+  if (recType !== "INCREASE_UNDERWEIGHT") return "";
+  if (decision !== "MANDATE_BLOCKED" && decision !== "NO_CANDIDATES") return "";
+
+  const nba = _buildNextBestAction(rec);
+  if (!nba) return "";
+
+  const panelId     = `nba-panel-${rec.recommendation_id}`;
+  const priorityCls = `nba-priority-${nba.priority.toLowerCase()}`;
+
+  // Alternatives table rows
+  const altRows = nba.alternatives.length
+    ? nba.alternatives.map((e, idx) => {
+        const tier     = e.narrative_tier || "—";
+        const score    = typeof e.deployment_score === "number" ? e.deployment_score.toFixed(2) : "—";
+        const headroom = typeof e.headroom_pct     === "number" ? e.headroom_pct.toFixed(0) + "%" : "—";
+        const policy   = e.policy_annotation
+          ? `<span class="nba-policy-tag">${escHtml(e.policy_annotation)}</span>`
+          : "";
+        const tierShort = tier === "CORE_CONVICTION_LEADER" ? "CCL"
+                        : tier === "HIGH_CONVICTION_ANCHOR"  ? "HCA"
+                        : tier;
+        const tierCls   = tier === "CORE_CONVICTION_LEADER" ? "nba-tier-ccl"
+                        : tier === "HIGH_CONVICTION_ANCHOR"  ? "nba-tier-hca"
+                        : "nba-tier-tgc";
+        return `<tr class="nba-alt-row">
+          <td class="nba-alt-rank">#${idx + 1}</td>
+          <td class="nba-alt-sym"><strong>${escHtml(e.symbol || "—")}</strong></td>
+          <td class="nba-alt-tier"><span class="nba-tier-badge ${tierCls}">${escHtml(tierShort)}</span></td>
+          <td class="nba-alt-score">${score}</td>
+          <td class="nba-alt-headroom">${headroom}</td>
+          <td>${policy}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="6" class="nba-alt-empty">No deployment queue candidates available for this node.</td></tr>`;
+
+  const nodeNote = !nba.nodeFiltered
+    ? `<div class="nba-caveat">⚠ No node-matched candidates found — showing top-ranked portfolio alternatives.</div>`
+    : "";
+
+  const evidenceHtml  = _buildBlockEvidence(rec);
+  const howToHtml     = _buildBlockHowToUnblock(rec);
+
+  return `<div class="nba-block-panel ${priorityCls}" id="${panelId}">
+    <div class="nba-panel-header">
+      <span class="nba-header-icon">⊘</span>
+      <span class="nba-header-label">${escHtml(nba.headline)}</span>
+      <span class="nba-header-priority">${escHtml(nba.priority)}</span>
+    </div>
+    <div class="nba-panel-body">
+      <div class="nba-reason">${escHtml(nba.reason)}</div>
+      <div class="nba-action-label">Next Best Action</div>
+      <div class="nba-action-text">${escHtml(nba.action)}</div>
+      ${nba.alternatives.length ? `<div class="nba-alternatives-section">
+        <div class="nba-section-title">Deployment Queue Alternatives</div>
+        ${nodeNote}
+        <table class="nba-alternatives-table">
+          <thead><tr>
+            <th></th><th>Symbol</th><th>Tier</th><th>CW-DAS</th><th>Headroom</th><th>Policy</th>
+          </tr></thead>
+          <tbody>${altRows}</tbody>
+        </table>
+      </div>` : ""}
+      ${evidenceHtml}
+      ${howToHtml}
+    </div>
+  </div>`;
+}
+
+function _buildBlockEvidence(rec) {
+  const om          = rec.optimizer_metadata || {};
+  const decision    = om.optimizer_decision || "";
+  const mandateType = om.mandate_type || "";
+  const concTol     = om.concentration_tolerance;
+  const targetNode  = om.target_node || "";
+  const legVehicles = (om.legacy_vehicles || []).join(", ") || "—";
+  const candidates  = om.candidates || [];
+
+  const rows = [];
+  rows.push(`<tr><td class="ev-label">Target Node</td><td class="ev-val">${escHtml(targetNode || "—")}</td></tr>`);
+  rows.push(`<tr><td class="ev-label">Legacy Vehicles</td><td class="ev-val">${escHtml(legVehicles)}</td></tr>`);
+
+  if (decision === "MANDATE_BLOCKED" && mandateType) {
+    rows.push(`<tr><td class="ev-label">Active Mandate</td><td class="ev-val">${escHtml(mandateType)}</td></tr>`);
+    if (concTol != null) {
+      rows.push(`<tr><td class="ev-label">Concentration Tolerance</td><td class="ev-val">${(concTol * 100).toFixed(0)}%</td></tr>`);
+    }
+    rows.push(`<tr><td class="ev-label">Block Reason</td><td class="ev-val">INTENTIONAL_UNDERWEIGHT — mandate treats this gap as within policy bounds.</td></tr>`);
+  }
+
+  const failedEtfs = candidates.filter(
+    c => c.candidate_type === "ETF" && !String(c.etf_gate || "").startsWith("PASS")
+  );
+  if (failedEtfs.length) {
+    const etfDetail = failedEtfs.map(c => {
+      const gateReason = String(c.etf_gate || "").replace(/^FAIL\s*\[?/, "").replace(/\]$/, "");
+      const ncsStr     = c.ncs != null ? ` · NCS ${Number(c.ncs).toFixed(1)}%` : "";
+      const owStr      = c.worsens_overweight ? " · ⚠ worsens OW" : "";
+      return `${escHtml(c.symbol)}: ${escHtml(gateReason)}${ncsStr}${owStr}`;
+    }).join("<br>");
+    rows.push(`<tr><td class="ev-label">ETF Gate Failures</td><td class="ev-val">${etfDetail}</td></tr>`);
+  }
+
+  if (om.ow_node_key) {
+    rows.push(`<tr><td class="ev-label">Overweight Node</td><td class="ev-val">${escHtml(om.ow_node_key)}</td></tr>`);
+  }
+  if (om.overlap_with_ow_pct) {
+    rows.push(`<tr><td class="ev-label">OW Overlap</td><td class="ev-val">${Number(om.overlap_with_ow_pct).toFixed(1)}% of ETF exposure lands in overweight node</td></tr>`);
+  }
+
+  if (!rows.length) return "";
+
+  const evId = `nba-ev-${rec.recommendation_id}`;
+  return `<div class="nba-collapsible-section">
+    <button class="nba-section-toggle" onclick="toggleNbaSection('${evId}')">&#9658; Block Evidence</button>
+    <div class="nba-section-body" id="${evId}" style="display:none">
+      <table class="nba-evidence-table"><tbody>${rows.join("")}</tbody></table>
+    </div>
+  </div>`;
+}
+
+function _buildBlockHowToUnblock(rec) {
+  const om       = rec.optimizer_metadata || {};
+  const decision = om.optimizer_decision || "";
+  const mandate  = om.mandate_type || "UNKNOWN";
+
+  let steps = [];
+  if (decision === "MANDATE_BLOCKED") {
+    steps = [
+      `Review whether the active mandate (${mandate}) remains appropriate for current portfolio objectives.`,
+      "If the underweight represents a genuine gap, change the mandate type to one with lower concentration tolerance.",
+      "Alternatively, deploy directly into equities within the target node — deployment queue provides ranked candidates above.",
+      "Legacy ETF vehicles remain held; no forced action is required by this block.",
+    ];
+  } else {
+    steps = [
+      "ETF vehicles for this node are blocked due to overweight worsening, NCS below threshold, or LOW suitability.",
+      "Use the deployment queue alternatives above to identify direct equity opportunities in the target node.",
+      "If concentration is reduced (via trimming overweight positions), ETF gates may pass in a future run.",
+      "No action is required — this is a guidance flag, not a trade mandate.",
+    ];
+  }
+
+  const howId = `nba-how-${rec.recommendation_id}`;
+  return `<div class="nba-collapsible-section">
+    <button class="nba-section-toggle" onclick="toggleNbaSection('${howId}')">&#9658; How to Unblock</button>
+    <div class="nba-section-body" id="${howId}" style="display:none">
+      <ol class="nba-unblock-list">
+        ${steps.map(s => `<li>${escHtml(s)}</li>`).join("")}
+      </ol>
+    </div>
+  </div>`;
+}
+
+function toggleNbaSection(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isOpen = el.style.display !== "none";
+  el.style.display = isOpen ? "none" : "block";
+  const btn = el.previousElementSibling;
+  if (btn) {
+    const label = btn.textContent.slice(2);
+    btn.innerHTML = (isOpen ? "&#9658; " : "&#9660; ") + label;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phase 7.5C — Capital Deployment Queue
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2460,8 +3517,8 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
       : null;
 
     return `<tr class="dq-data-row${rankCls}" onclick="_dqToggleBreakdown('${bdId}')">
-      <td><span class="dq-rank-num${rankNumCls}">#${c.rank}</span></td>
-      <td><span class="dq-sym">${escHtml(c.symbol)}</span></td>
+      <td><span class="dq-rank-num${rankNumCls}">#${c.rank}${c.policy_rank_boost ? '<span title="Preferred Accumulation rank boost" style="font-size:0.7rem;margin-left:2px">⭐</span>' : ''}</span></td>
+      <td><span class="dq-sym">${escHtml(c.symbol)}</span>${c.policy_annotation ? `<br><span class="${_policyBadgeClass(c.policy_type)}" style="margin-top:2px">${escHtml(c.policy_annotation)}</span>` : ''}</td>
       <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span></td>
       <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
       <td style="text-align:right;white-space:nowrap">${wtDisp}</td>
@@ -2557,6 +3614,9 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
           </div>
         </div>
         <div class="dq-breakdown-notes">${escHtml(c.notes || "")}</div>
+        ${_dqCompanySnapshotHtml(sym, _securityMetadata)}
+        ${_dqFundamentalSnapshotHtml(sym, _securityMetadata, ov)}
+        ${_dqWhySIHLikesItHtml(c, ucf, ov, bd, dp, trim)}
       </td>
     </tr>`;
   }).join("");
@@ -2753,6 +3813,947 @@ function emptyState(title, sub) {
     <p style="margin:0">${escHtml(sub)}</p>
   </div>`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 8.0B.X — Company Context Enrichment
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _securityMetadata = {};   // {symbol → {sector, industry, country, quote_type}}
+
+// Called once after analysis loads — non-blocking
+async function _loadSecurityMetadata() {
+  try {
+    const resp = await fetch("/api/security-metadata");
+    if (resp.ok) {
+      _securityMetadata = await resp.json();
+    }
+  } catch (_) {
+    // Fail-open: snapshot degrades to "—" for all fields
+  }
+}
+
+// Clean Fidelity-style security description into a readable company name
+function _cleanCompanyName(desc, symbol) {
+  if (!desc || !desc.trim()) return symbol;
+  return desc
+    .replace(/\s+SPON(?:SORED)?\s+ADS?.*$/i, " (ADR)")
+    .replace(/\s+DEP(?:OSITORY)?\s+REC(?:EIPT)?.*$/i, " (ADR)")
+    .replace(/\s+EACH\s+REP.*$/i, "")
+    .replace(/\s+ORD\s+[A-Z]{2,3}\s*\d*$/i, "")
+    .replace(/\s+COM(?:MON)?\s+(?:STK|STOCK|SH(?:ARES?)?)(?:\s+USD\d+)?$/i, "")
+    .replace(/\s+CL(?:ASS)?\s+[A-Z]$/i, "")
+    .replace(/\s+INC(?:ORPORATED)?\.?\s*$/i, " Inc.")
+    .replace(/\s+CORP(?:ORATION)?\.?\s*$/i, " Corp.")
+    .replace(/\s+HOLDINGS?\s+CO(?:MPANY)?$/i, " Holdings")
+    .replace(/\s+CO(?:MPANY)?\.?\s*$/i, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// ── Fundamental Snapshot (FMP Diagnostic Overlay — Phase 8.0B.1B.5) ──────────
+// Display-only: NO scoring, NO ranking, NO recommendation changes.
+
+function _fmpF(meta, key) {
+  // Return float or null from metadata FMP field
+  const v = meta[key];
+  if (v === undefined || v === null || v === "") return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+
+// ── Thesis Integrity ──────────────────────────────────────────────────────────
+// INTACT / QUESTIONABLE / DETERIORATING / INSUFFICIENT_DATA
+function _fmpThesisIntegrity(meta) {
+  const cov = meta.fmp_coverage || "";
+  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
+    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
+  }
+
+  const rev   = _fmpF(meta, "fmp_revenue_growth");
+  const beat  = _fmpF(meta, "fmp_beat_rate");
+  const accel = _fmpF(meta, "fmp_revenue_accel");
+
+  if (rev === null && beat === null) {
+    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
+  }
+
+  const evidence = [];
+  if (rev   !== null) evidence.push("Rev " + (rev >= 0 ? "+" : "") + (rev * 100).toFixed(1) + "%");
+  if (beat  !== null) evidence.push("Beat " + Math.round(beat * 100) + "%");
+  if (accel !== null) evidence.push("Accel " + (accel >= 0 ? "+" : "") + (accel * 100).toFixed(1) + "pp");
+
+  // DETERIORATING: revenue declining AND (beat weak OR strong deceleration)
+  const isDeteriorating =
+    (rev !== null && rev < -0.02 && beat !== null && beat < 0.65) ||
+    (rev !== null && rev < -0.02 && accel !== null && accel < -0.50);
+
+  // INTACT: positive revenue + decent beat + not heavily decelerating
+  const isIntact =
+    (rev === null || rev >= 0) &&
+    (beat === null || beat >= 0.625) &&
+    (accel === null || accel >= -0.20);
+
+  if (isDeteriorating) return { label: "DETERIORATING",    cls: "deteriorating", evidence };
+  if (isIntact)        return { label: "INTACT",           cls: "intact",        evidence };
+  return                      { label: "QUESTIONABLE",     cls: "questionable",  evidence };
+}
+
+// ── Fundamental Consistency ───────────────────────────────────────────────────
+// CONSISTENT / MIXED / CONTRADICTORY / DATA_ANOMALY
+function _fmpFundamentalConsistency(meta, ov, thesis) {
+  const cov = meta.fmp_coverage || "";
+  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
+    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
+  }
+
+  const ess    = ((ov && ov.ess_score_text) || "").toUpperCase();
+  const dan    = ov ? parseFloat(ov.danelfin_score || 0) || 0 : 0;
+  const ev     = _fmpF(meta, "fmp_ev_ebitda");
+  const rev    = _fmpF(meta, "fmp_revenue_growth");
+
+  const signalBullish = ess.includes("BULLISH") && !ess.includes("BEARISH");
+  const signalBearish = ess.includes("BEARISH");
+
+  const evidence = [];
+  if (ess)    evidence.push("ESS " + ess.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase()));
+  if (dan > 0) evidence.push("Danelfin " + dan.toFixed(1));
+
+  // DATA_ANOMALY: extreme valuation with declining revenue
+  if (ev !== null && ev > 80 && rev !== null && rev < -0.02) {
+    return { label: "DATA_ANOMALY", cls: "anomaly",
+      evidence: [...evidence, "EV/EBITDA " + ev.toFixed(1) + "x with declining revenue"] };
+  }
+
+  const thesisLabel = thesis.label;
+
+  // CONSISTENT: signals and fundamentals agree
+  if ((signalBullish && thesisLabel === "INTACT") ||
+      (signalBearish && thesisLabel === "DETERIORATING")) {
+    return { label: "CONSISTENT", cls: "consistent", evidence };
+  }
+
+  // CONTRADICTORY: strongly bullish signals + deteriorating fundamentals + weak beat
+  const beat = _fmpF(meta, "fmp_beat_rate");
+  if (signalBullish && thesisLabel === "DETERIORATING" && (beat === null || beat < 0.60)) {
+    return { label: "CONTRADICTORY", cls: "contradictory",
+      evidence: [...evidence, "Bullish signals vs. deteriorating fundamentals"] };
+  }
+
+  // MIXED: partial alignment
+  return { label: "MIXED", cls: "mixed", evidence };
+}
+
+// ── Dislocation Detection ─────────────────────────────────────────────────────
+// NONE / POTENTIAL / HIGH CONVICTION
+function _fmpDislocationType(meta, ov, thesis, consistency) {
+  const cov = meta.fmp_coverage || "";
+  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
+    return { label: "N/A", cls: "nodata", evidence: [] };
+  }
+
+  const thesisLabel = thesis.label;
+  const beat  = _fmpF(meta, "fmp_beat_rate");
+  const dan   = ov ? parseFloat(ov.danelfin_score || 0) || 0 : 0;
+  const ess   = ((ov && ov.ess_score_text) || "").toUpperCase();
+  const signalBearishOrNeutral = ess.includes("BEARISH") || ess === "NEUTRAL" || ess === "";
+
+  // HIGH CONVICTION dislocation: intact thesis + strong beats + signal weakness
+  if (thesisLabel === "INTACT" && beat !== null && beat >= 0.875 &&
+      (signalBearishOrNeutral || dan < 1.5)) {
+    return { label: "HIGH CONVICTION", cls: "high-conviction",
+      evidence: ["Intact thesis with bearish/neutral signals"] };
+  }
+
+  // POTENTIAL dislocation: intact thesis + decent beats but AI signal modest
+  if (thesisLabel === "INTACT" && beat !== null && beat >= 0.75 && dan < 3.0) {
+    return { label: "POTENTIAL", cls: "potential",
+      evidence: ["Intact thesis, Danelfin " + dan.toFixed(1) + " (moderate signal)"] };
+  }
+
+  return { label: "NONE", cls: "none", evidence: [] };
+}
+
+// ── Fundamental Snapshot HTML ─────────────────────────────────────────────────
+
+function _dqFundamentalSnapshotHtml(sym, metadataMap, ov) {
+  const meta = metadataMap[(sym || "").toUpperCase()] || {};
+  const cov  = meta.fmp_coverage || "";
+
+  // Suppress entirely if no FMP data and not an ETF
+  if (!cov || cov === "NO_DATA") return "";
+
+  const thesis      = _fmpThesisIntegrity(meta);
+  const consistency = _fmpFundamentalConsistency(meta, ov, thesis);
+  const dislocation = _fmpDislocationType(meta, ov, thesis, consistency);
+
+  const rev    = _fmpF(meta, "fmp_revenue_growth");
+  const roic   = _fmpF(meta, "fmp_roic");
+  const fcf    = _fmpF(meta, "fmp_fcf_yield");
+  const beat   = _fmpF(meta, "fmp_beat_rate");
+  const ev     = _fmpF(meta, "fmp_ev_ebitda");
+  const netBuy = _fmpF(meta, "fmp_net_buy_score");
+  const cons   = meta.fmp_consensus || "";
+
+  function fmtPct(v) { if (v === null) return "—"; return (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%"; }
+  function fmtX(v)   { if (v === null) return "—"; return v.toFixed(1) + "x"; }
+  function fmtF(v)   { if (v === null) return "—"; return (v * 100).toFixed(1) + "%"; }
+  function fmtBeat(v){ if (v === null) return "—"; return Math.round(v * 100) + "% (" + (meta.fmp_beats_8q || "?") + "/8q)"; }
+  function cls(v, pos, neg) { if (v === null) return ""; return v > pos ? " pos" : v < neg ? " neg" : ""; }
+
+  // ETF: show brief note
+  if (cov === "ETF_NOT_APPLICABLE") {
+    return `<div class="dq-fundamental-snapshot">
+      <div class="dq-fs-title">Fundamental Snapshot</div>
+      <div style="font-size:0.78rem;color:var(--muted);font-style:italic">ETF — fundamental analysis not applicable.</div>
+    </div>`;
+  }
+
+  const revCls  = cls(rev,  0.05, -0.02);
+  const roicCls = cls(roic, 0.10,  0.04);
+  const fcfCls  = cls(fcf,  0.03,  0);
+
+  return `<div class="dq-fundamental-snapshot">
+    <div class="dq-fs-title">Fundamental Snapshot</div>
+    <div class="dq-fs-grid">
+      <div class="dq-fs-lbl">Revenue Growth</div>
+      <div class="dq-fs-val${revCls}">${fmtPct(rev)}</div>
+      <div class="dq-fs-lbl">ROIC</div>
+      <div class="dq-fs-val${roicCls}">${fmtF(roic)}</div>
+      <div class="dq-fs-lbl">FCF Yield</div>
+      <div class="dq-fs-val${fcfCls}">${fmtF(fcf)}</div>
+      <div class="dq-fs-lbl">EV / EBITDA</div>
+      <div class="dq-fs-val">${fmtX(ev)}</div>
+      <div class="dq-fs-lbl">Beat Rate</div>
+      <div class="dq-fs-val">${fmtBeat(beat)}</div>
+      ${netBuy !== null || cons ? `<div class="dq-fs-lbl">Analyst Consensus</div>
+      <div class="dq-fs-val">${cons ? escHtml(cons) : "—"}${netBuy !== null ? ' <span style="font-size:0.72rem;color:var(--muted)">(net buy ' + (netBuy >= 0 ? "+" : "") + Math.round(netBuy) + ')</span>' : ''}</div>` : ""}
+    </div>
+    <div class="dq-fs-badges">
+      <div class="dq-fs-badge-row">
+        <div class="dq-fs-badge-lbl">Thesis Integrity</div>
+        <span class="dq-fs-badge ${thesis.cls}">${escHtml(thesis.label.replace(/_/g," "))}</span>
+        ${thesis.evidence.length ? '<span style="font-size:0.72rem;color:var(--muted)">' + thesis.evidence.map(escHtml).join(" · ") + '</span>' : ''}
+      </div>
+      <div class="dq-fs-badge-row">
+        <div class="dq-fs-badge-lbl">Fundamental Consistency</div>
+        <span class="dq-fs-badge ${consistency.cls}">${escHtml(consistency.label)}</span>
+        ${consistency.evidence.length > 2 ? '<span style="font-size:0.72rem;color:var(--muted)">' + escHtml(consistency.evidence[2] || "") + '</span>' : ''}
+      </div>
+      <div class="dq-fs-badge-row">
+        <div class="dq-fs-badge-lbl">Dislocation</div>
+        <span class="dq-fs-badge ${dislocation.cls}">${escHtml(dislocation.label)}</span>
+        ${dislocation.evidence.length ? '<span style="font-size:0.72rem;color:var(--muted)">' + dislocation.evidence.map(escHtml).join(" · ") + '</span>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Why SIH Likes It ─────────────────────────────────────────────────────────
+
+function _dqWhySIHLikesItHtml(c, ucf, ov, bd, dp, trim) {
+  const bullets = [];
+  const rank       = c.rank;
+  const ucfLabel   = (ucf.ucf_label  || "").toUpperCase();
+  const ucfRank    = ucf.ucf_rank  != null ? parseInt(ucf.ucf_rank) : null;
+  const essText    = (ov.ess_score_text  || c.ess_score_text  || "").toUpperCase();
+  const replayOn   = c.replay_supported || ov.replay_supported;
+  const replayPct  = ov.replay_percentile != null ? parseFloat(ov.replay_percentile) : null;
+  const dan        = ov.danelfin_score  != null ? parseFloat(ov.danelfin_score)  : null;
+  const zacks      = ov.zacks_rating    != null ? parseFloat(ov.zacks_rating)    : null;
+  const redPen     = bd.redundancy_pen  != null ? parseFloat(bd.redundancy_pen)  : null;
+  const concPen    = bd.conc_pen        != null ? parseFloat(bd.conc_pen)        : null;
+  const suggestedAdd = dp && dp.suggested_add != null ? parseFloat(dp.suggested_add) : 0;
+  const isOver     = ov.is_overweight_vs_target;
+  const portfolioPct = ov.percent_of_portfolio != null ? parseFloat(ov.percent_of_portfolio) : null;
+
+  // 1. Rank
+  if (rank === 1)      bullets.push("#1 CW-DAS deployment priority");
+  else if (rank <= 3)  bullets.push(`Top-${rank} CW-DAS deployment candidate`);
+
+  // 2. UCF conviction
+  if (ucfLabel.includes("CORE"))        bullets.push("Core Conviction Leader");
+  else if (ucfLabel.includes("HIGH"))   bullets.push("High Conviction Anchor");
+  else if (ucfLabel.includes("STRONG")) bullets.push("Strong signal conviction");
+
+  // 3. UCF universe rank
+  if (ucfRank != null && ucfRank <= 25 && !ucfLabel.includes("CORE") && !ucfLabel.includes("HIGH")) {
+    bullets.push(`Top-25 universe conviction rank (#${ucfRank})`);
+  }
+
+  // 4. ESS signal
+  if (essText.includes("VERY_BULLISH") || essText.includes("STRONG_BULLISH")) {
+    bullets.push("Very Bullish ESS signal");
+  } else if (essText.includes("BULLISH")) {
+    bullets.push("Bullish ESS signal");
+  }
+
+  // 5. Replay
+  if (replayOn) {
+    if (replayPct != null && replayPct >= 80) {
+      bullets.push(`Elite replay backing — ${Math.round(replayPct)}th percentile`);
+    } else if (replayPct != null && replayPct >= 60) {
+      bullets.push(`Replay-backed thesis — ${Math.round(replayPct)}th percentile`);
+    } else {
+      bullets.push("Replay-backed thesis");
+    }
+  }
+
+  // 6. Danelfin AI signal
+  if (dan != null && dan >= 4.5) {
+    bullets.push(`Strong AI signal (Danelfin ${dan.toFixed(1)})`);
+  }
+
+  // 7. Zacks
+  if (zacks != null && zacks <= 1.5)       bullets.push("Zacks Strong Buy rating");
+  else if (zacks != null && zacks <= 2.5)  bullets.push("Zacks Buy rating");
+
+  // 8. No conflicts
+  if (redPen === 0 && concPen === 0) {
+    bullets.push("No concentration conflicts");
+  }
+
+  // 9. Low trim / sizing
+  if (trim <= 20) {
+    bullets.push("Low trim pressure");
+  }
+  if (suggestedAdd > 0) {
+    bullets.push("Actionable — new capital can deploy");
+  } else if (!isOver && portfolioPct != null && portfolioPct < 3) {
+    bullets.push("Underweight vs. target — sizing opportunity");
+  }
+
+  // Suppress if fewer than 2 bullets (edge case: ETFs, funds, sparse data)
+  if (bullets.length < 2) return "";
+
+  const items = bullets.slice(0, 5).map(b => `<li>${escHtml(b)}</li>`).join("");
+  return `<div class="dq-why-sih">
+    <div class="dq-why-sih-title">Why SIH Likes It</div>
+    <ul class="dq-why-sih-bullets">${items}</ul>
+  </div>`;
+}
+
+// ── Company Snapshot helpers ──────────────────────────────────────────────────
+
+// Clean Yahoo investor-language business summary into operator language
+function _cleanBusinessSummary(raw) {
+  if (!raw) return "";
+  let s = raw
+    .replace(/,?\s+together with its subsidiaries,?/gi, "")
+    .replace(/^[A-Z][^.]{8,90}?(?:Inc\.|Corp\.|Corporation|Company|Limited|Ltd\.|Holdings?\s*Co\.?|PLC|N\.V\.|AG|LLC|Co\.?)\s+(?:designs(?:,?\s+develops)?|operates as a[n]?|engages in|provides|builds and deploys|manufactures|develops|sources and engineers),?\s*/i, "")
+    .replace(/,?\s+(?:and internationally|in (?:the United States?|North America|the Americas|Europe|the Middle East|Africa|Asia|Taiwan|China|Japan|Korea|Australia|Germany|the United Kingdom|internationally|Canada)[^.]*)/gi, "")
+    .trim();
+  if (s && s[0] === s[0].toLowerCase() && s[0] !== s[0].toUpperCase()) {
+    s = s[0].toUpperCase() + s.slice(1);
+  }
+  s = s.replace(/[.,…]+$/, "").trim();
+  if (s.length > 10) s += ".";
+  return s.length > 15 ? s : raw;
+}
+
+// Why It Matters: deterministic sector+industry → operator theme string
+const _WHY_IT_MATTERS_MAP = {
+  "Technology|Semiconductors":                      "Critical chipmaker supplying AI, mobile, cloud, and automotive compute.",
+  "Technology|Semiconductor Equipment & Materials": "Sole-source supplier of advanced chip manufacturing equipment.",
+  "Technology|Computer Hardware":                   "Enterprise servers, storage, and compute infrastructure.",
+  "Technology|Electronic Components":               "Technology component distribution enabling global electronics supply chains.",
+  "Technology|Information Technology Services":     "IT services and solutions driving enterprise digital transformation.",
+  "Technology|Software—Application":                "Enterprise software with recurring revenue and platform lock-in.",
+  "Technology|Software—Infrastructure":             "Infrastructure software underpinning cloud and enterprise systems.",
+  "Technology|Communication Equipment":             "Network infrastructure for enterprise, carrier, and data-center connectivity.",
+  "Technology|Scientific & Technical Instruments":  "Precision instruments and measurement technology for industrial and lab markets.",
+  "Industrials|Electrical Equipment & Parts":       "Benefits from AI data-center buildout, electrification, and grid modernization.",
+  "Industrials|Engineering & Construction":         "Infrastructure construction tied to energy, industrial, and utilities investment.",
+  "Industrials|Specialty Industrial Machinery":     "Industrial machinery serving diverse manufacturing end markets.",
+  "Industrials|Aerospace & Defense":               "Defense systems and aerospace with government-contract revenue stability.",
+  "Industrials|Metal Fabrication":                 "Metal fabrication serving construction, manufacturing, and energy markets.",
+  "Healthcare|Medical Distribution":               "Essential pharmaceutical and medical supply distribution to healthcare systems.",
+  "Healthcare|Biotechnology":                      "Drug pipeline exposure to biotech innovation cycles and FDA approvals.",
+  "Healthcare|Drug Manufacturers—General":         "Diversified pharmaceutical manufacturer with branded and generic drug exposure.",
+  "Healthcare|Medical Devices":                    "Medical device supplier serving surgical, diagnostic, and therapeutic markets.",
+  "Healthcare|Medical Care Facilities":            "Healthcare services provider with volume and reimbursement rate exposure.",
+  "Energy|Oil & Gas Integrated":                   "Exposure to crude production, refining margins, and downstream fuel demand.",
+  "Energy|Oil & Gas E&P":                          "Direct commodity price exposure through exploration and production operations.",
+  "Energy|Oil & Gas Refining & Marketing":         "Refining margin and fuel distribution exposure.",
+  "Energy|Solar":                                  "Clean energy exposure through solar manufacturing and project development.",
+  "Financial Services|Asset Management":           "Fee-based revenue tied to assets under management and market performance.",
+  "Financial Services|Banks—Regional":             "Lending and deposit business with local economic and rate-cycle exposure.",
+  "Financial Services|Insurance—Property & Casualty": "P&C underwriter with premium income and catastrophe loss exposure.",
+  "Financial Services|Capital Markets":            "Capital markets revenue tied to deal flow, trading, and market activity.",
+  "Consumer Cyclical|Auto Manufacturers":          "EV manufacturing with exposure to energy policy, autonomy, and consumer demand.",
+  "Consumer Cyclical|Specialty Retail":            "Specialty retailer with consumer spending and brand loyalty exposure.",
+  "Consumer Defensive|Household & Personal Products": "Consumer staples with stable demand and pricing power.",
+  "Basic Materials|Steel":                         "Domestic steel production tied to construction, manufacturing, and trade policy.",
+  "Basic Materials|Gold":                          "Gold mining with direct commodity and safe-haven demand exposure.",
+  "Basic Materials|Copper":                        "Copper mining with exposure to electrification and infrastructure demand.",
+  "Communication Services|Internet Content & Information": "Digital platform monetizing user engagement through advertising and subscriptions.",
+  "Communication Services|Telecom Services":       "Telecom services with subscription revenue and network infrastructure exposure.",
+  "Utilities|Utilities—Regulated Electric":        "Regulated electric utility with stable yield and rate-cycle sensitivity.",
+  "Real Estate|REIT—Industrial":                   "Industrial REIT with rent exposure to e-commerce and logistics demand.",
+};
+const _WHY_SECTOR_FALLBACK = {
+  "Technology":             "Technology business operating in enterprise, cloud, or semiconductor markets.",
+  "Healthcare":             "Healthcare company with pharmaceutical, device, or distribution exposure.",
+  "Energy":                 "Energy company with commodity price and infrastructure exposure.",
+  "Industrials":            "Industrial manufacturer or services provider.",
+  "Financial Services":     "Financial services business with market-sensitive or fee-based revenue.",
+  "Consumer Cyclical":      "Consumer-facing business tied to discretionary spending trends.",
+  "Consumer Defensive":     "Defensive consumer business with stable demand and brand loyalty.",
+  "Basic Materials":        "Materials producer with commodity cycle and supply-demand exposure.",
+  "Communication Services": "Communications or media business with user engagement and ad-revenue exposure.",
+  "Utilities":              "Regulated utility with stable yield and interest rate sensitivity.",
+  "Real Estate":            "Real estate business with asset value and rate-cycle exposure.",
+};
+
+function _getWhyItMatters(sector, industry) {
+  if (!sector) return "";
+  return _WHY_IT_MATTERS_MAP[`${sector}|${industry}`] || _WHY_SECTOR_FALLBACK[sector] || "";
+}
+
+// Business model tags
+const _TAGS_PRIMARY = {
+  "Technology|Semiconductors":                      ["SEMICONDUCTOR"],
+  "Technology|Semiconductor Equipment & Materials": ["SEMICONDUCTOR"],
+  "Technology|Computer Hardware":                   ["ENTERPRISE IT"],
+  "Technology|Electronic Components":               ["TECH DISTRIBUTION"],
+  "Technology|Information Technology Services":     ["ENTERPRISE IT"],
+  "Technology|Software—Application":                ["SOFTWARE"],
+  "Technology|Software—Infrastructure":             ["SOFTWARE"],
+  "Technology|Communication Equipment":             ["NETWORKING"],
+  "Industrials|Electrical Equipment & Parts":       ["INDUSTRIALS"],
+  "Industrials|Engineering & Construction":         ["INDUSTRIALS"],
+  "Industrials|Specialty Industrial Machinery":     ["INDUSTRIALS"],
+  "Industrials|Aerospace & Defense":                ["AEROSPACE", "DEFENSE"],
+  "Industrials|Metal Fabrication":                  ["MATERIALS"],
+  "Healthcare|Medical Distribution":                ["HEALTHCARE"],
+  "Healthcare|Biotechnology":                       ["BIOTECH"],
+  "Healthcare|Drug Manufacturers—General":          ["PHARMA"],
+  "Healthcare|Medical Devices":                     ["HEALTHCARE"],
+  "Healthcare|Medical Care Facilities":             ["HEALTHCARE"],
+  "Energy|Oil & Gas Integrated":                    ["ENERGY"],
+  "Energy|Oil & Gas E&P":                           ["ENERGY"],
+  "Energy|Oil & Gas Refining & Marketing":          ["ENERGY"],
+  "Energy|Solar":                                   ["CLEAN ENERGY"],
+  "Financial Services|Asset Management":            ["FINANCIALS"],
+  "Financial Services|Banks—Regional":              ["BANKING"],
+  "Financial Services|Insurance—Property & Casualty": ["INSURANCE"],
+  "Financial Services|Capital Markets":             ["FINANCIALS"],
+  "Consumer Cyclical|Auto Manufacturers":           ["EV"],
+  "Basic Materials|Steel":                          ["STEEL"],
+  "Basic Materials|Gold":                           ["GOLD"],
+  "Communication Services|Internet Content & Information": ["DIGITAL MEDIA"],
+};
+const _TAG_KEYWORD_BOOSTS = [
+  [/\bAI\b|artificial intelligence/i,    "AI"],
+  [/data.?cent(?:er|re)/i,               "DATA CENTER"],
+  [/nuclear|SMR\b/i,                     "NUCLEAR"],
+  [/\bdefense\b|intelligence community|counterterrorism/i, "DEFENSE"],
+  [/\belectric vehicle|EV\b/i,           "EV"],
+  [/\blithography|chip manufactur/i,     "SEMICONDUCTOR"],
+  [/\bsemiconductor/i,                   "SEMICONDUCTOR"],
+];
+
+function _getBusinessTags(sector, industry, bizDesc) {
+  const base = (_TAGS_PRIMARY[`${sector}|${industry}`] || []).slice();
+  const tagSet = new Set(base);
+  if (bizDesc) {
+    for (const [rx, tag] of _TAG_KEYWORD_BOOSTS) {
+      if (rx.test(bizDesc) && !tagSet.has(tag)) tagSet.add(tag);
+    }
+  }
+  return [...tagSet].slice(0, 3);
+}
+
+// Build Company Snapshot HTML for a single symbol
+function _dqCompanySnapshotHtml(sym, metadataMap) {
+  const meta = metadataMap[(sym || "").toUpperCase()] || {};
+
+  const companyName = meta.long_name    || sym || "Unknown";
+  const hq          = meta.hq           || "Unknown";
+  const sector      = meta.sector       || "";
+  const industry    = meta.industry     || "";
+  const country     = meta.country      || "—";
+  const capTier     = meta.market_cap_bucket || "";
+  const rawBiz      = meta.business_summary || "";
+  const secType     = meta.quote_type || meta.security_type || "";
+
+  const bizDesc    = _cleanBusinessSummary(rawBiz);
+  const whyMatters = _getWhyItMatters(sector, industry);
+  const tags       = _getBusinessTags(sector, industry, rawBiz);
+
+  // ETF / Fund special handling
+  const isEtf = secType === "ETF" || secType === "MUTUALFUND" || secType === "FUND";
+  const sectorDisplay   = (isEtf && !sector) ? "Exchange-Traded Fund" : (sector || "—");
+  const industryDisplay = industry || "—";
+
+  const hasAny = sector || industry || country !== "—" || meta.long_name || isEtf;
+  if (!hasAny) return "";
+
+  const tagHtml = tags.length
+    ? `<div class="dq-cs-tags">${tags.map(t => `<span class="dq-cs-tag">${escHtml(t)}</span>`).join("")}</div>`
+    : "";
+
+  return `<div class="dq-company-snapshot">
+    <div class="dq-cs-title">Company Snapshot</div>
+    ${tagHtml}<div class="dq-cs-grid">
+      <div class="dq-cs-lbl">Company</div>
+      <div class="dq-cs-val">${escHtml(companyName)}</div>
+      <div class="dq-cs-lbl">Headquarters</div>
+      <div class="dq-cs-val">${escHtml(hq)}</div>
+      <div class="dq-cs-lbl">Sector</div>
+      <div class="dq-cs-val">${escHtml(sectorDisplay)}</div>
+      <div class="dq-cs-lbl">Industry</div>
+      <div class="dq-cs-val">${escHtml(industryDisplay)}</div>
+      ${bizDesc ? `<div class="dq-cs-lbl dq-cs-business-lbl">What They Do</div>
+      <div class="dq-cs-val dq-cs-business">${escHtml(bizDesc)}</div>` : ""}
+      ${whyMatters ? `<div class="dq-cs-lbl dq-cs-business-lbl">Why It Matters</div>
+      <div class="dq-cs-val dq-cs-why">${escHtml(whyMatters)}</div>` : ""}
+      <div class="dq-cs-lbl">Country</div>
+      <div class="dq-cs-val">${escHtml(country)}</div>
+      ${capTier ? `<div class="dq-cs-lbl">Cap Tier</div>
+      <div class="dq-cs-val"><span class="dq-cs-badge">${escHtml(capTier)}</span></div>` : ""}
+    </div>
+  </div>`;
+}
+
+// Category metadata
+const _CRA_CATEGORIES = [
+  { key: "SIGNAL_DETERIORATION",   label: "Signal Deterioration",    num: 1 },
+  { key: "STRATEGIC_EXIT",         label: "Strategic Exit",           num: 2 },
+  { key: "OVERWEIGHT_REDUCTION",   label: "Exposure Reduction",       num: 3 },
+  { key: "TAX_AWARE_EXIT",         label: "Tax-Aware Exit",           num: 4 },
+  { key: "LOW_CONVICTION_REDUCTION", label: "Low Conviction Reduction", num: 5 },
+];
+
+async function loadCRAProposal() {
+  const section = document.getElementById("craSection");
+  const content = document.getElementById("craContent");
+  if (!section || !content) return;
+
+  content.innerHTML = `<div class="cra-loading">Loading Capital Rotation Advisor…</div>`;
+  section.style.display = "block";
+
+  const btn = document.getElementById("craRefreshBtn");
+  if (btn) btn.disabled = true;
+
+  try {
+    const resp = await fetch("/api/cra/proposal");
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: "Network error" }));
+      content.innerHTML = `<div class="cra-error">${escHtml(err.error || "Failed to load CRA proposal")}</div>`;
+      return;
+    }
+    _craProposal = await resp.json();
+    _renderCRAProposal(_craProposal);
+  } catch (e) {
+    content.innerHTML = `<div class="cra-error">CRA error: ${escHtml(String(e))}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _renderCRAProposal(p) {
+  const content = document.getElementById("craContent");
+  if (!content) return;
+
+  // Status badge
+  const statusBadge = document.getElementById("craStatusBadge");
+  if (statusBadge) {
+    const statusLabel = p.proposal_status === "OPERATOR_REVIEW_REQUIRED"
+      ? "Operator Review Required"
+      : p.proposal_status === "READY" ? "Ready" : "Draft";
+    statusBadge.className = `cra-status-badge cra-status-${p.proposal_status}`;
+    statusBadge.textContent = statusLabel;
+  }
+
+  // Review flags
+  const flagsEl = document.getElementById("craReviewFlags");
+  if (flagsEl) {
+    if (p.review_flags && p.review_flags.length > 0) {
+      flagsEl.style.display = "block";
+      flagsEl.innerHTML = `<strong>⚠ Operator Review Required:</strong>
+        <ul>${p.review_flags.map(f => `<li>${escHtml(f)}</li>`).join("")}</ul>`;
+    } else {
+      flagsEl.style.display = "none";
+    }
+  }
+
+  content.innerHTML = `<div class="cra-columns">
+    ${_craBuildSourcesCol(p)}
+    ${_craBuildRotationMapCol(p)}
+    ${_craBuildImpactCol(p)}
+  </div>`;
+
+  // Expand first non-empty category automatically
+  const firstGroup = content.querySelector(".cra-cat-group");
+  if (firstGroup) _craCatToggle(firstGroup);
+}
+
+// ── Column 1: Capital Sources ────────────────────────────────────────────────
+
+function _craBuildSourcesCol(p) {
+  const sources = p.sources || [];
+  const includedPool = sources
+    .filter(s => !s.blocked_by_policy && s.priority !== "DEFER")
+    .reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
+
+  const poolHtml = `<div class="cra-pool-strip">
+    <div>
+      <div class="cra-pool-val">${_craFmt(includedPool)}</div>
+      <div class="cra-pool-lbl">Est. Capital Pool (${sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER").length} sources)</div>
+    </div>
+    <div>
+      <div class="cra-pool-val" style="color:var(--muted)">${_craFmt(p.portfolio_mv)}</div>
+      <div class="cra-pool-lbl">Portfolio MV</div>
+    </div>
+  </div>`;
+
+  const catGroupsHtml = _CRA_CATEGORIES.map(cat => {
+    const catSources = sources.filter(s => s.category === cat.key);
+    const catId = `cra-cat-${cat.key.toLowerCase()}`;
+    const count = catSources.length;
+
+    const cardsHtml = count > 0
+      ? catSources.map(s => _craBuildSourceCard(s)).join("")
+      : `<div class="cra-empty-cat">No ${cat.label.toLowerCase()} candidates identified.</div>`;
+
+    return `<div class="cra-cat-group" id="${catId}">
+      <div class="cra-cat-header" onclick="_craCatToggle(document.getElementById('${catId}'))">
+        <span class="cra-cat-num">${cat.num}</span>
+        <span class="cra-cat-label">${escHtml(cat.label)}</span>
+        <span class="cra-cat-count">${count} position${count !== 1 ? "s" : ""}</span>
+        <span style="font-size:0.7rem;color:var(--muted);margin-left:4px">▾</span>
+      </div>
+      <div class="cra-cat-body">${cardsHtml}</div>
+    </div>`;
+  }).join("");
+
+  return `<div>
+    <div class="cra-col-header">Capital Sources — What to Sell</div>
+    <div class="cra-col-body">
+      ${poolHtml}
+      ${catGroupsHtml}
+    </div>
+  </div>`;
+}
+
+function _craBuildSourceCard(s) {
+  const blocked = s.blocked_by_policy;
+  const cardClass = blocked ? "cra-source-card cra-blocked" : "cra-source-card";
+
+  // Priority badge
+  const priClass = `cra-pri-${s.priority || "LOW"}`;
+  const priBadge = `<span class="cra-pri ${priClass}">${escHtml(s.priority || "")}</span>`;
+
+  // Tax badge
+  const taxBadge = s.tax_bucket
+    ? `<span class="cra-tax-badge cra-tax-${s.tax_bucket}">Tax ${escHtml(s.tax_bucket)}</span>`
+    : `<span class="cra-tax-badge cra-tax-unknown">Tax ?</span>`;
+
+  // Policy badge
+  let policyBadge = "";
+  if (s.policy_type === "DO_NOT_SELL") {
+    policyBadge = `<span class="cra-policy-badge cra-policy-DNS">🔒 DO NOT SELL</span>`;
+  } else if (s.policy_type === "SELL_LAST") {
+    policyBadge = `<span class="cra-policy-badge cra-policy-SL">⏸ SELL LAST</span>`;
+  } else if (s.policy_type === "CORE_ANCHOR") {
+    policyBadge = `<span class="cra-policy-badge cra-policy-CA">⚓ CORE ANCHOR</span>`;
+  }
+
+  // Monitor-only badge for blocked
+  const monitorBadge = blocked
+    ? `<span class="cra-monitor-badge">MONITOR ONLY</span>`
+    : "";
+
+  // Proceeds row
+  const proceedsHtml = !blocked
+    ? `<span class="cra-proceeds-val">${_craFmt(s.estimated_proceeds)}</span>
+       <span style="color:var(--muted)"> of ${_craFmt(s.current_value_usd)} (${Math.round((s.sizing_pct || 0) * 100)}%)</span>`
+    : `<span style="color:var(--muted);font-style:italic">Blocked — not in capital pool</span>`;
+
+  // Tax note
+  const taxNote = s.tax_annotation
+    ? `<div class="cra-tax-note">${escHtml(s.tax_annotation)}</div>`
+    : "";
+
+  // Include / Skip checkbox (disabled for blocked)
+  const checkboxHtml = blocked
+    ? `<label class="cra-check-label" style="opacity:0.5;cursor:not-allowed;">
+        <input type="checkbox" disabled> Include in rotation
+       </label>`
+    : `<label class="cra-check-label">
+        <input type="checkbox" class="cra-check-include"
+               id="cra-inc-${escHtml(s.symbol)}"
+               checked
+               onchange="_craUpdatePool()">
+        Include
+       </label>
+       <label class="cra-check-label">
+        <input type="checkbox" class="cra-check-skip"
+               id="cra-skp-${escHtml(s.symbol)}"
+               onchange="_craSkipToggle('${escHtml(s.symbol)}')">
+        Skip
+       </label>`;
+
+  // Review required indicator
+  const reviewHtml = s.operator_review_required && !blocked
+    ? `<span style="font-size:0.7rem;color:#856404;font-weight:700">⚠ Review required</span>`
+    : "";
+
+  return `<div class="${cardClass}" id="cra-src-${escHtml(s.symbol)}">
+    <div class="cra-source-row1">
+      <span class="cra-sym">${escHtml(s.symbol)}</span>
+      ${priBadge}
+      ${taxBadge}
+      ${policyBadge}
+      ${monitorBadge}
+      ${reviewHtml}
+    </div>
+    <div class="cra-source-row2">${proceedsHtml}</div>
+    <div class="cra-source-evidence">${escHtml(s.evidence_summary || "")}</div>
+    ${taxNote}
+    <div class="cra-source-actions">${checkboxHtml}</div>
+  </div>`;
+}
+
+function _craCatToggle(groupEl) {
+  if (!groupEl) return;
+  groupEl.classList.toggle("cra-cat-expanded");
+}
+
+function _craSkipToggle(symbol) {
+  const skipCb  = document.getElementById(`cra-skp-${symbol}`);
+  const inclCb  = document.getElementById(`cra-inc-${symbol}`);
+  if (!skipCb || !inclCb) return;
+  if (skipCb.checked) inclCb.checked = false;
+  _craUpdatePool();
+}
+
+function _craUpdatePool() {
+  if (!_craProposal) return;
+  const sources = _craProposal.sources || [];
+  let pool = 0;
+  for (const s of sources) {
+    if (s.blocked_by_policy || s.priority === "DEFER") continue;
+    const inclCb = document.getElementById(`cra-inc-${s.symbol}`);
+    if (inclCb && inclCb.checked) pool += (s.estimated_proceeds || 0);
+  }
+  // Update pool display in column 1
+  const poolValEls = document.querySelectorAll(".cra-pool-val");
+  if (poolValEls.length > 0) poolValEls[0].textContent = _craFmt(pool);
+
+  // Update rotation map column pool summary
+  const poolSummaryEl = document.getElementById("cra-rotation-pool-val");
+  if (poolSummaryEl) poolSummaryEl.textContent = _craFmt(pool);
+}
+
+// ── Column 2: Rotation Map ────────────────────────────────────────────────────
+
+function _craBuildRotationMapCol(p) {
+  const pool = p.total_capital_pool || 0;
+  const deployments = p.deployments || [];
+
+  const poolSummaryHtml = `<div class="cra-pool-summary">
+    <div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Capital Pool → Deployment Queue</div>
+    <div class="cra-pool-summary-val" id="cra-rotation-pool-val">${_craFmt(pool)}</div>
+    <div style="font-size:0.7rem;color:var(--muted);margin-top:2px">
+      ${deployments.length} target${deployments.length !== 1 ? "s" : ""} · CW-DAS rank order preserved
+    </div>
+  </div>`;
+
+  const arrowHtml = `<div class="cra-rotation-arrow">↓</div>`;
+
+  let targetsHtml = "";
+  if (deployments.length === 0) {
+    targetsHtml = `<div class="cra-no-targets">No deployment targets allocated. Capital pool may be below minimum lot size, or all queue candidates are at capacity.</div>`;
+  } else {
+    targetsHtml = deployments.map(t => _craBuildTargetCard(t)).join("");
+  }
+
+  // Remaining cash note
+  const totalSuggested = deployments.reduce((s, t) => s + (t.suggested_amount || 0), 0);
+  const remaining = pool - totalSuggested;
+  const remainderHtml = remaining > 1
+    ? `<div style="padding:8px 12px;font-size:0.74rem;color:var(--muted);border-top:1px solid var(--border);background:#fafafa;">
+        Unallocated: ${_craFmt(remaining)}
+       </div>`
+    : "";
+
+  return `<div>
+    <div class="cra-col-header">Rotation Map — Proceeds → Targets</div>
+    <div class="cra-col-body">
+      ${poolSummaryHtml}
+      ${arrowHtml}
+      ${targetsHtml}
+      ${remainderHtml}
+    </div>
+  </div>`;
+}
+
+function _craBuildTargetCard(t) {
+  const tierShort = t.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL"
+    : t.narrative_tier === "HIGH_CONVICTION_ANCHOR" ? "HCA"
+    : (t.narrative_tier || "—").replace(/_/g, " ");
+  const tierClass = `cra-tier-${tierShort}`;
+  const rankClass = t.rank === 1 ? "cra-target-rank cra-target-rank-1" : "cra-target-rank";
+  const dasScore = t.deployment_score != null
+    ? parseFloat(t.deployment_score).toFixed(1)
+    : "—";
+
+  const curWt  = t.current_weight_pct  != null ? parseFloat(t.current_weight_pct).toFixed(2)  + "%" : "—";
+  const projWt = t.projected_weight_pct != null ? parseFloat(t.projected_weight_pct).toFixed(2) + "%" : "—";
+
+  return `<div class="cra-target-card">
+    <div class="cra-target-row1">
+      <span class="${rankClass}">#${t.rank}</span>
+      <span class="cra-target-sym">${escHtml(t.symbol)}</span>
+      <span class="${tierClass}">${tierShort}</span>
+      <span class="cra-das-score">DAS ${dasScore}</span>
+    </div>
+    <div class="cra-target-row2">
+      <span class="cra-target-amount">${_craFmt(t.suggested_amount)}</span>
+      &nbsp;·&nbsp;
+      <span>${curWt} <span class="cra-weight-arrow">→</span> ${projWt}</span>
+      &nbsp;·&nbsp;
+      <span style="font-size:0.7rem">${escHtml(t.allocation_node || "")}</span>
+    </div>
+    ${t.allocation_note ? `<div style="font-size:0.71rem;color:var(--muted);margin-top:2px">${escHtml(t.allocation_note)}</div>` : ""}
+  </div>`;
+}
+
+// ── Column 3: Impact Summary ─────────────────────────────────────────────────
+
+function _craBuildImpactCol(p) {
+  const imp = p.impact || {};
+
+  const fmtScore = v => v != null ? parseFloat(v).toFixed(4) : "—";
+  const fmtPct   = v => v != null ? parseFloat(v).toFixed(2) + "%" : "—";
+
+  const alignBefore = fmtScore(imp.alignment_score_before);
+  const alignAfter  = fmtScore(imp.alignment_score_after);
+  const alignDelta  = imp.alignment_delta != null ? parseFloat(imp.alignment_delta) : null;
+  const alignDeltaStr = alignDelta != null
+    ? (alignDelta >= 0 ? "+" : "") + alignDelta.toFixed(4)
+    : "—";
+  const alignDeltaCls = alignDelta == null ? "cra-delta-neutral"
+    : alignDelta > 0 ? "cra-delta-pos" : alignDelta < 0 ? "cra-delta-neg" : "cra-delta-neutral";
+
+  const concBefore = fmtPct(imp.concentration_before);
+  const concAfter  = fmtPct(imp.concentration_after);
+  const concDelta  = imp.concentration_delta != null ? parseFloat(imp.concentration_delta) : null;
+  const concDeltaStr = concDelta != null
+    ? (concDelta >= 0 ? "+" : "") + concDelta.toFixed(2) + "%"
+    : "—";
+  const concDeltaCls = concDelta == null ? "cra-delta-neutral"
+    : concDelta < 0 ? "cra-delta-pos" : concDelta > 0 ? "cra-delta-neg" : "cra-delta-neutral";
+
+  // Overweight nodes
+  const owBefore  = (imp.overweight_nodes_before || []);
+  const owAfter   = (imp.overweight_nodes_after  || []);
+  const resolved  = owBefore.filter(n => !owAfter.includes(n));
+  const remaining = owAfter;
+
+  const owBeforeHtml = owBefore.length > 0
+    ? owBefore.map(n => {
+        const isResolved = !owAfter.includes(n);
+        return `<div class="${isResolved ? "cra-node-resolved" : "cra-node-remaining"}">
+          ${isResolved ? "✓" : "•"} ${escHtml(_craShortNode(n))}
+        </div>`;
+      }).join("")
+    : `<div style="color:var(--muted);font-style:italic;font-size:0.78rem">None</div>`;
+
+  const owAfterHtml = owAfter.length === 0
+    ? `<div class="cra-node-resolved" style="font-weight:700">✓ All overweight nodes resolved</div>`
+    : owAfter.map(n => `<div class="cra-node-remaining">• ${escHtml(_craShortNode(n))}</div>`).join("");
+
+  const narrativeHtml = imp.impact_narrative
+    ? `<div class="cra-narrative">${escHtml(imp.impact_narrative)}</div>`
+    : "";
+
+  return `<div>
+    <div class="cra-col-header">Portfolio Impact — Estimate</div>
+    <div class="cra-col-body">
+      <div class="cra-impact-card">
+        <div class="cra-estimate-banner">⚠ Estimate Only — Full Re-Analysis Required for Precision</div>
+        <span class="cra-impact-section-lbl">Alignment Score</span>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">Before</span>
+          <span class="cra-impact-vals">${alignBefore}</span>
+        </div>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">After (est.)</span>
+          <span class="cra-impact-vals">${alignAfter}</span>
+        </div>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">Delta</span>
+          <span class="cra-impact-vals ${alignDeltaCls}">${alignDeltaStr}</span>
+        </div>
+      </div>
+      <div class="cra-impact-card">
+        <span class="cra-impact-section-lbl">Concentration (top-5 weight)</span>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">Before</span>
+          <span class="cra-impact-vals">${concBefore}</span>
+        </div>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">After (est.)</span>
+          <span class="cra-impact-vals">${concAfter}</span>
+        </div>
+        <div class="cra-impact-row">
+          <span class="cra-impact-lbl">Delta</span>
+          <span class="cra-impact-vals ${concDeltaCls}">${concDeltaStr}</span>
+        </div>
+      </div>
+      <div class="cra-impact-card">
+        <span class="cra-impact-section-lbl">Overweight Nodes — Before</span>
+        <div class="cra-nodes-list">${owBeforeHtml}</div>
+      </div>
+      <div class="cra-impact-card">
+        <span class="cra-impact-section-lbl">Overweight Nodes — After Rotation</span>
+        <div class="cra-nodes-list">${owAfterHtml}</div>
+      </div>
+    </div>
+    ${narrativeHtml}
+  </div>`;
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function _craFmt(v) {
+  const n = parseFloat(v || 0);
+  if (isNaN(n)) return "—";
+  if (Math.abs(n) >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
+  if (Math.abs(n) >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
+  return "$" + n.toFixed(0);
+}
+
+function _craShortNode(node) {
+  // EQUITIES.US.LARGE → US·LARGE
+  return (node || "").replace(/^EQUITIES\./, "").replace(/\./g, "·");
+}
+
+// ── CII Methodology Panel ─────────────────────────────────────────────────────
+function _openCIIModal() {
+  const overlay = document.getElementById("ciiModalOverlay");
+  if (overlay) {
+    overlay.classList.add("open");
+    document.body.style.overflow = "hidden";
+  }
+}
+
+function _closeCIIModal(evt) {
+  // Close on overlay click (backdrop) or explicit call; don't close on modal content click
+  if (evt && evt.target !== document.getElementById("ciiModalOverlay")) return;
+  const overlay = document.getElementById("ciiModalOverlay");
+  if (overlay) {
+    overlay.classList.remove("open");
+    document.body.style.overflow = "";
+  }
+}
+
+// Keyboard close (Escape key)
+document.addEventListener("keydown", function(e) {
+  if (e.key === "Escape") _closeCIIModal();
+});
 
 function escHtml(s) {
   return String(s || "")

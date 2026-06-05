@@ -119,6 +119,56 @@ nodes:
     replay_filter_mapping: {}
     replay_sophistication: NONE
 
+  # ─── LEVEL 3: MARKET CAP (EMERGING MARKETS) ──────────────────────────────
+
+  - key: EQUITIES.EMERGING_MARKETS.MEGA
+    label: "Emerging Markets Mega Cap"
+    parent_key: EQUITIES.EMERGING_MARKETS
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: EMERGING_MARKETS
+    replay_sophistication: LOW
+
+  - key: EQUITIES.EMERGING_MARKETS.LARGE
+    label: "Emerging Markets Large Cap"
+    parent_key: EQUITIES.EMERGING_MARKETS
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: LARGE
+      filter_geography: EMERGING_MARKETS
+    replay_sophistication: LOW
+
+  - key: EQUITIES.EMERGING_MARKETS.MID
+    label: "Emerging Markets Mid Cap"
+    parent_key: EQUITIES.EMERGING_MARKETS
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MID
+      filter_geography: EMERGING_MARKETS
+    replay_sophistication: NONE
+
+  - key: EQUITIES.EMERGING_MARKETS.SMALL
+    label: "Emerging Markets Small Cap"
+    parent_key: EQUITIES.EMERGING_MARKETS
+    dimension_type: MARKET_CAP
+    allocation_category_type: EQUITY
+    hierarchy_level: 3
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: SMALL
+      filter_geography: EMERGING_MARKETS
+    replay_sophistication: NONE
+
   # ─── LEVEL 2: SUB-ASSETS (FIXED INCOME — geography partition) ────────────
 
   - key: FIXED_INCOME.US
@@ -382,3 +432,85 @@ nodes:
       filter_geography: US
       filter_analytical_subtier: EXTENDED_MEGA
     replay_sophistication: HIGH
+
+  # ─── LEVEL 4: MEGA SUBTIERS (INTERNATIONAL EQUITIES) ────────────────────
+
+  - key: EQUITIES.INTERNATIONAL.MEGA.HYPER_MEGA
+    label: "International Hyper Mega (Top Tercile)"
+    parent_key: EQUITIES.INTERNATIONAL.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: INTERNATIONAL
+      filter_analytical_subtier: HYPER_MEGA
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.MEGA.ULTRA_MEGA
+    label: "International Ultra Mega (Middle Tercile)"
+    parent_key: EQUITIES.INTERNATIONAL.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: INTERNATIONAL
+      filter_analytical_subtier: ULTRA_MEGA
+    replay_sophistication: HIGH
+
+  - key: EQUITIES.INTERNATIONAL.MEGA.EXTENDED_MEGA
+    label: "International Extended Mega (Bottom Tercile)"
+    parent_key: EQUITIES.INTERNATIONAL.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: INTERNATIONAL
+      filter_analytical_subtier: EXTENDED_MEGA
+    replay_sophistication: HIGH
+
+  # ─── LEVEL 4: MEGA SUBTIERS (EMERGING MARKETS) ──────────────────────────
+
+  - key: EQUITIES.EMERGING_MARKETS.MEGA.HYPER_MEGA
+    label: "EM Hyper Mega (Top Tercile)"
+    parent_key: EQUITIES.EMERGING_MARKETS.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: EMERGING_MARKETS
+      filter_analytical_subtier: HYPER_MEGA
+    replay_sophistication: LOW
+
+  - key: EQUITIES.EMERGING_MARKETS.MEGA.ULTRA_MEGA
+    label: "EM Ultra Mega (Middle Tercile)"
+    parent_key: EQUITIES.EMERGING_MARKETS.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: EMERGING_MARKETS
+      filter_analytical_subtier: ULTRA_MEGA
+    replay_sophistication: LOW
+
+  - key: EQUITIES.EMERGING_MARKETS.MEGA.EXTENDED_MEGA
+    label: "EM Extended Mega (Bottom Tercile)"
+    parent_key: EQUITIES.EMERGING_MARKETS.MEGA
+    dimension_type: MEGA_SUBTIER
+    allocation_category_type: EQUITY
+    hierarchy_level: 4
+    children: []
+    replay_filter_mapping:
+      filter_market_cap_bucket: MEGA
+      filter_geography: EMERGING_MARKETS
+      filter_analytical_subtier: EXTENDED_MEGA
+    replay_sophistication: LOW

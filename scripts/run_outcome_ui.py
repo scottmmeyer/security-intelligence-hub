@@ -278,6 +278,170 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     self._json_response(result)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/operator/tax-state":
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            if state_path.exists():
+                try:
+                    state = json.loads(state_path.read_text(encoding="utf-8"))
+                    self._json_response(state)
+                except Exception as exc:
+                    self._json_response({"error": str(exc)}, 500)
+            else:
+                self._json_response({})
+        elif path == "/api/operator/strategic-exits":
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            existing: dict = {}
+            if state_path.exists():
+                try:
+                    existing = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            syms = existing.get("strategic_exit_symbols", [])
+            if not isinstance(syms, list):
+                syms = []
+            self._json_response({"strategic_exit_symbols": syms})
+        elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
+            # GET /api/operator/policies         → all active policies
+            # GET /api/operator/policies/{sym}   → single symbol policy
+            import sys as _sys
+            if str(_REPO_ROOT) not in _sys.path:
+                _sys.path.insert(0, str(_REPO_ROOT))
+            from src.portfolio.operator_policy import OperatorPolicyRegistry
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            registry = OperatorPolicyRegistry.load(str(state_path))
+            sym_seg = path[len("/api/operator/policies/"):].strip().upper() if path != "/api/operator/policies" else ""
+            if sym_seg:
+                if not _SYMBOL_RE.match(sym_seg):
+                    self._json_response({"error": "invalid symbol"}, 400)
+                    return
+                policy = registry.get(sym_seg)
+                if policy is None:
+                    self._json_response({"symbol": sym_seg, "policy": None})
+                else:
+                    import dataclasses as _dc
+                    self._json_response({"symbol": sym_seg, "policy": _dc.asdict(policy)})
+            else:
+                import dataclasses as _dc
+                all_active = registry.all_active()
+                self._json_response({
+                    "policies": [_dc.asdict(p) for p in all_active.values()],
+                    "snapshot": registry.policy_snapshot(),
+                })
+        elif path == "/api/cra/proposal":
+            # GET /api/cra/proposal
+            # Returns a RotationProposal built from the latest COMPLETE PAR run.
+            # Reads: deployment_queue.json, security_overlays.csv, holdings.csv,
+            #        alignment.csv, run_metadata.json, concentration.json,
+            #        snapshot.json, portfolio_alignment_state.json (optional).
+            # Does NOT modify any upstream artifacts.
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.portfolio.cra.rotation_proposal_builder import build_proposal_from_manifest
+                manifest_path  = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
+                runs_root      = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+                tax_state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+
+                if not manifest_path.exists():
+                    self._json_response(
+                        {"error": "No portfolio manifest found. Run a portfolio analysis first."},
+                        404,
+                    )
+                    return
+
+                proposal = build_proposal_from_manifest(
+                    manifest_path=manifest_path,
+                    runs_root=runs_root,
+                    tax_state_path=tax_state_path if tax_state_path.exists() else None,
+                )
+
+                if proposal is None:
+                    self._json_response(
+                        {"error": "No COMPLETE portfolio analysis run found. Run a portfolio analysis first."},
+                        404,
+                    )
+                    return
+
+                self._json_response(proposal.to_dict())
+            except FileNotFoundError as exc:
+                self._json_response({"error": f"Required PAR files missing: {exc}"}, 404)
+            except Exception as exc:
+                import traceback as _tb
+                log.error("CRA proposal error: %s\n%s", exc, _tb.format_exc())
+                self._json_response({"error": f"CRA proposal generation failed: {exc}"}, 500)
+
+        elif path == "/api/security-metadata":
+            # GET /api/security-metadata
+            # Returns {symbol → {sector, industry, country, quote_type,
+            #   market_cap_bucket, long_name, hq, business_summary}}
+            # Merges security_metadata + analytical_universe + company_profile.
+            # Display-only — no scoring impact.
+            try:
+                import sys as _sys, csv as _csv
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.scoring.fetch_security_metadata import load_latest_security_metadata
+                metadata: dict = load_latest_security_metadata()
+
+                # Enrich with market_cap_bucket from analytical universe
+                au_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
+                if au_path.exists():
+                    with au_path.open("r", encoding="utf-8", newline="") as _fh:
+                        for _row in _csv.DictReader(_fh):
+                            _sym = str(_row.get("symbol", "")).strip().upper()
+                            if _sym:
+                                if _sym not in metadata:
+                                    metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
+                                metadata[_sym]["market_cap_bucket"] = str(_row.get("market_cap_bucket") or "")
+                                metadata[_sym]["security_type"]    = str(_row.get("security_type") or "")
+                                if not metadata[_sym].get("country"):
+                                    metadata[_sym]["country"] = str(_row.get("country") or "")
+
+                # Enrich with company profile (name, HQ, business description)
+                from src.scoring.fetch_company_profile import load_latest_company_profile, _compose_hq
+                from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
+                _COUNTRY_ABBREV = {"United States": "USA"}
+                company_profiles = load_latest_company_profile()
+                for _sym, _prof in company_profiles.items():
+                    if _sym not in metadata:
+                        metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
+                    metadata[_sym]["long_name"] = str(_prof.get("long_name") or "")
+                    _raw_country = str(_prof.get("country") or "")
+                    _disp_country = _COUNTRY_ABBREV.get(_raw_country, _raw_country)
+                    metadata[_sym]["hq"] = _compose_hq(
+                        str(_prof.get("city") or ""),
+                        str(_prof.get("state") or ""),
+                        _disp_country,
+                    )
+                    metadata[_sym]["business_summary"] = str(_prof.get("business_summary") or "")
+
+                # Enrich with FMP fundamental data (Phase 8.0B.1B.5 — display only)
+                fmp_enriched = load_fmp_enriched_universe()
+                for _sym, _frow in fmp_enriched.items():
+                    if _sym not in metadata:
+                        metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
+                    metadata[_sym]["fmp_coverage"]          = str(_frow.get("fmp_coverage_status") or "")
+                    metadata[_sym]["fmp_ev_ebitda"]         = str(_frow.get("ev_ebitda_ttm") or "")
+                    metadata[_sym]["fmp_fcf_yield"]         = str(_frow.get("fcf_yield_ttm") or "")
+                    metadata[_sym]["fmp_roe"]               = str(_frow.get("roe_ttm") or "")
+                    metadata[_sym]["fmp_roic"]              = str(_frow.get("roic_ttm") or "")
+                    metadata[_sym]["fmp_revenue_growth"]    = str(_frow.get("revenue_growth_q1_yoy") or "")
+                    metadata[_sym]["fmp_eps_growth"]        = str(_frow.get("eps_growth_q1_yoy") or "")
+                    metadata[_sym]["fmp_revenue_accel"]     = str(_frow.get("revenue_acceleration") or "")
+                    metadata[_sym]["fmp_beat_rate"]         = str(_frow.get("beat_rate_8q") or "")
+                    metadata[_sym]["fmp_beats_8q"]          = str(_frow.get("beats_last_8q") or "")
+                    metadata[_sym]["fmp_latest_surprise"]   = str(_frow.get("latest_eps_surprise_pct") or "")
+                    metadata[_sym]["fmp_net_buy_score"]     = str(_frow.get("net_buy_score") or "")
+                    metadata[_sym]["fmp_consensus"]         = str(_frow.get("consensus_label") or "")
+                    metadata[_sym]["fmp_buy_count"]         = str(_frow.get("buy_count") or "")
+                    metadata[_sym]["fmp_hold_count"]        = str(_frow.get("hold_count") or "")
+                    metadata[_sym]["fmp_sell_count"]        = str(_frow.get("sell_count") or "")
+
+                self._json_response(metadata)
+            except Exception as exc:
+                self._json_response({}, 200)  # fail-open: empty dict on error
+
         elif path == "/api/portfolio/archetype-targets":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -453,6 +617,164 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(result)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/operator/tax-state":
+            # POST: save operator tax context to persistent file
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            # Validate and sanitize numeric fields
+            _TAX_FIELDS = ("net_realized_ytd", "potential_additional_losses",
+                           "capital_loss_carryforward", "tax_year")
+            state: dict = {}
+            for f in _TAX_FIELDS:
+                if f in payload:
+                    state[f] = payload[f]
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            # Merge with existing state
+            existing: dict = {}
+            if state_path.exists():
+                try:
+                    existing = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            existing.update(state)
+            existing["_updated"] = datetime.now(timezone.utc).isoformat()
+            state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            self._json_response({"ok": True, "state": existing})
+        elif path == "/api/operator/strategic-exits":
+            # POST: add or remove a strategic exit symbol
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            action = str(payload.get("action", "add")).strip().lower()  # "add" or "remove"
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if not symbol or not _SYMBOL_RE.match(symbol):
+                self._json_response({"error": "invalid or missing symbol"}, 400)
+                return
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if state_path.exists():
+                try:
+                    existing = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            syms = existing.get("strategic_exit_symbols", [])
+            if not isinstance(syms, list):
+                syms = []
+            if action == "add" and symbol not in syms:
+                syms.append(symbol)
+            elif action == "remove":
+                syms = [s for s in syms if s != symbol]
+            existing["strategic_exit_symbols"] = sorted(syms)
+            existing["_updated"] = datetime.now(timezone.utc).isoformat()
+            state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            self._json_response({"ok": True, "strategic_exit_symbols": sorted(syms)})
+        elif path == "/api/operator/policies":
+            # POST /api/operator/policies — add or update a policy entry
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if not symbol or not _SYMBOL_RE.match(symbol):
+                self._json_response({"error": "invalid or missing symbol"}, 400)
+                return
+            import sys as _sys
+            if str(_REPO_ROOT) not in _sys.path:
+                _sys.path.insert(0, str(_REPO_ROOT))
+            from src.portfolio.operator_policy import (
+                POLICY_TYPES, check_policy_conflict, OperatorPolicyRegistry,
+            )
+            policy_type = str(payload.get("policy_type", "")).strip().upper()
+            if policy_type not in POLICY_TYPES:
+                self._json_response({"error": f"unknown policy_type: {policy_type}; valid: {sorted(POLICY_TYPES)}"}, 400)
+                return
+            rationale = str(payload.get("rationale", "")).strip()
+            expires_at = payload.get("expires_at", None)
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if state_path.exists():
+                try:
+                    existing = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            registry = OperatorPolicyRegistry.load(str(state_path))
+            # Check conflict with existing active policy for this symbol
+            existing_type = registry.active_policy_type(symbol)
+            if existing_type and existing_type != policy_type:
+                conflict, conflict_msg = check_policy_conflict(existing_type, policy_type)
+                if conflict:
+                    self._json_response({"error": conflict_msg, "conflict": True}, 409)
+                    return
+            now_str = datetime.now(timezone.utc).isoformat()
+            policies_list = existing.get("operator_policies", [])
+            if not isinstance(policies_list, list):
+                policies_list = []
+            # Mark any existing entry for this symbol as SUPERSEDED
+            for i, entry in enumerate(policies_list):
+                if entry.get("symbol") == symbol and entry.get("status") == "ACTIVE":
+                    policies_list[i] = {**entry, "status": "SUPERSEDED", "revoked_at": now_str}
+            new_entry = {
+                "symbol": symbol,
+                "policy_type": policy_type,
+                "status": "ACTIVE",
+                "rationale": rationale,
+                "created_at": now_str,
+                "expires_at": expires_at,
+                "revoked_at": None,
+            }
+            policies_list.append(new_entry)
+            existing["operator_policies"] = policies_list
+            existing["_updated"] = now_str
+            state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            self._json_response({"ok": True, "policy": new_entry})
+        elif path == "/api/operator/policies/revoke":
+            # POST /api/operator/policies/revoke — revoke a policy by symbol
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            symbol = str(payload.get("symbol", "")).strip().upper()
+            if not symbol or not _SYMBOL_RE.match(symbol):
+                self._json_response({"error": "invalid or missing symbol"}, 400)
+                return
+            state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+            existing: dict = {}
+            if state_path.exists():
+                try:
+                    existing = json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            policies_list = existing.get("operator_policies", [])
+            if not isinstance(policies_list, list):
+                policies_list = []
+            now_str = datetime.now(timezone.utc).isoformat()
+            revoked_count = 0
+            for i, entry in enumerate(policies_list):
+                if entry.get("symbol") == symbol and entry.get("status") == "ACTIVE":
+                    policies_list[i] = {**entry, "status": "REVOKED", "revoked_at": now_str}
+                    revoked_count += 1
+            existing["operator_policies"] = policies_list
+            existing["_updated"] = now_str
+            state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            self._json_response({"ok": True, "revoked_count": revoked_count, "symbol": symbol})
         else:
             self.send_error(404)
 

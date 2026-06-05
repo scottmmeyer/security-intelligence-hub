@@ -34,13 +34,22 @@ from src.scoring.fetch_zacks_scores import (
 )
 from src.scoring.fetch_danelfin_scores import fetch_danelfin_scores_for_symbols
 from src.scoring.fetch_yahoo_supplemental import fetch_yahoo_supplemental_for_symbols
+from src.scoring.fetch_fmp_signals import (
+    _get_api_key as _fmp_api_key,
+    is_fmp_daily_stale,
+    is_fmp_quarterly_stale,
+    fetch_fmp_daily_signals,
+    fetch_fmp_quarterly_signals,
+    get_fmp_freshness_report,
+)
 
 _ZACKS_DIR = _REPO_ROOT / "data" / "signals" / "zacks"
 _DANELFIN_DIR = _REPO_ROOT / "data" / "signals" / "danelfin"
 _YAHOO_DIR = _REPO_ROOT / "data" / "signals" / "yahoo"
+_FMP_DIR = _REPO_ROOT / "data" / "signals" / "fmp"
 _BASE_UNIVERSE = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
 
-_ALL_PROVIDERS = ("zacks", "danelfin", "yahoo")
+_ALL_PROVIDERS = ("zacks", "danelfin", "yahoo", "fmp")
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +208,71 @@ def _refresh_yahoo(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
     return True
 
 
+def _refresh_fmp(*, dry_run: bool, verbose: bool, mode: str = "daily") -> bool:
+    """Fetch fresh FMP fundamental signals.  Returns True when a fetch was triggered.
+
+    Args:
+        mode: "daily" (key_metrics + grades) or "quarterly" (earnings + income_growth)
+              or "all" (both).
+    """
+    api_key = _fmp_api_key()
+    if not api_key:
+        if verbose:
+            print("[refresh_signals] FMP: no API key found (FMP_API_KEY not set), skipping.")
+        return False
+
+    symbols = _all_universe_symbols()
+    if not symbols:
+        if verbose:
+            print("[refresh_signals] FMP: stale but no symbols found in universe, skipping.")
+        return False
+
+    triggered = False
+
+    # Daily datasets
+    if mode in ("daily", "all"):
+        daily_stale = is_fmp_daily_stale("key_metrics", _FMP_DIR / "latest") or \
+                      is_fmp_daily_stale("grades_consensus", _FMP_DIR / "latest")
+        if daily_stale:
+            if verbose:
+                print(f"[refresh_signals] FMP (daily): stale — fetching {len(symbols)} symbols.")
+            if not dry_run:
+                try:
+                    fetch_fmp_daily_signals(symbols, api_key=api_key, output_dir=_FMP_DIR,
+                                            verbose=verbose)
+                    triggered = True
+                except RuntimeError as exc:
+                    print(f"[refresh_signals] FMP (daily): FAILED — {exc}")
+                    # Fail-open: log but don't crash the full refresh
+        else:
+            freshness = get_fmp_freshness_report(_FMP_DIR)
+            km_date = freshness.get("key_metrics", "MISSING")
+            if verbose:
+                print(f"[refresh_signals] FMP (daily): up-to-date ({km_date}), skipping.")
+
+    # Quarterly datasets
+    if mode in ("quarterly", "all"):
+        quarterly_stale = is_fmp_quarterly_stale("earnings", _FMP_DIR / "latest") or \
+                          is_fmp_quarterly_stale("income_growth", _FMP_DIR / "latest")
+        if quarterly_stale:
+            if verbose:
+                print(f"[refresh_signals] FMP (quarterly): stale — fetching {len(symbols)} symbols.")
+            if not dry_run:
+                try:
+                    fetch_fmp_quarterly_signals(symbols, api_key=api_key, output_dir=_FMP_DIR,
+                                                verbose=verbose)
+                    triggered = True
+                except RuntimeError as exc:
+                    print(f"[refresh_signals] FMP (quarterly): FAILED — {exc}")
+        else:
+            freshness = get_fmp_freshness_report(_FMP_DIR)
+            es_date = freshness.get("earnings", "MISSING")
+            if verbose:
+                print(f"[refresh_signals] FMP (quarterly): up-to-date ({es_date}), skipping.")
+
+    return triggered
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -239,6 +313,8 @@ def ensure_signals_fresh(
         triggered["yahoo"] = _refresh_yahoo(dry_run=dry_run, verbose=verbose, smart=smart)
     if "danelfin" in provider_set:
         triggered["danelfin"] = _refresh_danelfin(dry_run=dry_run, verbose=verbose, smart=smart)
+    if "fmp" in provider_set:
+        triggered["fmp"] = _refresh_fmp(dry_run=dry_run, verbose=verbose, mode="daily")
 
     return triggered
 
@@ -272,6 +348,12 @@ if __name__ == "__main__":
         "--smart",
         action="store_true",
         help="Fetch only BULLISH/VERY_BULLISH symbols for Danelfin and Yahoo (~300 vs ~2800).",
+    )
+    parser.add_argument(
+        "--fmp-mode",
+        choices=["daily", "quarterly", "all"],
+        default="daily",
+        help="FMP refresh mode: daily (key_metrics+grades) or quarterly (earnings+growth) or all.",
     )
     args = parser.parse_args()
 

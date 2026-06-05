@@ -321,22 +321,33 @@ _CASH_KEYWORDS = {"CASH", "SPAXX", "FZFXX", "FDRXX", "FCASH", "PENDING"}
 # These rows must be preserved for audit but excluded from portfolio analytics.
 _PENDING_DESCRIPTION_KEYWORDS = {"PENDING ACTIVITY", "PENDING", "SETTLEMENT"}
 
+# Fidelity-internal contra lot symbol pattern: M<2-digit-code>CNT<sequence>.
+# These are broker bookkeeping artifacts from corporate actions (mergers, splits,
+# tender offers) — they carry quantity but zero market value.
+_CONTRA_SYMBOL_RE = re.compile(r'^M\d{2}CNT\d+$')
+
 
 def _classify_operational_state(sym: str, desc: str, mv: Optional[float]) -> str:
     """Return the HoldingOperationalState for a raw ingestion row.
 
     States:
-      ACTIVE_POSITION       — normal investable holding
-      CASH_EQUIVALENT       — assigned by enrichment (not ingestion)
-      PENDING_SETTLEMENT    — unsettled / pending activity row
-      ACCOUNTING_ADJUSTMENT — negative market value correction row
-      CLOSED_POSITION       — zero market value (position fully liquidated)
+      ACTIVE_POSITION           — normal investable holding
+      CASH_EQUIVALENT           — assigned by enrichment (not ingestion)
+      PENDING_SETTLEMENT        — unsettled / pending activity row
+      ACCOUNTING_ADJUSTMENT     — negative market value correction row
+      ZERO_VALUE_LEGACY_POSITION— broker-generated contra/residual artifact (mv=0)
+      CLOSED_POSITION           — zero market value (position fully liquidated)
     """
-    desc_upper = desc.upper()
+    desc_upper = (desc or "").upper()
     if any(kw in desc_upper for kw in _PENDING_DESCRIPTION_KEYWORDS) or sym == "PENDING":
         return "PENDING_SETTLEMENT"
     if mv is not None and mv < 0:
         return "ACCOUNTING_ADJUSTMENT"
+    # Broker contra lot: Fidelity M##CNT### pattern or description contains CONTRA.
+    # Market value may be 0.0 OR None (Fidelity renders '--' for qty/value fields on
+    # contra lots — _parse_float returns None for '--').
+    if _CONTRA_SYMBOL_RE.match(sym) or "CONTRA" in desc_upper:
+        return "ZERO_VALUE_LEGACY_POSITION"
     if mv is not None and mv == 0:
         return "CLOSED_POSITION"
     return "ACTIVE_POSITION"

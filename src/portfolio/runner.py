@@ -39,9 +39,15 @@ from .analyst_consensus import load_analyst_consensus, compute_conflict_badge
 from .fidelity_signal import load_fidelity_signals, compute_consensus_matrix
 from .models import PortfolioAnalysisRun
 from .reconciliation import run_reconciliation
-from .deployment_queue import build_deployment_queue, compute_deployable_cash, CW_DAS_VERSION
+from .deployment_queue import build_deployment_queue, compute_deployable_cash, CW_DAS_VERSION, apply_policy_to_queue as _apply_policy_to_queue
 from .deployment_planner import build_deployment_plan, PLANNER_VERSION
 from .unified_conviction import build_ucf_verdicts, UCF_VERSION
+from .operator_policy import (
+    OperatorPolicyRegistry,
+    build_policy_annotations,
+    build_policy_suppressed_entries,
+    compute_execution_state,
+)
 from .recommendations import build_security_overlays, generate_recommendations, generate_recommendations_with_phase_e_warnings, identify_funding_sources
 from .scoring import compute_multi_dimensional_score, detect_intentional_asymmetry
 from .trim_intelligence import build_strategic_profiles, validate_trim_intelligence_consistency
@@ -55,6 +61,7 @@ _YAHOO_SUPPLEMENTAL = _REPO_ROOT / "data" / "signals" / "yahoo" / "latest_yahoo_
 _SIGNAL_SNAPSHOT    = _REPO_ROOT / "data" / "current" / "signal_snapshot.csv"
 _ZACKS_LATEST       = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.csv"
 _DANELFIN_LATEST    = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
+_OPERATOR_STATE     = str(_REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json")
 
 
 def _run_id(snapshot_date: str) -> str:
@@ -727,6 +734,25 @@ def run_analysis(
         alignment_results=alignment,
         total_market_value=snapshot.total_market_value,
     )
+
+    # ── Phase 23.2 — Operator Policy Layer ───────────────────────────────────
+    # Load operator policies AFTER deployment queue is built (pre-policy scores preserved).
+    # Policy application: annotate queue, boost/suppress as approved.
+    # Reconciliation inputs are untouched — policy is an output-layer transform.
+    _policy_registry = OperatorPolicyRegistry.load(_OPERATOR_STATE)
+    deployment_queue, _policy_suppressed = _apply_policy_to_queue(
+        deployment_queue, _policy_registry
+    )
+    _policy_suppressed_from_overlays = build_policy_suppressed_entries(
+        overlays, _policy_registry
+    )
+    _policy_suppressed_all = (
+        _policy_suppressed_from_overlays
+        + [dataclasses.asdict(c) for c in _policy_suppressed]
+    )
+    _policy_annotations = build_policy_annotations(
+        [o.symbol for o in overlays], _policy_registry
+    )
     # Resolve mandate cash target for deployable cash computation (fail-closed).
     # archetype_targets is already loaded above; "CASH" key holds the mandate target %.
     _cash_target_pct = archetype_targets.get("CASH") if archetype_targets else None
@@ -778,6 +804,9 @@ def run_analysis(
         "cash_context": cash_context,
         "candidate_count": len(deployment_queue),
         "queue": [dataclasses.asdict(c) for c in deployment_queue],
+        # Phase 23.2 — policy layer output
+        "policy_suppressed": _policy_suppressed_all,
+        "policy_active_count": len(_policy_registry.all_active()),
     }
 
     # ── Persist outputs ───────────────────────────────────────────────────────
@@ -820,13 +849,29 @@ def run_analysis(
     with open(out_dir / "recommendations.json", "w") as fh:
         json.dump(recs_with_drilldown, fh, indent=2, default=str)
 
-    # security_overlays.csv
+    # security_overlays.csv — write with additive policy annotation columns
     if overlays:
-        _write_csv(
-            str(out_dir / "security_overlays.csv"),
-            overlays,
-            list(dataclasses.asdict(overlays[0]).keys()),
-        )
+        base_fields = list(dataclasses.asdict(overlays[0]).keys())
+        policy_fields = ["policy_type", "policy_annotation", "policy_protected",
+                         "execution_state", "effective_action"]
+        overlay_fieldnames = base_fields + policy_fields
+        with open(str(out_dir / "security_overlays.csv"), "w", newline="", encoding="utf-8") as _fh:
+            _writer = csv.DictWriter(_fh, fieldnames=overlay_fieldnames)
+            _writer.writeheader()
+            for _ov in overlays:
+                _row = dataclasses.asdict(_ov)
+                _ann = _policy_annotations.get(_ov.symbol.upper(), {})
+                _row["policy_type"]       = _ann.get("policy_type", "")
+                _row["policy_annotation"] = _ann.get("policy_annotation", "")
+                _row["policy_protected"]  = _ann.get("policy_protected", False)
+                _exec_state, _eff_action = compute_execution_state(
+                    _ov.symbol,
+                    str(_row.get("opportunity_flag") or ""),
+                    _policy_registry,
+                )
+                _row["execution_state"]  = _exec_state
+                _row["effective_action"] = _eff_action
+                _writer.writerow(_row)
 
     # deployment_queue.json
     with open(out_dir / "deployment_queue.json", "w") as fh:
@@ -957,6 +1002,12 @@ def run_analysis(
         meta["coverage_status"] = next(
             (c.status for c in reconciliation.checks if c.check_id == "RC-13"),
             "N/A",
+        )
+        # Phase 23.2 — Operator Policy Layer
+        meta["policy_snapshot"] = _policy_registry.policy_snapshot()
+        meta["policy_suppressed_count"] = len(_policy_suppressed_all)
+        meta["policy_rank_adjusted_count"] = sum(
+            1 for c in deployment_queue if c.policy_rank_boost
         )
         json.dump(meta, fh, indent=2)
 

@@ -1211,6 +1211,85 @@
         border-top: 1px solid #c8e8cc; padding-top: 5px;
       }
 
+      /* ── Phase 23.5 — Block Diagnostics + Next Best Action panel ── */
+      .nba-block-panel {
+        margin: 10px 0 6px 0; border-radius: 6px; border: 1px solid #b3cde8;
+        background: #f0f5fb; overflow: hidden; font-size: 0.82rem;
+      }
+      .nba-panel-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 12px; background: #dce8f5; border-bottom: 1px solid #b3cde8;
+      }
+      .nba-header-icon { font-size: 1rem; color: #1a5c8a; }
+      .nba-header-label { flex: 1; font-weight: 700; font-size: 0.8rem; color: #1a3c6a; }
+      .nba-header-priority {
+        font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.06em; padding: 2px 7px; border-radius: 3px;
+        background: #b3cde8; color: #1a3c6a;
+      }
+      .nba-priority-high   .nba-panel-header { background: #fdecea; border-color: #f5c6c0; }
+      .nba-priority-high   .nba-header-label { color: #7b1e1e; }
+      .nba-priority-high   .nba-header-priority { background: #f5c6c0; color: #7b1e1e; }
+      .nba-priority-high   { border-color: #f5c6c0; background: #fff8f7; }
+      .nba-priority-medium .nba-panel-header { background: #fff3cd; border-color: #ffe08a; }
+      .nba-priority-medium .nba-header-label { color: #6b4e00; }
+      .nba-priority-medium .nba-header-priority { background: #ffe08a; color: #6b4e00; }
+      .nba-priority-medium { border-color: #ffe08a; background: #fffdf0; }
+      .nba-panel-body { padding: 10px 14px; }
+      .nba-reason { color: #4a4a5a; margin-bottom: 8px; line-height: 1.45; }
+      .nba-action-label {
+        font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.06em; color: #1a5c8a; margin-bottom: 3px;
+      }
+      .nba-action-text { color: #1a3c6a; font-weight: 600; margin-bottom: 10px; line-height: 1.45; }
+      .nba-alternatives-section { margin-bottom: 10px; }
+      .nba-section-title {
+        font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #1a5c8a; margin-bottom: 5px;
+      }
+      .nba-caveat {
+        font-size: 0.72rem; color: #856404; background: #fff3cd; border-radius: 3px;
+        padding: 3px 8px; margin-bottom: 5px;
+      }
+      .nba-alternatives-table {
+        width: 100%; border-collapse: collapse; font-size: 0.78rem;
+      }
+      .nba-alternatives-table th {
+        text-align: left; font-size: 0.67rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #6a7a8a; border-bottom: 1px solid #c8d8e8;
+        padding: 3px 6px;
+      }
+      .nba-alternatives-table td { padding: 4px 6px; border-bottom: 1px solid #e8eef4; }
+      .nba-alt-rank { color: #8a9aaa; font-size: 0.72rem; width: 24px; }
+      .nba-alt-sym strong { color: #1a3c6a; }
+      .nba-alt-score { font-family: monospace; color: #2c6e49; }
+      .nba-alt-headroom { font-family: monospace; color: #5a6a7a; }
+      .nba-alt-empty { text-align: center; color: var(--muted); font-style: italic; padding: 8px; }
+      .nba-tier-badge {
+        font-size: 0.65rem; font-weight: 800; padding: 1px 5px; border-radius: 3px;
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .nba-tier-ccl { background: #d4edda; color: #155724; }
+      .nba-tier-hca { background: #cfe2ff; color: #084298; }
+      .nba-tier-tgc { background: #f0f0f0; color: #666; }
+      .nba-policy-tag {
+        font-size: 0.65rem; background: #fff3cd; color: #856404;
+        border-radius: 3px; padding: 1px 5px; font-weight: 600;
+      }
+      .nba-collapsible-section { margin-top: 6px; border-top: 1px solid #dde8f4; padding-top: 6px; }
+      .nba-section-toggle {
+        background: none; border: none; cursor: pointer; padding: 0;
+        font-size: 0.75rem; color: #1a5c8a; font-weight: 600; text-align: left;
+      }
+      .nba-section-toggle:hover { color: #0d3a6a; }
+      .nba-section-body { margin-top: 6px; }
+      .nba-evidence-table { width: 100%; font-size: 0.76rem; border-collapse: collapse; }
+      .nba-evidence-table td { padding: 3px 6px; vertical-align: top; }
+      .ev-label { color: #6a7a8a; font-weight: 600; white-space: nowrap; width: 38%; }
+      .ev-val   { color: #2a3a4a; }
+      .nba-unblock-list { margin: 0; padding-left: 18px; font-size: 0.76rem; color: #3a4a5a; line-height: 1.55; }
+      .nba-unblock-list li { margin-bottom: 4px; }
+
       /* ── Phase 7.5J — Analyst Consensus ─────────────────────── */
       .consensus-panel {
         margin-top: 10px; padding: 10px 12px; border-radius: 6px;
@@ -1391,15 +1470,717 @@
       .sa-conf-high      { color: #1a7c4f; font-weight: 700; }
       .sa-conf-medium    { color: #b8860b; font-weight: 700; }
       .sa-conf-low       { color: #c0392b; font-weight: 700; }
+
+      /* ── Phase 23.0A — Tax Position Panel ────────────────────── */
+      .tax-panel {
+        margin-top: 14px; border: 1px solid #c8b96e;
+        border-radius: 12px; background: #fffdf4;
+        box-shadow: 0 3px 10px rgba(180,140,0,0.07);
+        overflow: hidden;
+      }
+      .tax-panel-header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 12px 16px; cursor: pointer;
+        background: linear-gradient(90deg, #fffdf4, #fff8e1);
+        border-bottom: 1px solid #e8d98e;
+        user-select: none;
+      }
+      .tax-panel-header:hover { background: #fff8e0; }
+      .tax-panel-chevron {
+        font-size: 0.75rem; color: #9a7c00; transition: transform 0.2s;
+      }
+      .tax-panel-chevron.open { transform: rotate(90deg); }
+      .tax-panel-label {
+        font-size: 0.78rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.08em; color: #7c6200; flex: 1;
+      }
+      .tax-panel-tagline {
+        font-size: 0.75rem; color: #9a7c00; font-style: italic;
+      }
+      .tax-panel-body {
+        display: none; padding: 16px 18px 18px;
+      }
+      .tax-panel-body.open { display: block; }
+
+      /* Phase 23.2: Operator Policy Panel */
+      .policy-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+      .policy-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; white-space: nowrap; }
+      .policy-badge-do-not-sell { background: #fde8e8; color: #c0392b; border: 1px solid #f5c6c6; }
+      .policy-badge-sell-last { background: #fef3cd; color: #7d5a00; border: 1px solid #ffe08a; }
+      .policy-badge-core-anchor { background: #e8f4fd; color: #1565c0; border: 1px solid #b3d4f5; }
+      .policy-badge-preferred { background: #f0fbe8; color: #2e7d32; border: 1px solid #b8dba5; }
+      .policy-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--border); flex-wrap: wrap; }
+      .policy-row-symbol { font-weight: 700; font-size: 0.88rem; min-width: 64px; }
+      .policy-row-rationale { font-size: 0.8rem; color: var(--muted); flex: 1; }
+      .policy-row-revoke { font-size: 0.78rem; padding: 2px 8px; background: #fee; border: 1px solid #fcc; border-radius: 4px; color: #c0392b; cursor: pointer; white-space: nowrap; }
+      .policy-row-revoke:hover { background: #fdd; }
+
+      .tax-panel-grid {
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+        margin-bottom: 14px;
+      }
+      @media (max-width: 860px) { .tax-panel-grid { grid-template-columns: repeat(2, 1fr); } }
+      .tax-field {
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .tax-field label {
+        font-size: 0.72rem; color: #9a7c00; text-transform: uppercase;
+        letter-spacing: 0.05em; font-weight: 700;
+      }
+      .tax-field input {
+        border: 1px solid #d4c070; border-radius: 8px;
+        padding: 8px 10px; font-size: 0.92rem; background: #fff;
+        color: var(--text); width: 100%;
+      }
+      .tax-field input:focus { outline: 2px solid #b8960a; outline-offset: 1px; }
+      .tax-computed-grid {
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+        margin-bottom: 14px;
+      }
+      .tax-computed-card {
+        padding: 12px 14px; background: #fff8e1;
+        border: 1px solid #d4c070; border-radius: 10px;
+      }
+      .tax-computed-val {
+        font-size: 1.35rem; font-weight: 700; color: #6b4e00; line-height: 1;
+      }
+      .tax-computed-lbl {
+        font-size: 0.72rem; color: #9a7c00; margin-top: 4px;
+        text-transform: uppercase; letter-spacing: 0.05em;
+      }
+      .tax-computed-sub {
+        font-size: 0.72rem; color: #b8860b; margin-top: 2px; font-style: italic;
+      }
+      .tax-save-row {
+        display: flex; align-items: center; gap: 10px;
+      }
+      .tax-save-btn {
+        background: #7c6200; color: #fff; border: none;
+        border-radius: 8px; padding: 7px 18px; font-size: 0.85rem;
+        font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+      }
+      .tax-save-btn:hover { opacity: 0.85; }
+      .tax-save-status {
+        font-size: 0.78rem; color: #2a7a3b;
+      }
+      .tax-save-status.error { color: var(--sev-high); }
+      .tax-disclaimer {
+        font-size: 0.73rem; color: #9a7c00; font-style: italic;
+        margin-top: 10px; padding: 8px 10px;
+        background: #fff3cc; border-radius: 6px; border-left: 3px solid #c8b96e;
+      }
+
+      /* ── Phase 23.0C — Portfolio Action Pipeline ────────────── */
+      .pap-section { margin-top: 18px; }
+      .pap-panel {
+        background: var(--panel); border: 1px solid var(--border);
+        border-radius: 14px; padding: 20px;
+        box-shadow: 0 6px 18px rgba(20,20,20,0.05);
+      }
+      .pap-panel-header {
+        display: flex; align-items: center; gap: 10px;
+        margin-bottom: 16px; flex-wrap: wrap;
+      }
+      .pap-panel-title {
+        font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.07em; color: var(--muted); flex: 1;
+      }
+      .pap-summary-badge {
+        font-size: 0.72rem; color: var(--muted); font-style: italic;
+      }
+      .pap-empty {
+        text-align: center; padding: 28px 0;
+        font-size: 0.88rem; color: var(--muted); font-style: italic;
+      }
+      /* Category accordion */
+      .pap-category {
+        border: 1px solid var(--border); border-radius: 10px;
+        margin-bottom: 10px; overflow: hidden;
+      }
+      .pap-cat-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 14px; cursor: pointer;
+        background: #faf6ef; user-select: none;
+        font-size: 0.82rem; font-weight: 600;
+        transition: background 0.15s;
+      }
+      .pap-cat-header:hover { background: #f0eadc; }
+      .pap-cat-num {
+        display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+        background: var(--accent); color: #fff; font-size: 0.72rem;
+        font-weight: 800; text-align: center; line-height: 22px; flex-shrink: 0;
+      }
+      .pap-cat-label { flex: 1; }
+      .pap-cat-count {
+        font-size: 0.72rem; color: var(--muted); font-weight: 400;
+      }
+      .pap-cat-chevron {
+        font-size: 0.72rem; color: var(--muted);
+        transition: transform 0.2s;
+      }
+      .pap-cat-body { display: none; padding: 14px; }
+      .pap-category.pap-expanded .pap-cat-body { display: block; }
+      .pap-category.pap-expanded .pap-cat-chevron { transform: rotate(180deg); }
+      .pap-cat-empty {
+        padding: 14px 0; font-size: 0.84rem;
+        color: var(--muted); font-style: italic;
+      }
+      /* Table */
+      .pap-tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+      .pap-tbl th {
+        text-align: left; font-size: 0.7rem; text-transform: uppercase;
+        letter-spacing: 0.05em; color: var(--muted);
+        padding: 6px 9px; border-bottom: 2px solid var(--border);
+        background: #faf6ef; position: sticky; top: 0; z-index: 1;
+      }
+      .pap-tbl td {
+        padding: 7px 9px; border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+      }
+      .pap-tbl tr:hover td { background: #f7f2e8; }
+      .pap-tbl tr:last-child td { border-bottom: none; }
+      .pap-sym { font-family: monospace; font-weight: 700; font-size: 0.92rem; color: var(--accent); }
+      .pap-protected-badge { font-size: 0.78rem; margin-left: 4px; }
+      /* Priority badges */
+      .pap-pri {
+        display: inline-block; padding: 2px 8px; border-radius: 12px;
+        font-size: 0.66rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.05em; white-space: nowrap;
+      }
+      .pap-pri-HIGH   { background: #f8d7da; color: #721c24; }
+      .pap-pri-MEDIUM { background: #fff3cd; color: #856404; }
+      .pap-pri-LOW    { background: #e8f5e9; color: #155724; }
+      /* Row highlighting */
+      .pap-row-high td { background: #fff8f6 !important; }
+      .pap-row-med td  { background: #fffdf0 !important; }
+      /* Phase 23.3 — Policy-Aware Action Pipeline */
+      .pap-row-deferred td { background: #fef9ec !important; opacity: 0.88; }
+      .pap-row-info-only td { background: #f0f4ff !important; }
+      .pap-row-suppressed td { background: #fdf4f4 !important; color: #7a3b3b; }
+      .pap-cat-suppressed > .pap-cat-header { background: #fdf0f0; border-left: 3px solid #c0392b; }
+      .pap-cat-num-suppressed { font-size: 1rem; }
+      /* Execution state action badges */
+      .pap-exec-action {
+        display: inline-block; font-size: 0.72rem; font-weight: 700;
+        padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+        letter-spacing: 0.03em;
+      }
+      .pap-exec-EXECUTABLE         { background: #e8f5e9; color: #1b5e20; }
+      .pap-exec-BLOCKED_BY_POLICY  { background: #fde8e8; color: #c0392b; border: 1px solid #f5c6c6; }
+      .pap-exec-DEFERRED_BY_POLICY { background: #fef3cd; color: #7d5a00; border: 1px solid #ffe08a; }
+      .pap-exec-INFORMATIONAL_ONLY { background: #e8f4fd; color: #1565c0; border: 1px solid #b3d4f5; }
+      /* Drift badge */
+      .pap-drift {
+        display: inline-block; font-size: 0.76rem; font-weight: 700;
+        color: var(--sev-high); background: #fff0f0;
+        padding: 2px 6px; border-radius: 6px;
+      }
+      /* Cross-reference badge */
+      .pap-xref {
+        display: inline-block; font-size: 0.68rem; padding: 2px 7px;
+        border-radius: 6px; font-weight: 600; white-space: nowrap;
+      }
+      .pap-xref-SIGNAL_DETERIORATION { background: #f8d7da; color: #721c24; }
+      .pap-xref-ALLOCATION_REDUCTION { background: #fff3cd; color: #856404; }
+      /* Strategic exit manager */
+      .pap-se-manager {
+        margin-top: 14px; padding: 12px 14px;
+        background: #f7f5f0; border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .pap-se-manager-label {
+        display: block; font-size: 0.72rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--muted); margin-bottom: 8px;
+      }
+      .pap-se-chips {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        min-height: 26px; margin-bottom: 8px;
+      }
+      .se-chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #fff; border: 1px solid var(--border);
+        border-radius: 20px; padding: 3px 10px;
+        font-size: 0.78rem;
+      }
+      .se-chip-sym { font-family: monospace; font-weight: 700; color: var(--accent); }
+      .se-chip-rm {
+        background: none; border: none; cursor: pointer;
+        color: var(--muted); font-size: 0.72rem; padding: 0;
+        line-height: 1;
+      }
+      .se-chip-rm:hover { color: var(--sev-high); }
+      .pap-se-add-row {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      }
+      .pap-se-input {
+        padding: 5px 10px; border: 1px solid var(--border);
+        border-radius: 6px; font-size: 0.84rem;
+        font-family: monospace; width: 120px;
+        background: #fff;
+      }
+      .pap-se-btn {
+        padding: 5px 14px; border-radius: 6px;
+        background: var(--accent); color: #fff;
+        border: none; cursor: pointer; font-size: 0.82rem;
+        font-weight: 600;
+      }
+      .pap-se-btn:hover { opacity: 0.88; }
+      .se-status { font-size: 0.78rem; }
+      .se-status-ok    { color: var(--green); }
+      .se-status-warn  { color: #856404; }
+      .se-status-error { color: var(--sev-high); }
+      /* ── Phase 23.6B — Capital Rotation Advisor ─────────────── */
+      .cra-section { margin-top: 18px; }
+      .cra-panel {
+        background: var(--panel); border: 1px solid var(--border);
+        border-radius: 14px; padding: 20px;
+        box-shadow: 0 6px 18px rgba(20,20,20,0.05);
+      }
+      .cra-panel-header {
+        display: flex; align-items: center; gap: 10px;
+        margin-bottom: 14px; flex-wrap: wrap;
+      }
+      .cra-panel-title {
+        font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.07em; color: var(--muted);
+      }
+      .cra-advisory-note {
+        font-size: 0.72rem; color: var(--muted); font-style: italic; flex: 1;
+      }
+      .cra-refresh-btn {
+        padding: 4px 12px; border-radius: 7px; border: 1px solid var(--border);
+        background: #fff; color: var(--fg); font-size: 0.78rem;
+        cursor: pointer; font-weight: 600;
+      }
+      .cra-refresh-btn:hover { background: #f5f0e8; }
+      .cra-status-badge {
+        display: inline-block; padding: 3px 11px; border-radius: 12px;
+        font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.05em; white-space: nowrap;
+      }
+      .cra-status-READY               { background: #d4edda; color: #155724; }
+      .cra-status-DRAFT                { background: #e8f4fd; color: #1565c0; }
+      .cra-status-OPERATOR_REVIEW_REQUIRED { background: #fff3cd; color: #856404; }
+      .cra-review-flags {
+        padding: 10px 14px; background: #fffbf0; border: 1px solid #ffe08a;
+        border-radius: 8px; margin-bottom: 14px; font-size: 0.82rem;
+      }
+      .cra-review-flags ul { margin: 4px 0 0 0; padding-left: 18px; }
+      .cra-review-flags li { margin-bottom: 3px; color: #856404; }
+      .cra-loading {
+        text-align: center; padding: 28px 0;
+        font-size: 0.88rem; color: var(--muted); font-style: italic;
+      }
+      .cra-error {
+        text-align: center; padding: 18px;
+        font-size: 0.88rem; color: var(--sev-high);
+        background: #fdf4f4; border-radius: 8px; margin-top: 8px;
+      }
+      /* Three-column layout */
+      .cra-columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      @media (max-width: 960px) {
+        .cra-columns { grid-template-columns: 1fr; }
+      }
+      .cra-col-header {
+        font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.06em; color: var(--muted);
+        padding: 8px 12px; background: #faf6ef;
+        border: 1px solid var(--border); border-radius: 8px 8px 0 0;
+        border-bottom: 2px solid var(--border);
+      }
+      .cra-col-body {
+        border: 1px solid var(--border); border-top: none;
+        border-radius: 0 0 8px 8px; overflow: hidden;
+      }
+      /* ─ Column 1: Capital Sources ─ */
+      .cra-pool-strip {
+        padding: 10px 12px; background: #f0f8f0;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.82rem; display: flex; gap: 16px; flex-wrap: wrap;
+        align-items: center;
+      }
+      .cra-pool-val {
+        font-size: 1.05rem; font-weight: 800;
+        color: var(--accent-green, #2e7d32); font-family: monospace;
+      }
+      .cra-pool-lbl { font-size: 0.7rem; color: var(--muted); }
+      .cra-cat-group { border-bottom: 1px solid var(--border); }
+      .cra-cat-group:last-child { border-bottom: none; }
+      .cra-cat-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px; cursor: pointer;
+        background: #faf6ef; user-select: none;
+        font-size: 0.79rem; font-weight: 600;
+        transition: background 0.15s;
+      }
+      .cra-cat-header:hover { background: #f0eadc; }
+      .cra-cat-num {
+        display: inline-block; width: 20px; height: 20px; border-radius: 50%;
+        background: var(--accent); color: #fff; font-size: 0.7rem;
+        font-weight: 800; text-align: center; line-height: 20px; flex-shrink: 0;
+      }
+      .cra-cat-label { flex: 1; }
+      .cra-cat-count { font-size: 0.7rem; color: var(--muted); }
+      .cra-cat-body { display: none; }
+      .cra-cat-expanded .cra-cat-body { display: block; }
+      .cra-source-card {
+        padding: 10px 12px; border-bottom: 1px solid #f0eadf;
+        font-size: 0.81rem;
+      }
+      .cra-source-card:last-child { border-bottom: none; }
+      .cra-source-card.cra-blocked { opacity: 0.62; background: #fdf4f4; }
+      .cra-source-row1 {
+        display: flex; align-items: center; gap: 6px;
+        margin-bottom: 4px; flex-wrap: wrap;
+      }
+      .cra-sym {
+        font-family: monospace; font-weight: 700; font-size: 0.92rem;
+        color: var(--accent);
+      }
+      .cra-pri {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 0.64rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .cra-pri-URGENT   { background: #f8d7da; color: #721c24; }
+      .cra-pri-HIGH     { background: #fde8cc; color: #7d3b00; }
+      .cra-pri-MODERATE { background: #fff3cd; color: #856404; }
+      .cra-pri-LOW      { background: #e8f4fd; color: #1565c0; }
+      .cra-pri-DEFER    { background: #e8eaf6; color: #3949ab; }
+      .cra-tax-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 10px;
+        font-size: 0.64rem; font-weight: 700;
+      }
+      .cra-tax-A { background: #d4edda; color: #155724; }
+      .cra-tax-B { background: #e8f4fd; color: #1565c0; }
+      .cra-tax-C { background: #e8f5e9; color: #1b5e20; }
+      .cra-tax-D { background: #fff3cd; color: #856404; }
+      .cra-tax-E { background: #fce4ec; color: #880e4f; }
+      .cra-tax-unknown { background: #f5f5f5; color: #757575; }
+      .cra-policy-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 10px;
+        font-size: 0.64rem; font-weight: 700;
+      }
+      .cra-policy-DNS  { background: #fde8e8; color: #c0392b; }
+      .cra-policy-SL   { background: #fef9ec; color: #7d5a00; }
+      .cra-policy-CA   { background: #fdecea; color: #922b21; }
+      .cra-monitor-badge { background: #f5f0f5; color: #7b2d8b; font-size:0.64rem; padding:1px 6px; border-radius:10px; font-weight:700; }
+      .cra-source-row2 { color: var(--muted); font-size: 0.77rem; margin-bottom: 5px; }
+      .cra-proceeds-val { font-weight: 700; color: #2e7d32; font-family: monospace; }
+      .cra-source-evidence {
+        font-size: 0.73rem; color: var(--muted);
+        margin-bottom: 5px; line-height: 1.4;
+      }
+      .cra-tax-note { font-size: 0.71rem; color: var(--muted); font-style: italic; }
+      .cra-source-actions { display: flex; gap: 8px; align-items: center; }
+      .cra-check-label {
+        display: flex; align-items: center; gap: 5px;
+        font-size: 0.78rem; font-weight: 600; cursor: pointer;
+      }
+      .cra-check-include { accent-color: #2e7d32; }
+      .cra-check-skip    { accent-color: #c0392b; }
+      .cra-empty-cat { padding: 10px 12px; font-size: 0.8rem; color: var(--muted); font-style: italic; }
+      /* ─ Column 2: Rotation Map ─ */
+      .cra-pool-summary {
+        padding: 10px 12px; background: #f5f8ff;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.8rem;
+      }
+      .cra-pool-summary-val {
+        font-size: 1rem; font-weight: 800; font-family: monospace;
+        color: #1565c0;
+      }
+      .cra-rotation-arrow {
+        text-align: center; padding: 8px; font-size: 1.2rem;
+        color: var(--muted); border-bottom: 1px solid var(--border);
+      }
+      .cra-target-card {
+        padding: 10px 12px; border-bottom: 1px solid #eef0f8;
+      }
+      .cra-target-card:last-child { border-bottom: none; }
+      .cra-target-row1 {
+        display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+        flex-wrap: wrap;
+      }
+      .cra-target-rank {
+        display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+        background: var(--accent); color: #fff; font-size: 0.72rem;
+        font-weight: 800; text-align: center; line-height: 22px; flex-shrink: 0;
+      }
+      .cra-target-rank-1 { background: #c9a227; }
+      .cra-target-sym {
+        font-family: monospace; font-weight: 700; font-size: 0.92rem;
+        color: var(--accent);
+      }
+      .cra-das-score {
+        font-size: 0.78rem; font-weight: 700; font-family: monospace;
+        color: var(--muted);
+      }
+      .cra-tier-CCL {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 0.63rem; font-weight: 800;
+        background: #d4ac0d22; color: #7d5a00; border: 1px solid #d4ac0d55;
+      }
+      .cra-tier-HCA {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 0.63rem; font-weight: 800;
+        background: #1565c022; color: #1565c0; border: 1px solid #1565c044;
+      }
+      .cra-target-row2 { font-size: 0.76rem; color: var(--muted); }
+      .cra-target-amount {
+        font-weight: 800; font-family: monospace; font-size: 0.9rem;
+        color: #2e7d32;
+      }
+      .cra-weight-arrow { color: var(--muted); }
+      .cra-no-targets {
+        padding: 18px 12px; text-align: center;
+        font-size: 0.82rem; color: var(--muted); font-style: italic;
+      }
+      /* ─ Column 3: Impact Summary ─ */
+      .cra-impact-card {
+        padding: 10px 14px; border-bottom: 1px solid var(--border);
+      }
+      .cra-impact-card:last-child { border-bottom: none; }
+      .cra-estimate-banner {
+        background: #fff8e1; border: 1px solid #ffe082;
+        border-radius: 6px; padding: 6px 12px;
+        font-size: 0.74rem; font-weight: 700;
+        color: #856404; text-align: center; margin-bottom: 10px;
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .cra-impact-row {
+        display: flex; justify-content: space-between;
+        align-items: center; padding: 5px 0;
+        border-bottom: 1px solid #f5f0e8; font-size: 0.82rem;
+      }
+      .cra-impact-row:last-child { border-bottom: none; }
+      .cra-impact-lbl { color: var(--muted); }
+      .cra-impact-vals {
+        font-family: monospace; font-weight: 700; text-align: right;
+      }
+      .cra-delta-pos { color: #2e7d32; }
+      .cra-delta-neg { color: #c0392b; }
+      .cra-delta-neutral { color: var(--muted); }
+      .cra-nodes-list { font-size: 0.72rem; line-height: 1.6; }
+      .cra-node-resolved { color: #2e7d32; }
+      .cra-node-remaining { color: #856404; }
+      .cra-narrative {
+        padding: 10px 14px; font-size: 0.82rem;
+        line-height: 1.5; color: var(--fg);
+        background: #faf6ef; border-top: 1px solid var(--border);
+      }
+      .cra-impact-section-lbl {
+        font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: var(--muted); margin-bottom: 6px;
+        display: block;
+      }
+      /* ── Phase 8.0B.X — Company Snapshot ───────────────────────── */
+      .dq-company-snapshot {
+        margin-top: 12px;
+        padding: 10px 14px;
+        background: #f9f6f0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .dq-cs-title {
+        font-size: 0.72rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--muted); margin-bottom: 5px;
+      }
+      .dq-cs-name {
+        font-size: 0.88rem; font-weight: 700;
+        color: var(--fg); margin-bottom: 8px;
+        line-height: 1.3;
+      }
+      .dq-cs-grid {
+        display: grid; grid-template-columns: 110px 1fr;
+        gap: 3px 10px; font-size: 0.79rem;
+      }
+      .dq-cs-lbl { color: var(--muted); }
+      .dq-cs-val { color: var(--fg); font-weight: 500; }
+      .dq-cs-val.dq-cs-business {
+        grid-column: 1 / -1; font-style: italic; font-weight: 400;
+        color: var(--muted); line-height: 1.45; margin-top: 2px;
+      }
+      .dq-cs-lbl.dq-cs-business-lbl { align-self: start; padding-top: 2px; }
+      .dq-cs-val.dq-cs-why {
+        color: var(--fg); font-weight: 400; font-size: 0.79rem; line-height: 1.4;
+      }
+      .dq-cs-tags {
+        display: flex; flex-wrap: wrap; gap: 4px;
+        margin-bottom: 6px;
+      }
+      .dq-cs-tag {
+        display: inline-block; padding: 2px 8px; border-radius: 10px;
+        font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background: #e8f0fe; color: #1a56db;
+        border: 1px solid #c3d7fb;
+      }
+      .dq-why-sih {
+        margin-top: 10px;
+        padding: 9px 12px;
+        background: #f0f6ee;
+        border: 1px solid #c6e0c0;
+        border-radius: 7px;
+      }
+      .dq-why-sih-title {
+        font-size: 0.70rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em;
+        color: #3a7d44; margin-bottom: 5px;
+      }
+      .dq-why-sih-bullets {
+        list-style: none; margin: 0; padding: 0;
+      }
+      .dq-why-sih-bullets li {
+        font-size: 0.79rem; color: var(--fg); padding: 1px 0;
+        display: flex; align-items: baseline; gap: 6px;
+      }
+      .dq-why-sih-bullets li::before {
+        content: "•"; color: #3a7d44; font-weight: 700; flex-shrink: 0;
+      }
+      .dq-cs-badge {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 0.70rem; font-weight: 700;
+        background: var(--card-bg, #f5f0e8); color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      /* ── CII Methodology Panel ── */
+      .cii-info-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 16px; height: 16px; border-radius: 50%;
+        background: rgba(255,255,255,0.25); color: rgba(255,255,255,0.9);
+        font-size: 0.65rem; font-weight: 700;
+        border: 1px solid rgba(255,255,255,0.4);
+        cursor: pointer; vertical-align: middle; margin-left: 5px; line-height: 1;
+        transition: background 0.15s;
+      }
+      .cii-info-btn:hover { background: rgba(255,255,255,0.45); }
+      .cii-modal-overlay {
+        display: none; position: fixed; inset: 0;
+        background: rgba(0,0,0,0.55); z-index: 9000;
+        align-items: center; justify-content: center; padding: 16px;
+      }
+      .cii-modal-overlay.open { display: flex; }
+      .cii-modal {
+        background: #fff; border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+        max-width: 560px; width: 100%; max-height: 90vh; overflow-y: auto;
+        padding: 28px 32px; position: relative;
+      }
+      .cii-modal-close {
+        position: absolute; top: 14px; right: 18px;
+        font-size: 1.3rem; color: var(--muted); cursor: pointer;
+        background: none; border: none; line-height: 1; padding: 4px;
+      }
+      .cii-modal-close:hover { color: var(--fg); }
+      .cii-modal-title { font-size: 1.05rem; font-weight: 700; color: var(--fg); margin: 0 0 3px; }
+      .cii-modal-version { font-size: 0.72rem; color: var(--muted); margin-bottom: 14px; }
+      .cii-modal-statement {
+        font-size: 0.84rem; color: var(--fg); line-height: 1.55;
+        border-left: 3px solid var(--accent, #5c4b3a);
+        padding-left: 12px; margin-bottom: 20px; font-style: italic;
+      }
+      .cii-modal-h2 {
+        font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 10px;
+      }
+      .cii-modal-layers { display: grid; gap: 10px; }
+      .cii-layer { background: #f9f6f0; border: 1px solid var(--border); border-radius: 8px; padding: 11px 14px; }
+      .cii-layer-num { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 2px; }
+      .cii-layer-title { font-size: 0.88rem; font-weight: 700; color: var(--fg); margin-bottom: 3px; }
+      .cii-layer-purpose { font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
+      .cii-layer-sources { display: flex; flex-wrap: wrap; gap: 4px; }
+      .cii-source-pill { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #e8f0fe; color: #1a56db; border: 1px solid #c3d7fb; }
+      .cii-modal-objective { font-size: 0.82rem; color: var(--fg); line-height: 1.5; margin-top: 6px; }
+      .cii-modal-footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--muted); text-align: center; }
     </style>
   </head>
   <body>
-    <div class="shell">
+  <div class="cii-modal-overlay" id="ciiModalOverlay" onclick="_closeCIIModal(event)">
+    <div class="cii-modal" role="dialog" aria-modal="true" aria-labelledby="ciiModalTitle">
+      <button class="cii-modal-close" onclick="_closeCIIModal()" title="Close">&times;</button>
+      <div class="cii-modal-title" id="ciiModalTitle">Consensus Intelligence Investing</div>
+      <div class="cii-modal-version">Methodology Version: CII v1.0</div>
+      <p class="cii-modal-statement">
+        Consensus Intelligence Investing (CII) is a portfolio construction methodology that
+        begins with professional analyst consensus, validates that consensus against business
+        fundamentals and historical evidence, scores opportunities using an internal conviction
+        framework, and deploys capital through a risk-managed model designed
+        to maximize long-term portfolio growth.
+      </p>
+      <div class="cii-modal-h2">Four-Layer Framework</div>
+      <div class="cii-modal-layers">
+        <div class="cii-layer">
+          <div class="cii-layer-num">Layer 1</div>
+          <div class="cii-layer-title">Analyst Consensus</div>
+          <div class="cii-layer-purpose">Capture what the professional investment community currently believes.</div>
+          <div class="cii-layer-sources">
+            <span class="cii-source-pill">ESS</span>
+            <span class="cii-source-pill">Zacks</span>
+            <span class="cii-source-pill">Danelfin AI</span>
+            <span class="cii-source-pill">Yahoo ABR</span>
+          </div>
+        </div>
+        <div class="cii-layer">
+          <div class="cii-layer-num">Layer 2</div>
+          <div class="cii-layer-title">Fundamental Validation</div>
+          <div class="cii-layer-purpose">Validate whether business fundamentals support the consensus.</div>
+          <div class="cii-layer-sources">
+            <span class="cii-source-pill">Revenue Growth</span>
+            <span class="cii-source-pill">ROIC</span>
+            <span class="cii-source-pill">Beat Rate</span>
+            <span class="cii-source-pill">FCF Yield</span>
+            <span class="cii-source-pill">Revisions</span>
+          </div>
+        </div>
+        <div class="cii-layer">
+          <div class="cii-layer-num">Layer 3</div>
+          <div class="cii-layer-title">Historical Validation</div>
+          <div class="cii-layer-purpose">Require empirical evidence that similar signal configurations have historically succeeded.</div>
+          <div class="cii-layer-sources">
+            <span class="cii-source-pill">Replay</span>
+          </div>
+        </div>
+        <div class="cii-layer">
+          <div class="cii-layer-num">Layer 4</div>
+          <div class="cii-layer-title">Portfolio Discipline</div>
+          <div class="cii-layer-purpose">Deploy capital intelligently within concentration, allocation, and conviction constraints.</div>
+          <div class="cii-layer-sources">
+            <span class="cii-source-pill">CW-DAS</span>
+            <span class="cii-source-pill">CRA</span>
+            <span class="cii-source-pill">Allocation Controls</span>
+            <span class="cii-source-pill">Position Limits</span>
+          </div>
+        </div>
+      </div>
+      <div class="cii-modal-h2">Objective</div>
+      <p class="cii-modal-objective">
+        Identify opportunities where <strong>analyst consensus</strong>,
+        <strong>business fundamentals</strong>, <strong>historical evidence</strong>,
+        and <strong>portfolio discipline</strong> align most favorably.
+      </p>
+      <div class="cii-modal-footer">
+        Security Intelligence Hub &nbsp;·&nbsp; Advisory intelligence only — not financial advice &nbsp;·&nbsp; Not trade execution
+      </div>
+    </div>
+  </div>
+
+  <div class="shell">
       <!-- Header -->
       <header>
         <h1>Security Intelligence Hub</h1>
         <p class="subtitle">
           Portfolio Alignment Analysis &nbsp;·&nbsp;
+          Where Analyst Consensus Meets Portfolio Discipline
+          <button class="cii-info-btn" onclick="_openCIIModal()" title="About Consensus Intelligence Investing">ⓘ</button>
+          &nbsp;·&nbsp;
           Advisory intelligence only — not trade execution
         </p>
         <nav class="page-nav">
@@ -1449,6 +2230,89 @@
         </div>
 
         <div class="status-bar" id="statusBar"></div>
+
+        <!-- Format help -->
+        <details style="margin-top:14px;">
+
+        <!-- Phase 23.0A — Tax Position Panel -->
+        <div class="tax-panel" id="taxPositionPanel" style="margin-top:14px;">
+          <div class="tax-panel-header" onclick="toggleTaxPanel()">
+            <span class="tax-panel-chevron" id="taxPanelChevron">&#9654;</span>
+            <span class="tax-panel-label">Tax Position</span>
+            <span class="tax-panel-tagline">Decision modifier — not a tax optimizer</span>
+          </div>
+          <div class="tax-panel-body" id="taxPanelBody">
+            <div class="tax-panel-grid">
+              <div class="tax-field">
+                <label for="taxNetRealizedYTD">Net Realized Gain / Loss YTD</label>
+                <input type="number" id="taxNetRealizedYTD" placeholder="-24730"
+                       step="1" title="Enter negative for net losses, positive for net gains" />
+              </div>
+              <div class="tax-field">
+                <label for="taxPotentialLosses">Potential Additional Losses</label>
+                <input type="number" id="taxPotentialLosses" placeholder="14236"
+                       step="1" min="0" />
+              </div>
+              <div class="tax-field">
+                <label for="taxCarryforward">Capital Loss Carryforward</label>
+                <input type="number" id="taxCarryforward" placeholder="0"
+                       step="1" min="0" />
+              </div>
+              <div class="tax-field">
+                <label for="taxYear">Tax Year</label>
+                <input type="number" id="taxYear" placeholder="2026"
+                       step="1" min="2020" max="2099" />
+              </div>
+            </div>
+            <div class="tax-computed-grid" id="taxComputedGrid">
+              <div class="tax-computed-card">
+                <div class="tax-computed-val" id="taxAvailableCapacity">—</div>
+                <div class="tax-computed-lbl">Available Gain Capacity</div>
+                <div class="tax-computed-sub">Losses already realized YTD + carryforward</div>
+              </div>
+              <div class="tax-computed-card">
+                <div class="tax-computed-val" id="taxProjectedCapacity">—</div>
+                <div class="tax-computed-lbl">Projected Gain Capacity</div>
+                <div class="tax-computed-sub">Available + potential additional losses</div>
+              </div>
+            </div>
+            <div class="tax-save-row">
+              <button class="tax-save-btn" onclick="saveTaxState()">Save Tax Position</button>
+              <span class="tax-save-status" id="taxSaveStatus"></span>
+            </div>
+            <div class="tax-disclaimer">
+              SIH does not calculate tax liability, optimize lots, or perform wash-sale analysis.
+              Tax context is used only to sequence portfolio actions.
+              Consult your tax advisor for personalized guidance.
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase 23.2: Operator Policy Layer panel -->
+        <div class="policy-panel" id="operatorPolicyPanel" style="margin-top:14px;">
+          <div class="panel-header" onclick="togglePolicyPanel()" style="cursor:pointer; user-select:none; display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:600; font-size:0.92rem;">🔒 Operator Portfolio Policies</span>
+            <span id="policyPanelChevron" style="font-size:0.8rem; color:var(--muted);">▼</span>
+          </div>
+          <div id="policyPanelBody" style="display:none; margin-top:10px;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+              <input id="policySymbolInput" type="text" placeholder="Symbol (e.g. TSLA)" maxlength="12"
+                style="width:110px; font-size:0.85rem; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--fg);">
+              <select id="policyTypeSelect" style="font-size:0.85rem; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--fg);">
+                <option value="">-- Policy Type --</option>
+                <option value="DO_NOT_SELL">🔒 DO_NOT_SELL</option>
+                <option value="SELL_LAST">⏸ SELL_LAST</option>
+                <option value="CORE_ANCHOR">⚓ CORE_ANCHOR</option>
+                <option value="PREFERRED_ACCUMULATION">⭐ PREFERRED_ACCUMULATION</option>
+              </select>
+              <input id="policyRationaleInput" type="text" placeholder="Rationale (optional)" maxlength="200"
+                style="width:200px; font-size:0.85rem; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--fg);">
+              <button onclick="addOperatorPolicy()" class="btn-sm btn-primary" style="font-size:0.82rem;">Add Policy</button>
+            </div>
+            <div id="policyStatus" style="font-size:0.82rem; margin-bottom:6px;"></div>
+            <div id="policyListContainer" style="font-size:0.85rem;"></div>
+          </div>
+        </div>
 
         <!-- Format help -->
         <details style="margin-top:14px;">
@@ -1517,9 +2381,40 @@
           </div>
         </div>
 
+        <!-- Row 4b: Capital Rotation Advisor (Phase 23.6B) -->
+        <div class="cra-section section-gap" id="craSection" style="display:none;">
+          <div class="cra-panel">
+            <div class="cra-panel-header">
+              <span class="cra-panel-title">Capital Rotation Advisor</span>
+              <span id="craStatusBadge" class="cra-status-badge"></span>
+              <span class="cra-advisory-note">Guidance only — not trade instructions</span>
+              <button class="cra-refresh-btn" id="craRefreshBtn" onclick="loadCRAProposal()">↺ Refresh Proposal</button>
+            </div>
+            <div id="craReviewFlags" class="cra-review-flags" style="display:none;"></div>
+            <div id="craContent">
+              <div class="cra-loading">Loading Capital Rotation Advisor…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Portfolio Action Pipeline (Phase 23.0C) -->
+        <div class="pap-section section-gap" id="portfolioActionPipelineSection" style="display:none;">
+          <div class="pap-panel">
+            <div class="pap-panel-header">
+              <span class="pap-panel-title">Portfolio Action Pipeline</span>
+              <span class="pap-summary-badge">
+                <span id="pipelineActionCount">—</span> actions &nbsp;·&nbsp;
+                <span id="pipelineCategoryCount">—</span> categories active
+                &nbsp;·&nbsp; Guidance only — not trade instructions
+              </span>
+            </div>
+            <div id="portfolioActionPipelineContent"></div>
+          </div>
+        </div>
+
       </div><!-- /resultsArea -->
     </div><!-- /shell -->
 
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=17"></script>
   </body>
 </html>

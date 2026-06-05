@@ -59,6 +59,15 @@ _L1_ASSET_CLASS_NODES = frozenset({
     "EQUITIES", "FIXED_INCOME", "DIGITAL", "COMMODITIES", "CASH"
 })
 
+# Recommendation types for which mandate_drift_label is semantically applicable.
+# Non-allocation types (CONVICTION_EXPLAINABILITY_CARD, narrative cards, etc.) do
+# not carry allocation drift context and are exempt from the label check in RC-10.
+_ALLOCATION_REC_TYPES = frozenset({
+    "INCREASE_UNDERWEIGHT",
+    "REDUCE_OVERWEIGHT",
+    "IMPROVE_REPLAY_ALIGNMENT",
+})
+
 _ARCHETYPE_MANDATE_MAP = {
     "CONCENTRATED_ALPHA": "concentrated_alpha_profile.yaml",
     "GROWTH":             "growth_allocation_profile.yaml",
@@ -565,7 +574,8 @@ def _rc06_classification_audit(
     registry = _load_etf_registry()
     registry_symbols = {s.upper() for s in registry.keys()}
 
-    violations = []
+    violations = []      # hard violations → FAIL
+    advisory_notes = []  # CASH_DECOMPOSABLE registry presence → WARN
     sub_checks = []
 
     for h in holdings:
@@ -587,6 +597,7 @@ def _rc06_classification_audit(
             continue
 
         row_violations = []
+        row_notes = []  # advisory notes for this row
 
         # Rule 1: security_type should be 'Cash'
         if sec_type not in _CASH_SECURITY_TYPES:
@@ -596,9 +607,17 @@ def _rc06_classification_audit(
         if not is_ce:
             row_violations.append("is_cash_equivalent=False (expected True)")
 
-        # Rule 3: must NOT be in ETF registry
+        # Rule 3: must NOT be in ETF registry UNLESS it is a CASH_DECOMPOSABLE entry.
+        # CASH_DECOMPOSABLE entries (e.g. SPAXX, VMFXX) have legitimate registry
+        # entries to model their economic exposure — not a classification defect.
         if sym in registry_symbols:
-            row_violations.append(f"present in ETF decomposition registry ({sym})")
+            entry = registry.get(sym, {}) or {}
+            if entry.get("registry_entry_type") == "CASH_DECOMPOSABLE":
+                row_notes.append(
+                    f"present in ETF decomposition registry (CASH_DECOMPOSABLE — advisory)"
+                )
+            else:
+                row_violations.append(f"present in ETF decomposition registry ({sym})")
 
         # Rule 4: must NOT appear as ETF contributor in any recommendation
         for rec in recommendations:
@@ -607,9 +626,23 @@ def _rc06_classification_audit(
             if sym in [str(c).upper() for c in etf_contrib]:
                 row_violations.append(f"appears as ETF contributor in rec for node={rec_node}")
 
-        row_status = "PASS" if not row_violations else "FAIL"
+        if row_violations and row_notes:
+            row_status = "FAIL"
+        elif row_violations:
+            row_status = "FAIL"
+        elif row_notes:
+            row_status = "WARN"
+        else:
+            row_status = "PASS"
+
         if row_violations:
             violations.extend([f"{sym}: {v}" for v in row_violations])
+        if row_notes:
+            advisory_notes.extend([f"{sym}: {n}" for n in row_notes])
+
+        entry_type = None
+        if sym in registry_symbols:
+            entry_type = (registry.get(sym, {}) or {}).get("registry_entry_type")
 
         sub_checks.append({
             "symbol": sym,
@@ -617,21 +650,33 @@ def _rc06_classification_audit(
             "is_cash_equivalent": is_ce,
             "operational_state": op_state,
             "in_etf_registry": sym in registry_symbols,
+            "registry_entry_type": entry_type,
             "status": row_status,
             "violations": row_violations,
+            "advisory_notes": row_notes,
         })
 
-    overall_status = "PASS" if not violations else "FAIL"
-    detail = [f"Cash positions audited: {len(sub_checks)}"] + violations[:15]
+    if violations:
+        overall_status = "FAIL"
+    elif advisory_notes:
+        overall_status = "WARN"
+    else:
+        overall_status = "PASS"
+
+    detail = (
+        [f"Cash positions audited: {len(sub_checks)}"]
+        + [f"VIOLATION: {v}" for v in violations[:10]]
+        + [f"ADVISORY: {n}" for n in advisory_notes[:5]]
+    )
 
     return ReconciliationCheck(
         check_id="RC-06",
         name="Security Classification Audit",
         status=overall_status,
-        expected="All cash instruments: security_type=Cash, is_cash_equivalent=True, not in ETF contributors",
+        expected="All cash instruments: security_type=Cash, is_cash_equivalent=True, not in non-decomposable ETF registry",
         actual=f"{sum(1 for s in sub_checks if s['status'] == 'PASS')}/{len(sub_checks)} PASS",
-        variance=f"{len(violations)} violation(s)",
-        tolerance="zero violations",
+        variance=f"{len(violations)} hard violation(s), {len(advisory_notes)} advisory note(s)",
+        tolerance="zero hard violations",
         detail=detail,
         sub_checks=sub_checks,
     )
@@ -860,6 +905,7 @@ def _rc10_philosophy_consistency(
     for rec in recommendations:
         rec_id = _fld(rec, "recommendation_id", "?")
         rec_mandate = str(_fld(rec, "mandate_type", "") or "").upper()
+        rec_type = str(_fld(rec, "recommendation_type", "") or "").upper()
         mandate_sev = _fld(rec, "mandate_severity", None)
         mandate_urg = _fld(rec, "mandate_urgency", None)
         mandate_label = _fld(rec, "mandate_drift_label", None)
@@ -870,31 +916,41 @@ def _rc10_philosophy_consistency(
         if rec_mandate and rec_mandate != active_mandate:
             row_violations.append(f"mandate_type={rec_mandate!r} ≠ run mandate {active_mandate!r}")
 
-        # PMI fields present
+        # PMI fields present (apply to all recommendation types)
         if mandate_sev is None or mandate_sev == "":
             row_violations.append("mandate_severity missing")
         if mandate_urg is None or mandate_urg == "":
             row_violations.append("mandate_urgency missing")
-        if mandate_label is None or mandate_label == "":
-            row_violations.append("mandate_drift_label missing")
+
+        # mandate_drift_label is only applicable to allocation-type recommendations.
+        # Non-allocation types (explainability cards, narrative cards, etc.) do not
+        # carry allocation drift context — absence of the label is correct, not a defect.
+        label_applicable = rec_type in _ALLOCATION_REC_TYPES
+        if label_applicable:
+            if mandate_label is None or mandate_label == "":
+                row_violations.append("mandate_drift_label missing")
 
         if row_violations:
             violations.extend([f"{rec_id}: {v}" for v in row_violations])
 
         sub_checks.append({
             "recommendation_id": rec_id,
+            "recommendation_type": rec_type,
             "mandate_type": rec_mandate,
             "mandate_severity": mandate_sev,
             "mandate_urgency": mandate_urg,
             "mandate_drift_label": mandate_label,
+            "label_applicable": label_applicable,
             "status": "PASS" if not row_violations else "FAIL",
             "violations": row_violations,
         })
 
     overall_status = "PASS" if not violations else "FAIL"
+    n_allocation = sum(1 for s in sub_checks if s["label_applicable"])
     detail = [
         f"Active mandate: {active_mandate}",
         f"Recommendations checked: {len(sub_checks)}",
+        f"Allocation-type recs (label check applies): {n_allocation}",
         f"Violations: {len(violations)}",
     ] + violations[:10]
 
@@ -902,7 +958,7 @@ def _rc10_philosophy_consistency(
         check_id="RC-10",
         name="Portfolio Philosophy Consistency",
         status=overall_status,
-        expected=f"All recs: mandate_type={active_mandate}, PMI fields populated",
+        expected=f"All recs: mandate_type={active_mandate}, PMI fields populated; allocation recs: mandate_drift_label populated",
         actual=f"{sum(1 for s in sub_checks if s['status'] == 'PASS')}/{len(sub_checks)} PASS",
         variance=f"{len(violations)} violation(s)",
         tolerance="zero violations",
@@ -1199,6 +1255,103 @@ def _rc13_coverage_reconciliation(holdings: list) -> ReconciliationCheck:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# RC-ZV01 — Zero-value position integrity
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _rczv01_zero_value_integrity(holdings: list) -> ReconciliationCheck:
+    """RC-ZV01 — Zero-Value Position Integrity.
+
+    Verify that no zero-value holding (market_value == 0.0) has leaked into
+    the investable holdings list.  All such positions should have been
+    classified as ZERO_VALUE_LEGACY_POSITION by the ingestion pipeline and
+    excluded from analytics before reconciliation runs.
+
+    Rules (applied only when zero-value holdings are found):
+      1. operational_state must be ZERO_VALUE_LEGACY_POSITION
+      2. percent_of_portfolio must be 0.0
+      3. is_cash_equivalent must be False
+
+    Status:
+      PASS  — no zero-value holdings in investable list (correct exclusion), or
+              all zero-value holdings found are correctly classified.
+      FAIL  — one or more zero-value holdings are misclassified.
+    """
+    zero_holdings = [
+        h for h in holdings
+        if _to_float(_fld(h, "market_value")) == 0.0
+    ]
+
+    if not zero_holdings:
+        return ReconciliationCheck(
+            check_id="RC-ZV01",
+            name="Zero-Value Position Integrity",
+            status="PASS",
+            expected="All zero-value holdings classified as ZERO_VALUE_LEGACY_POSITION",
+            actual="0 zero-value holdings in investable list",
+            variance="none",
+            tolerance="zero violations",
+            detail=["No zero-value holdings in investable list — correctly excluded by pipeline."],
+            sub_checks=[],
+        )
+
+    violations = []
+    sub_checks = []
+
+    for h in zero_holdings:
+        sym = str(_fld(h, "symbol", "") or "").upper()
+        op_state = str(_fld(h, "operational_state", "") or "").upper()
+        pct_portfolio = _to_float(_fld(h, "percent_of_portfolio"))
+        is_ce = _to_bool(_fld(h, "is_cash_equivalent", False))
+
+        row_violations = []
+
+        # Rule 1: must be classified as ZERO_VALUE_LEGACY_POSITION
+        if op_state != "ZERO_VALUE_LEGACY_POSITION":
+            row_violations.append(
+                f"operational_state={op_state!r} (expected 'ZERO_VALUE_LEGACY_POSITION')"
+            )
+
+        # Rule 2: percent_of_portfolio must be 0.0
+        if pct_portfolio > 0.0:
+            row_violations.append(f"percent_of_portfolio={pct_portfolio} (expected 0.0)")
+
+        # Rule 3: must not be marked as cash equivalent
+        if is_ce:
+            row_violations.append("is_cash_equivalent=True (must be False for zero-value positions)")
+
+        if row_violations:
+            violations.extend([f"{sym}: {v}" for v in row_violations])
+
+        sub_checks.append({
+            "symbol": sym,
+            "operational_state": op_state,
+            "market_value": _to_float(_fld(h, "market_value")),
+            "percent_of_portfolio": pct_portfolio,
+            "is_cash_equivalent": is_ce,
+            "status": "PASS" if not row_violations else "FAIL",
+            "violations": row_violations,
+        })
+
+    overall_status = "PASS" if not violations else "FAIL"
+    detail = [
+        f"Zero-value holdings in investable list: {len(zero_holdings)}",
+        f"Correctly classified: {sum(1 for s in sub_checks if s['status'] == 'PASS')}/{len(sub_checks)}",
+    ] + violations[:10]
+
+    return ReconciliationCheck(
+        check_id="RC-ZV01",
+        name="Zero-Value Position Integrity",
+        status=overall_status,
+        expected="All zero-value holdings: operational_state=ZERO_VALUE_LEGACY_POSITION, percent_of_portfolio=0.0",
+        actual=f"{sum(1 for s in sub_checks if s['status'] == 'PASS')}/{len(sub_checks)} PASS",
+        variance=f"{len(violations)} violation(s)",
+        tolerance="zero violations",
+        detail=detail,
+        sub_checks=sub_checks,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1212,7 +1365,22 @@ def run_reconciliation(
     run_id: str,
     generated_at: Optional[str] = None,
 ) -> ReconciliationResult:
-    """Execute all 10 reconciliation checks and return a ReconciliationResult.
+    """Execute all reconciliation checks and return a ReconciliationResult.
+
+    Checks executed:
+      RC-01  Portfolio Value Reconciliation
+      RC-02  Allocation Total Reconciliation
+      RC-03  Decomposition Integrity (Direct + ETF = Effective)
+      RC-04  ETF Decomposition Weight Validation
+      RC-05  Cash Position Reconciliation
+      RC-06  Security Classification Audit (CASH_DECOMPOSABLE advisory)
+      RC-07  Archetype Target Validation
+      RC-08  Recommendation Consistency
+      RC-09  Holding Classification Consistency
+      RC-10  Portfolio Philosophy Consistency (_ALLOCATION_REC_TYPES scoped)
+      RC-12  Taxonomy Normalization
+      RC-13  Coverage Reconciliation
+      RC-ZV01 Zero-Value Position Integrity
 
     Args:
         holdings:          list of PortfolioHolding (dataclass) or dict rows
@@ -1240,6 +1408,7 @@ def run_reconciliation(
         _rc10_philosophy_consistency(recommendations, mandate_type),
         _rc12_taxonomy_normalization(alignment),
         _rc13_coverage_reconciliation(holdings),
+        _rczv01_zero_value_integrity(holdings),
     ]
 
     passed = sum(1 for c in checks if c.status == "PASS")

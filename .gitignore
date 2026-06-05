@@ -183,3 +183,10 @@ strategic_narrative_validation_report.md
 taxonomy_clean_run_report.md
 taxonomy_reconciliation_report.md
 ui_archetype_consistency_report.md
+
+# Operator runtime state — live operator decisions, not architectural source.
+# Committed default template: data/operator/portfolio_alignment_state.default.json
+data/operator/portfolio_alignment_state.json
+
+# FMP data quality validation JSON — runtime artifact, regeneratable
+data/analysis/fmp_dq_validation.json

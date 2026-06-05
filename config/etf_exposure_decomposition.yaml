@@ -836,6 +836,7 @@ symbols:
   # ── Cash Equivalents ──────────────────────────────────────────────────────
 
   SPAXX:
+    registry_entry_type: CASH_DECOMPOSABLE
     decomposition_method: HEURISTIC_REGISTRY_V1
     decomposition_confidence: 0.90
     strategic_role: CASH_EQUIVALENT
@@ -849,6 +850,7 @@ symbols:
       CASH_EQUIVALENT: 100
 
   VMFXX:
+    registry_entry_type: CASH_DECOMPOSABLE
     decomposition_method: HEURISTIC_REGISTRY_V1
     decomposition_confidence: 0.90
     strategic_role: CASH_EQUIVALENT
@@ -862,6 +864,7 @@ symbols:
       CASH_EQUIVALENT: 100
 
   FZFXX:
+    registry_entry_type: CASH_DECOMPOSABLE
     decomposition_method: HEURISTIC_REGISTRY_V1
     decomposition_confidence: 0.90
     strategic_role: CASH_EQUIVALENT

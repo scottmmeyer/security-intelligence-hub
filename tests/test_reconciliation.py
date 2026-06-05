@@ -31,8 +31,10 @@ from src.portfolio.reconciliation import (
     _rc10_philosophy_consistency,
     _rc12_taxonomy_normalization,
     _rc13_coverage_reconciliation,
+    _rczv01_zero_value_integrity,
     run_reconciliation,
 )
+from src.portfolio.ingestion import _classify_operational_state
 
 _NOW = datetime.now(timezone.utc).isoformat()
 
@@ -642,15 +644,15 @@ class TestRunReconciliation:
         assert result.run_id == "PAR-TEST-00000001"
 
     def test_twelve_checks_always_returned(self):
-        """run_reconciliation now includes RC-01..RC-10 plus RC-12 and RC-13."""
+        """run_reconciliation includes RC-01..RC-10, RC-12, RC-13, and RC-ZV01 (13 checks total)."""
         result = run_reconciliation(**self._minimal_inputs())
-        assert len(result.checks) == 12
+        assert len(result.checks) == 13
 
     def test_check_ids_are_canonical(self):
         result = run_reconciliation(**self._minimal_inputs())
         expected_ids = ["RC-01", "RC-02", "RC-03", "RC-04", "RC-05",
                         "RC-06", "RC-07", "RC-08", "RC-09", "RC-10",
-                        "RC-12", "RC-13"]
+                        "RC-12", "RC-13", "RC-ZV01"]
         actual_ids = [c.check_id for c in result.checks]
         assert actual_ids == expected_ids
 
@@ -660,7 +662,7 @@ class TestRunReconciliation:
         # RC-04 and RC-06 might FAIL due to live SPAXX registry state (Phase 6.3D bug);
         # at minimum, overall status must be set
         assert result.overall_status in ("PASS", "WARN", "FAIL")
-        assert result.checks_passed + result.checks_warned + result.checks_failed == 12
+        assert result.checks_passed + result.checks_warned + result.checks_failed == 13
 
     def test_generated_at_set_when_omitted(self):
         """generated_at defaults to current UTC when not provided."""
@@ -716,7 +718,7 @@ class TestRunReconciliation:
             run_id="PAR-TEST-DICT",
         )
         assert isinstance(result, ReconciliationResult)
-        assert len(result.checks) == 12
+        assert len(result.checks) == 13
 
     def test_spaxx_double_count_detected(self):
         """Simulate Phase 6.3D double-count: CASH alignment = 18% but holdings = 9%."""
@@ -1045,3 +1047,213 @@ class TestRC13CoverageReconciliation:
         assert ess["eligible_covered"] == 1
         assert ess["grade_eligible"] == "F"
         assert result.status == "WARN"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 23.1 — New test cases
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── RC-06 CASH_DECOMPOSABLE advisory behavior ─────────────────────────────
+
+class TestRC06CashDecomposable:
+    """Phase 23.1: RC-06 must produce WARN (advisory) not FAIL for CASH_DECOMPOSABLE registry entries."""
+
+    def _holding_cash(self, symbol: str = "SPAXX") -> PortfolioHolding:
+        return _holding(
+            symbol=symbol,
+            market_value=5_000.0,
+            percent_of_portfolio=5.0,
+            asset_class="CASH",
+            security_type="Cash",
+            operational_state="CASH_EQUIVALENT",
+            is_cash_equivalent=True,
+        )
+
+    def test_cash_decomposable_produces_warn_not_fail(self):
+        """SPAXX in the ETF registry as CASH_DECOMPOSABLE should yield WARN advisory, not FAIL."""
+        holdings = [
+            _holding("AAPL", market_value=95_000.0, percent_of_portfolio=95.0),
+            self._holding_cash("SPAXX"),
+        ]
+        recs = [_rec("EQUITIES", mandate_type="CONCENTRATED_ALPHA")]
+        result = _rc06_classification_audit(holdings, recs)
+        assert result.check_id == "RC-06"
+        # SPAXX is CASH_DECOMPOSABLE: advisory note, not hard violation
+        assert result.status in ("PASS", "WARN")
+        assert result.status != "FAIL"
+
+    def test_non_cash_decomposable_etf_override_still_passes(self):
+        """Regular ETF overrides that are not in registry do not trigger Rule 3."""
+        holdings = [
+            _holding("AAPL", market_value=90_000.0, percent_of_portfolio=90.0),
+            _holding("VOO", market_value=10_000.0, percent_of_portfolio=10.0,
+                     security_type="ETF"),
+        ]
+        recs = [_rec("EQUITIES", mandate_type="CONCENTRATED_ALPHA")]
+        result = _rc06_classification_audit(holdings, recs)
+        assert result.check_id == "RC-06"
+        # VOO is a legitimate ETF override, not a cash-in-registry scenario
+        assert result.status in ("PASS", "WARN")
+
+
+# ── RC-10 allocation rec type scoping ─────────────────────────────────────
+
+class TestRC10AllocationRecTypes:
+    """Phase 23.1: RC-10 mandate_drift_label check must only apply to allocation rec types."""
+
+    def _rec_typed(self, rec_type: str, has_label: bool = True) -> dict:
+        r = _rec("EQUITIES", mandate_type="CONCENTRATED_ALPHA")
+        r["recommendation_type"] = rec_type
+        if not has_label:
+            r.pop("mandate_drift_label", None)
+        return r
+
+    def test_non_allocation_rec_without_label_passes(self):
+        """STRATEGIC_RETAIN_NARRATIVE without mandate_drift_label must not be a violation."""
+        recs = [
+            self._rec_typed("STRATEGIC_RETAIN_NARRATIVE", has_label=False),
+            self._rec_typed("CONVICTION_EXPLAINABILITY_CARD", has_label=False),
+        ]
+        result = _rc10_philosophy_consistency(recs, "CONCENTRATED_ALPHA")
+        assert result.check_id == "RC-10"
+        assert result.status == "PASS"
+
+    def test_allocation_rec_without_label_fails(self):
+        """INCREASE_UNDERWEIGHT without mandate_drift_label must produce FAIL."""
+        recs = [
+            self._rec_typed("INCREASE_UNDERWEIGHT", has_label=False),
+        ]
+        result = _rc10_philosophy_consistency(recs, "CONCENTRATED_ALPHA")
+        assert result.check_id == "RC-10"
+        assert result.status == "FAIL"
+
+    def test_allocation_rec_with_label_passes(self):
+        """REDUCE_OVERWEIGHT with mandate_drift_label populated must PASS label check."""
+        recs = [
+            self._rec_typed("REDUCE_OVERWEIGHT", has_label=True),
+        ]
+        result = _rc10_philosophy_consistency(recs, "CONCENTRATED_ALPHA")
+        assert result.check_id == "RC-10"
+        assert result.status == "PASS"
+
+    def test_mixed_rec_types_only_allocation_checked(self):
+        """Mix of rec types: only allocation types inspected for mandate_drift_label."""
+        recs = [
+            self._rec_typed("STRATEGIC_RETAIN_NARRATIVE", has_label=False),  # exempt
+            self._rec_typed("INCREASE_UNDERWEIGHT", has_label=True),           # checked + passes
+        ]
+        result = _rc10_philosophy_consistency(recs, "CONCENTRATED_ALPHA")
+        assert result.check_id == "RC-10"
+        assert result.status == "PASS"
+
+
+# ── RC-ZV01 zero-value integrity ──────────────────────────────────────────
+
+class TestRCZV01ZeroValueIntegrity:
+    """Phase 23.1: RC-ZV01 zero-value position integrity checks."""
+
+    def test_no_zero_value_holdings_passes(self):
+        """All positive market values → PASS with no zero-value holdings detected."""
+        holdings = [
+            _holding("AAPL", market_value=50_000.0, percent_of_portfolio=50.0),
+            _holding("MSFT", market_value=50_000.0, percent_of_portfolio=50.0),
+        ]
+        result = _rczv01_zero_value_integrity(holdings)
+        assert result.check_id == "RC-ZV01"
+        assert result.status == "PASS"
+        assert "0 zero-value" in result.actual
+
+    def test_correctly_classified_contra_lot_passes(self):
+        """Zero-value holding with ZERO_VALUE_LEGACY_POSITION state → PASS."""
+        holdings = [
+            _holding("AAPL", market_value=100_000.0, percent_of_portfolio=100.0),
+            _holding(
+                symbol="M26CNT069",
+                market_value=0.0,
+                percent_of_portfolio=0.0,
+                operational_state="ZERO_VALUE_LEGACY_POSITION",
+                is_cash_equivalent=False,
+            ),
+        ]
+        result = _rczv01_zero_value_integrity(holdings)
+        assert result.check_id == "RC-ZV01"
+        assert result.status == "PASS"
+
+    def test_misclassified_zero_value_as_active_fails(self):
+        """Zero-value holding with ACTIVE_POSITION operational state → FAIL."""
+        holdings = [
+            _holding(
+                symbol="M26CNT069",
+                market_value=0.0,
+                percent_of_portfolio=0.0,
+                operational_state="ACTIVE_POSITION",  # wrong — should be ZERO_VALUE_LEGACY_POSITION
+                is_cash_equivalent=False,
+            ),
+        ]
+        result = _rczv01_zero_value_integrity(holdings)
+        assert result.check_id == "RC-ZV01"
+        assert result.status == "FAIL"
+
+    def test_zero_value_with_nonzero_pct_fails(self):
+        """Zero-value holding with percent_of_portfolio > 0 → FAIL (Rule 2 violation)."""
+        holdings = [
+            _holding(
+                symbol="M26CNT069",
+                market_value=0.0,
+                percent_of_portfolio=1.0,  # wrong — should be 0.0
+                operational_state="ZERO_VALUE_LEGACY_POSITION",
+                is_cash_equivalent=False,
+            ),
+        ]
+        result = _rczv01_zero_value_integrity(holdings)
+        assert result.check_id == "RC-ZV01"
+        assert result.status == "FAIL"
+
+    def test_rczv01_registered_in_run_reconciliation(self):
+        """run_reconciliation must include RC-ZV01 in output checks."""
+        holdings = [
+            _holding("AAPL", market_value=100_000.0, percent_of_portfolio=100.0),
+        ]
+        result = run_reconciliation(
+            holdings=holdings,
+            alignment=_l1_alignment_set(equities=100.0, fixed_income=0.0,
+                                         digital=0.0, commodities=0.0, cash=0.0),
+            recommendations=[],
+            mandate_type="CONCENTRATED_ALPHA",
+            snapshot_total_mv=100_000.0,
+            run_id="PAR-TEST-ZV01",
+        )
+        check_ids = [c.check_id for c in result.checks]
+        assert "RC-ZV01" in check_ids
+
+
+# ── Ingestion: ZERO_VALUE_LEGACY_POSITION classification ──────────────────
+
+class TestIngestionZeroValueLegacyPosition:
+    """Phase 23.1: ingestion _classify_operational_state must detect contra lots."""
+
+    def test_contra_symbol_pattern_classified_as_zero_value_legacy(self):
+        """M26CNT069 with mv=0 matches _CONTRA_SYMBOL_RE → ZERO_VALUE_LEGACY_POSITION."""
+        state = _classify_operational_state("M26CNT069", "CyberArk contra lot", 0.0)
+        assert state == "ZERO_VALUE_LEGACY_POSITION"
+
+    def test_contra_in_description_classified_as_zero_value_legacy(self):
+        """Symbol without pattern but description contains CONTRA → ZERO_VALUE_LEGACY_POSITION."""
+        state = _classify_operational_state("CYARK", "CONTRA ENTRY - corporate action", 0.0)
+        assert state == "ZERO_VALUE_LEGACY_POSITION"
+
+    def test_normal_zero_mv_classified_as_closed_position(self):
+        """Zero market value with no contra indicators → CLOSED_POSITION."""
+        state = _classify_operational_state("AAPL", "Apple Inc", 0.0)
+        assert state == "CLOSED_POSITION"
+
+    def test_active_position_unaffected(self):
+        """Normal positive market value → ACTIVE_POSITION (unchanged)."""
+        state = _classify_operational_state("AAPL", "Apple Inc", 10_000.0)
+        assert state == "ACTIVE_POSITION"
+
+    def test_other_contra_pattern_variants(self):
+        """Other M##CNT### patterns also classify correctly."""
+        for sym in ("M12CNT001", "M99CNT999", "M00CNT123"):
+            state = _classify_operational_state(sym, "broker artifact", 0.0)
+            assert state == "ZERO_VALUE_LEGACY_POSITION", f"Expected ZERO_VALUE_LEGACY_POSITION for {sym}"

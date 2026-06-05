@@ -1,0 +1,10 @@
+component,range_min,range_max,formula,input_fields,drift_sensitive,notes
+Signal,0,30,"min(composite / 5.0 × 30, 30)","composite_score (0–5)",No,"ESS+Zacks+Danelfin blend; no allocation awareness"
+Replay,0,20,"20 if replay_supported else 0","replay_supported (bool)",No,"Binary gate on historical replay appearance"
+Conviction (CCL),35,35,"tier == CORE_CONVICTION_LEADER","narrative_tier",No,"Full CCL premium; tier set by signal quality not allocation"
+Conviction (HCA),28,28,"tier == HIGH_CONVICTION_ANCHOR","narrative_tier",No,"HCA premium; 7-pt gap below CCL"
+Conviction (other),10,10,"tier not in {CCL, HCA}","narrative_tier",No,"Minimal weight for non-priority tiers"
+Sizing,0,8,"8 × max(0, 1 − pct / 6.0)","current position weight %",Partial,"Guards individual position cap only; no node-target awareness"
+Momentum,0,10,"Both BULLISH=10; one=7.5; neutral=4; bearish=0","ess_text + signal_direction",No,"Signal convergence; no allocation awareness"
+Redundancy Penalty,0,-15,"−15 if in_ow_node (MODERATE+) else 0","alignment_results severity",Yes (binary),"Binary: MODERATE+ OW triggers flat −15; LOW OW = no penalty"
+Concentration Penalty,0,-20,"−min((pct−6%)×4, 20) if pct > 6%","current position weight %",No,"Individual position size guard; not node-level"

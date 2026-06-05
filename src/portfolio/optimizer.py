@@ -21,6 +21,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
+from .mandate import get_mandate
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Result data structures (plain dicts for JSON-safe output — no frozen dataclass
@@ -194,6 +196,11 @@ def _make_result(
     conflicts_detected: list,
     mandate_blocked: bool,
     optimizer_version: str = "7.3C",
+    # Phase 23.5 — Block Diagnostics additive metadata (presentation-layer only)
+    mandate_type: str = "",
+    concentration_tolerance: float = 0.0,
+    overlap_with_ow_pct: float = 0.0,
+    ow_node_key: str = "",
 ) -> dict:
     preferred_display = _build_preferred_display(
         preferred_candidate=preferred_candidate,
@@ -214,6 +221,11 @@ def _make_result(
         "optimizer_version": optimizer_version,
         # Phase 7.3C — display-only comparison (None when not applicable)
         "preferred_display": preferred_display,
+        # Phase 23.5 — Block Diagnostics additive metadata
+        "mandate_type": mandate_type,
+        "concentration_tolerance": concentration_tolerance,
+        "overlap_with_ow_pct": overlap_with_ow_pct,
+        "ow_node_key": ow_node_key,
     }
 
 
@@ -622,7 +634,7 @@ def score_etf_candidate(
         final_pis = max(0.0, raw_pis)
         optimizer_status = "ACTIONABLE" if final_pis > 0 else "SUPPRESSED"
 
-    return _make_candidate(
+    candidate = _make_candidate(
         symbol=symbol,
         candidate_type="ETF",
         target_node=target_node,
@@ -648,6 +660,14 @@ def score_etf_candidate(
         sti_tier="NA",
         percent_of_portfolio=0.0,
     )
+    # Phase 23.5 — additive ETF diagnostic fields for Block Diagnostics panel
+    candidate["overlap_with_ow_pct"] = round(overlap_ow, 2) if worsens else 0.0
+    candidate["ow_node_key"] = (
+        max(overweight_nodes, key=lambda k: overweight_nodes[k])
+        if worsens and overweight_nodes
+        else ""
+    )
+    return candidate
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -915,6 +935,35 @@ def run_parallel_optimizer(
                 if c["rec_a_id"] == rec_id or c["rec_b_id"] == rec_id
             ]
 
+            # Phase 23.5 — extract mandate context for Block Diagnostics (additive)
+            _mandate_type = ""
+            _concentration_tolerance = 0.0
+            for mi in mandate_interpretations:
+                mi_node = (
+                    mi.node_key if dataclasses.is_dataclass(mi)
+                    else mi.get("node_key", "")
+                )
+                if mi_node == target_node:
+                    _mandate_type = (
+                        str(mi.mandate_type or "") if dataclasses.is_dataclass(mi)
+                        else str(mi.get("mandate_type", "") or "")
+                    )
+                    break
+            if _mandate_type:
+                try:
+                    _concentration_tolerance = get_mandate(_mandate_type).concentration_tolerance
+                except Exception:
+                    _concentration_tolerance = 0.0
+
+            # Phase 23.5 — extract ETF OW context from first worsening ETF candidate
+            _overlap_with_ow_pct = 0.0
+            _ow_node_key = ""
+            for c in candidates:
+                if c.get("candidate_type") == "ETF" and c.get("worsens_overweight"):
+                    _overlap_with_ow_pct = float(c.get("overlap_with_ow_pct", 0.0))
+                    _ow_node_key = str(c.get("ow_node_key", "") or "")
+                    break
+
             results[rec_id] = _make_result(
                 rec_id=rec_id,
                 rec_type=rec_type,
@@ -925,6 +974,10 @@ def run_parallel_optimizer(
                 optimizer_decision=optimizer_decision,
                 conflicts_detected=rec_conflicts,
                 mandate_blocked=mandate_blocked,
+                mandate_type=_mandate_type,
+                concentration_tolerance=_concentration_tolerance,
+                overlap_with_ow_pct=_overlap_with_ow_pct,
+                ow_node_key=_ow_node_key,
             )
 
         # ── REDUCE_OVERWEIGHT recs: these are generally coherent ─────────────

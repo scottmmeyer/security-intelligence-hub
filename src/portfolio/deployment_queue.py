@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .operator_policy import OperatorPolicyRegistry
 
 from .models import (
     AllocationAlignmentResult,
@@ -106,6 +109,16 @@ class DeploymentCandidate:
     deployment_score:   float     # CW-DAS; higher = more attractive for capital deployment
     score_breakdown:    CwDasBreakdown
     notes:              str       # human-readable mandate flags
+
+    # Phase 23.2 — Operator Policy annotations (additive; never affect scores)
+    policy_type:        Optional[str]  = None   # active policy type or None
+    policy_annotation:  Optional[str]  = None   # human badge text
+    policy_protected:   bool           = False  # True iff DO_NOT_SELL active
+    policy_rank_boost:  bool           = False  # True iff rank adjusted by PREFERRED_ACCUMULATION
+    original_rank:      Optional[int]  = None   # pre-policy rank (for transparency)
+
+    # Phase 23.5 — allocation node for NBA OW-node filtering (additive)
+    allocation_node:    str            = ""     # e.g. "EQUITIES.US.LARGE"
 
 
 # ─── CW-DAS scoring ───────────────────────────────────────────────────────────
@@ -334,6 +347,9 @@ def build_deployment_queue(
                 None,
             )
 
+        # Phase 23.5 — canonical allocation node key for this holding
+        allocation_node = f"EQUITIES.{holding.geography.upper()}.{holding.market_cap_bucket.upper()}"
+
         score, breakdown = compute_cw_das(
             symbol=sym,
             composite=composite,
@@ -362,6 +378,7 @@ def build_deployment_queue(
             deployment_score=score,
             score_breakdown=breakdown,
             notes=notes,
+            allocation_node=allocation_node,
         )
         scored.append((score, composite, candidate))
 
@@ -450,3 +467,109 @@ def compute_deployable_cash(
         "deployable_mv":             round(deployable_mv, 2),
         "deployable_pct":            round(deployable_pct, 4),
     }
+
+
+# ─── Phase 23.2 — Policy application ─────────────────────────────────────────
+
+def _is_sell_context(candidate: DeploymentCandidate) -> bool:
+    """Return True if this deployment candidate is in a sell/reduction context.
+
+    The deployment queue is buy-only by construction (eligibility requires
+    BULLISH signal + replay + HIGH_CONVICTION_RETAIN + CCL/HCA tier), so
+    sell-context entries will not normally appear here.  This helper is
+    provided for correctness and forward compatibility.
+
+    A candidate is considered "sell-context" if its trim_score is above a
+    high threshold (>= 60), indicating strategic expendability even if it
+    passed buy eligibility gates.
+    """
+    return candidate.trim_score >= 60.0
+
+
+def apply_policy_to_queue(
+    queue: list[DeploymentCandidate],
+    registry: "OperatorPolicyRegistry",
+) -> tuple[list[DeploymentCandidate], list[DeploymentCandidate]]:
+    """Apply operator policies to the deployment queue.
+
+    Modifies queue ordering and adds policy annotation fields.
+    Intelligence scores (deployment_score, composite_score, etc.) are NEVER
+    modified.
+
+    Policy application sequence:
+      1. Annotate all entries with their active policy type
+      2. Identify sell-context entries with DO_NOT_SELL → move to suppressed list
+      3. Split remaining into buy cohort and sell cohort
+      4. Within buy cohort: boost PREFERRED_ACCUMULATION entries to front
+         (tie-break: by original rank / deployment_score)
+      5. Within sell cohort: push SELL_LAST entries to tail
+         (within-SELL_LAST tie-break: by original rank)
+      6. Reassemble and renumber ranks
+
+    Returns:
+        (active_queue, suppressed_entries)
+        active_queue:      policy-annotated, reranked deployment candidates
+        suppressed_entries: DO_NOT_SELL entries removed from execution
+    """
+    # Step 1: Annotate all entries with policy metadata
+    annotated: list[DeploymentCandidate] = []
+    for entry in queue:
+        pt = registry.active_policy_type(entry.symbol)
+        ann = None
+        protected = False
+        boosted = False
+        if pt == "DO_NOT_SELL":
+            ann = "🔒 Operator Protected"
+            protected = True
+        elif pt == "SELL_LAST":
+            ann = "⏸ Sell Last"
+        elif pt == "CORE_ANCHOR":
+            ann = "⚓ Core Anchor"
+        elif pt == "PREFERRED_ACCUMULATION":
+            ann = "⭐ Preferred Accumulation"
+            boosted = True
+        annotated.append(dataclasses.replace(
+            entry,
+            policy_type=pt,
+            policy_annotation=ann,
+            policy_protected=protected,
+            policy_rank_boost=boosted,
+            original_rank=entry.rank,
+        ))
+
+    # Step 2: Extract DO_NOT_SELL entries that are in sell context → suppressed
+    suppressed: list[DeploymentCandidate] = []
+    active: list[DeploymentCandidate] = []
+    for entry in annotated:
+        if entry.policy_type == "DO_NOT_SELL" and _is_sell_context(entry):
+            suppressed.append(entry)
+        else:
+            active.append(entry)
+
+    # Step 3: Partition active into buy cohort and sell cohort
+    buy_cohort  = [e for e in active if not _is_sell_context(e)]
+    sell_cohort = [e for e in active if _is_sell_context(e)]
+
+    # Step 4: Within buy cohort — PREFERRED_ACCUMULATION to front
+    # Preferred entries retain their relative order among themselves (by original_rank)
+    buy_preferred = sorted(
+        [e for e in buy_cohort if e.policy_rank_boost],
+        key=lambda e: (e.original_rank or e.rank),
+    )
+    buy_normal = [e for e in buy_cohort if not e.policy_rank_boost]
+    buy_sorted = buy_preferred + buy_normal
+
+    # Step 5: Within sell cohort — SELL_LAST to tail
+    sell_normal = [e for e in sell_cohort if e.policy_type != "SELL_LAST"]
+    sell_last   = sorted(
+        [e for e in sell_cohort if e.policy_type == "SELL_LAST"],
+        key=lambda e: (e.original_rank or e.rank),
+    )
+    sell_sorted = sell_normal + sell_last
+
+    # Step 6: Reassemble and renumber
+    final: list[DeploymentCandidate] = []
+    for new_rank, entry in enumerate(buy_sorted + sell_sorted, start=1):
+        final.append(dataclasses.replace(entry, rank=new_rank))
+
+    return final, suppressed

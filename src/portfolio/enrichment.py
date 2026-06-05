@@ -102,7 +102,7 @@ _ETF_OVERRIDES: dict[str, dict] = {
     # ── Zero-value contra entries ─────────────────────────────────────────────
     # M26CNT069 is a Fidelity-internal identifier for a CyberArk contra lot.
     # Market value is $0.00; included here to prevent UNKNOWN classification.
-    "M26CNT069": dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="LARGE", mega_subtier="N/A", sector="Technology", industry="Cybersecurity"),  # CyberArk Software contra lot
+    "M26CNT069": dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="LARGE", mega_subtier="N/A", sector="Technology", industry="Cybersecurity", security_type="CONTRA_ENTRY"),  # CyberArk Software contra lot
     # ── Digital asset ETFs/funds ─────────────────────────────────────────────
     "FETH":  dict(asset_class="DIGITAL",  geography="GLOBAL",        market_cap_bucket="N/A",    mega_subtier="N/A", sector="Digital Assets", industry="Ethereum"),  # Fidelity Ethereum Fund
     "XRP":   dict(asset_class="DIGITAL",  geography="GLOBAL",        market_cap_bucket="N/A",    mega_subtier="N/A", sector="Digital Assets", industry="XRP"),       # Bitwise XRP ETF
@@ -224,6 +224,23 @@ def enrich_holdings(
             ))
         elif sym in _ETF_OVERRIDES:
             ov = _ETF_OVERRIDES[sym]
+            # Zero-value legacy positions (contra lots, broker artifacts): skip ETF
+            # decomposition — enrich with static override metadata only.
+            if h.operational_state == "ZERO_VALUE_LEGACY_POSITION":
+                enriched.append(replace(
+                    h,
+                    asset_class=ov["asset_class"],
+                    geography=ov.get("geography", "UNKNOWN"),
+                    market_cap_bucket=ov.get("market_cap_bucket", "UNKNOWN"),
+                    mega_subtier=ov.get("mega_subtier", "N/A"),
+                    sector=ov.get("sector", "UNKNOWN"),
+                    industry=ov.get("industry", "UNKNOWN"),
+                    security_type=ov.get("security_type", "CONTRA_ENTRY"),
+                    is_cash_equivalent=False,
+                    operational_state="ZERO_VALUE_LEGACY_POSITION",
+                    created_at_utc=now_utc,
+                ))
+                continue
             # Cash-equivalent symbols (SPAXX, VMFXX, etc.) must NOT be promoted to
             # security_type="ETF" — doing so routes their CASH exposure through the
             # fund/ETF accumulator path, making it appear as ETF-derived exposure
