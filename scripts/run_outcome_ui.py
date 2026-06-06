@@ -442,6 +442,126 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._json_response({}, 200)  # fail-open: empty dict on error
 
+        elif path == "/api/cra/draft":
+            # GET /api/cra/draft — load saved CRA proposal draft (404 if none)
+            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
+            if not draft_path.exists():
+                self._json_response({"error": "No saved draft found"}, 404)
+            else:
+                try:
+                    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+                    self._json_response(draft)
+                except Exception as exc:
+                    self._json_response({"error": f"Failed to load draft: {exc}"}, 500)
+
+        elif path.startswith("/api/cra/draft/export"):
+            # GET /api/cra/draft/export?format=csv|md — export saved draft
+            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
+            if not draft_path.exists():
+                self._json_response({"error": "No saved draft to export"}, 404)
+                return
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
+            fmt = params.get("format", "csv").lower().strip()
+            try:
+                draft = json.loads(draft_path.read_text(encoding="utf-8"))
+                as_of = draft.get("as_of_date", "draft")
+                if fmt == "csv":
+                    import csv as _csv, io as _io
+                    output = _io.StringIO()
+                    w = _csv.writer(output)
+                    # Header
+                    w.writerow(["CRA Proposal", as_of, draft.get("proposal_id", ""), draft.get("cra_version", "1.0")])
+                    w.writerow([])
+                    # Sources
+                    w.writerow(["section", "symbol", "category", "priority",
+                                 "estimated_proceeds", "sizing_pct", "tax_bucket",
+                                 "tax_annotation", "evidence_summary"])
+                    for s in draft.get("sources", []):
+                        w.writerow(["SOURCE", s.get("symbol"), s.get("category"),
+                                    s.get("priority"), s.get("estimated_proceeds"),
+                                    s.get("sizing_pct"), s.get("tax_bucket"),
+                                    s.get("tax_annotation"), s.get("evidence_summary")])
+                    w.writerow([])
+                    # Targets
+                    w.writerow(["section", "rank", "symbol", "narrative_tier",
+                                 "deployment_score", "suggested_amount", "projected_weight_pct"])
+                    for t in draft.get("deployments", []):
+                        w.writerow(["TARGET", t.get("rank"), t.get("symbol"),
+                                    t.get("narrative_tier"), t.get("deployment_score"),
+                                    t.get("suggested_amount"),
+                                    f"{float(t.get('projected_weight_pct', 0))*100:.2f}%"])
+                    w.writerow([])
+                    # Impact
+                    imp = draft.get("impact", {})
+                    w.writerow(["section", "alignment_before", "alignment_after",
+                                 "alignment_delta", "concentration_before",
+                                 "concentration_after", "narrative"])
+                    w.writerow(["IMPACT", imp.get("alignment_score_before"),
+                                 imp.get("alignment_score_after"), imp.get("alignment_delta"),
+                                 imp.get("concentration_before"), imp.get("concentration_after"),
+                                 imp.get("impact_narrative")])
+                    csv_bytes = output.getvalue().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition", f'attachment; filename="cra_proposal_{as_of}.csv"')
+                    self.send_header("Content-Length", str(len(csv_bytes)))
+                    self.end_headers()
+                    self.wfile.write(csv_bytes)
+                elif fmt in ("md", "markdown"):
+                    lines = [
+                        f"# Capital Rotation Advisor — Proposal",
+                        f"",
+                        f"**As of:** {as_of}  ·  **Proposal ID:** {draft.get('proposal_id', '—')}",
+                        f"**Status:** {draft.get('proposal_status', '—')}  ·  **CRA Version:** {draft.get('cra_version', '1.0')}",
+                        f"",
+                    ]
+                    # Sources by category
+                    cat_labels = {
+                        "SIGNAL_DETERIORATION": "Signal Deterioration",
+                        "STRATEGIC_EXIT": "Strategic Exit",
+                        "OVERWEIGHT_REDUCTION": "Exposure Reduction",
+                        "TAX_AWARE_EXIT": "Tax-Aware Exit",
+                        "LOW_CONVICTION_REDUCTION": "Low Conviction Reduction",
+                    }
+                    lines += [f"## Capital Sources  (Est. Pool: ${draft.get('total_capital_pool', 0):,.0f})", ""]
+                    for cat_key, cat_label in cat_labels.items():
+                        cat_src = [s for s in draft.get("sources", []) if s.get("category") == cat_key]
+                        if cat_src:
+                            lines += [f"### {cat_label}", "| Symbol | Est. Proceeds | Tax | Evidence |", "| --- | --- | --- | --- |"]
+                            for s in cat_src:
+                                lines.append(f"| {s.get('symbol')} | ${float(s.get('estimated_proceeds', 0)):,.0f} | {s.get('tax_bucket','—')} | {s.get('evidence_summary', '')} |")
+                            lines.append("")
+                    # Targets
+                    lines += ["## Deployment Targets", "", "| Rank | Symbol | Tier | Score | Add | Proj. Weight |", "| --- | --- | --- | --- | --- | --- |"]
+                    for t in draft.get("deployments", []):
+                        tier_short = "CCL" if "CORE" in t.get("narrative_tier","") else "HCA"
+                        lines.append(f"| #{t.get('rank')} | {t.get('symbol')} | {tier_short} | {t.get('deployment_score')} | ${float(t.get('suggested_amount', 0)):,.0f} | {float(t.get('projected_weight_pct', 0))*100:.1f}% |")
+                    lines.append("")
+                    # Impact
+                    imp = draft.get("impact", {})
+                    lines += [
+                        "## Portfolio Impact Estimate",
+                        "",
+                        f"- Alignment: {imp.get('alignment_score_before', '—')} → {imp.get('alignment_score_after', '—')} ({'+' if float(imp.get('alignment_delta', 0)) >= 0 else ''}{imp.get('alignment_delta', 0):.1f})",
+                        f"- Concentration: {imp.get('concentration_before', '—')} → {imp.get('concentration_after', '—')}",
+                        f"- {imp.get('impact_narrative', '')}",
+                        "",
+                        "---",
+                        "*Advisory guidance only — not trade instructions. Generated by Security Intelligence Hub.*",
+                    ]
+                    md_bytes = "\n".join(lines).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                    self.send_header("Content-Disposition", f'attachment; filename="cra_proposal_{as_of}.md"')
+                    self.send_header("Content-Length", str(len(md_bytes)))
+                    self.end_headers()
+                    self.wfile.write(md_bytes)
+                else:
+                    self._json_response({"error": f"Unsupported format: {fmt}"}, 400)
+            except Exception as exc:
+                self._json_response({"error": f"Export failed: {exc}"}, 500)
+
         elif path == "/api/portfolio/archetype-targets":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -506,7 +626,31 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # type: ignore[override]
         path = self.path.split("?")[0]
-        if path == "/api/signal-refresh":
+        if path == "/api/cra/draft":
+            # POST /api/cra/draft — save proposal (+ optional operator_include_map) as draft
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            if not payload:
+                self._json_response({"error": "empty payload"}, 400)
+                return
+            # Inject saved_at_utc timestamp
+            from datetime import datetime as _dt, timezone as _tz
+            payload["saved_at_utc"] = _dt.now(_tz.utc).isoformat(timespec="seconds")
+            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
+            draft_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = draft_path.with_suffix(".tmp")
+            try:
+                tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                tmp.replace(draft_path)
+                self._json_response({"saved": True, "proposal_id": payload.get("proposal_id")})
+            except Exception as exc:
+                self._json_response({"error": f"Failed to save draft: {exc}"}, 500)
+        elif path == "/api/signal-refresh":
             global _refresh_proc
             if _refresh_proc is not None and _refresh_proc.poll() is None:
                 self._json_response({"started": False, "reason": "already running"})
@@ -775,6 +919,19 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             existing["_updated"] = now_str
             state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
             self._json_response({"ok": True, "revoked_count": revoked_count, "symbol": symbol})
+        else:
+            self.send_error(404)
+
+    def do_DELETE(self) -> None:  # type: ignore[override]
+        path = self.path.split("?")[0]
+        if path == "/api/cra/draft":
+            # DELETE /api/cra/draft — clear saved draft
+            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
+            if draft_path.exists():
+                draft_path.unlink()
+                self._json_response({"deleted": True})
+            else:
+                self._json_response({"deleted": False, "reason": "no draft exists"}, 404)
         else:
             self.send_error(404)
 

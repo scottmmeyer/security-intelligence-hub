@@ -5,7 +5,13 @@ a ranked capital deployment queue for CONCENTRATED_ALPHA portfolios.
 
 CW-DAS formula (validated in deployment_queue_validation_report.md):
     Signal(0-30) + Replay(0-20) + Conviction(0-35) + Sizing(0-8)
-    + Momentum(0-10) − Redundancy_Penalty(0-15) − Concentration_Penalty(0-20)
+    + Momentum(0-10) + Fundamental_Modifier(-5 to +3)
+    − Redundancy_Penalty(0-15) − Concentration_Penalty(0-20)
+
+Fundamental Modifier added in ISSUE-07 (Phase 8.0B.1C):
+    Beat Rate + Thesis Integrity + Fundamental Consistency
+    Bounded: max(-5.0, min(3.0, raw))
+    No-op when FMP coverage = NO_DATA or ETF_NOT_APPLICABLE
 
 Conviction weights (vs original DAS CCL=25/HCA=20):
     CORE_CONVICTION_LEADER = 35  (+10)
@@ -45,7 +51,7 @@ WARN_POSITION_PCT = 6.0   # soft-warn threshold (matches phase_7_4a_analysis.py)
 MAX_POSITION_PCT  = 8.0   # concentration ceiling
 MIN_CASH_PCT      = 2.0   # mandate floor — reserve never deployed below this level
 
-CW_DAS_VERSION = "1.0"    # formula version for artifact lineage
+CW_DAS_VERSION = "1.1"    # formula version for artifact lineage (1.0 → 1.1: ISSUE-07)
 
 # CW-DAS conviction weights
 _CCL_CONVICTION   = 35.0
@@ -54,6 +60,17 @@ _OTHER_CONVICTION = 10.0
 
 # CW-DAS sizing scale (reduced from 15 to prevent headroom from dominating tier)
 _SIZING_SCALE = 8.0
+
+# Fundamental Modifier bounds (ISSUE-07)
+_FM_MAX_BONUS   =  3.0
+_FM_MAX_PENALTY = -5.0
+
+# Sectors where analyst beat-rate is structurally unreliable — modifier omits beat_component
+# for these sectors to prevent false penalties on systematically under-estimated companies.
+_FM_BEAT_RATE_EXCLUDED_SECTORS = frozenset({
+    "Solar",           # Solar: analysts chronically over-estimate, beat rate < 50% is normal
+    "Biotechnology",   # Pre-revenue biotech: beat rates noisy or absent
+})
 
 # Eligible narrative tiers
 _ELIGIBLE_TIERS = frozenset({"CORE_CONVICTION_LEADER", "HIGH_CONVICTION_ANCHOR"})
@@ -72,13 +89,16 @@ class CwDasBreakdown:
     in downstream JSON serialization.
     """
 
-    signal:         float   # 0–30; derived from composite_score
-    replay:         float   # 0 or 20; binary gate on replay_supported
-    conviction:     float   # 35 (CCL), 28 (HCA), or 10 (other)
-    sizing:         float   # 0–8; headroom relative to WARN_POSITION_PCT
-    momentum:       float   # 0, 4.0, 7.5, or 10.0; ESS + signal direction
-    redundancy_pen: float   # 0 or 15; overweight allocation node penalty
-    conc_pen:       float   # 0–20; concentration penalty above WARN threshold
+    signal:               float   # 0–30; derived from composite_score
+    replay:               float   # 0 or 20; binary gate on replay_supported
+    conviction:           float   # 35 (CCL), 28 (HCA), or 10 (other)
+    sizing:               float   # 0–8; headroom relative to WARN_POSITION_PCT
+    momentum:             float   # 0, 4.0, 7.5, or 10.0; ESS + signal direction
+    redundancy_pen:       float   # 0 or 15; overweight allocation node penalty
+    conc_pen:             float   # 0–20; concentration penalty above WARN threshold
+    fundamental_modifier: float = 0.0   # -5 to +3; ISSUE-07 fundamental conviction modifier
+    thesis_integrity: str = ""           # INTACT | QUESTIONABLE | DETERIORATING | INSUFFICIENT_DATA
+    fundamental_consistency: str = ""    # CONSISTENT | MIXED | CONTRADICTORY | DATA_ANOMALY
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,6 +141,147 @@ class DeploymentCandidate:
     allocation_node:    str            = ""     # e.g. "EQUITIES.US.LARGE"
 
 
+# ─── Fundamental Modifier (ISSUE-07 / Phase 8.0B.1C) ────────────────────────
+
+def compute_fundamental_modifier(
+    beat_rate: Optional[float],
+    thesis_integrity: str,
+    fundamental_consistency: str,
+    fmp_coverage: str,
+    industry: str = "",
+) -> float:
+    """Compute the Fundamental Conviction Modifier for a single holding.
+
+    Approved design from docs/phase_8_0b1c/phase_8_0b1c_recommendation.md.
+
+    Args:
+        beat_rate:               0.0–1.0; fraction of quarters beat; None if unavailable
+        thesis_integrity:        INTACT | QUESTIONABLE | DETERIORATING | INSUFFICIENT_DATA
+        fundamental_consistency: CONSISTENT | MIXED | CONTRADICTORY | DATA_ANOMALY | INSUFFICIENT_DATA
+        fmp_coverage:            FULL | PARTIAL | NO_DATA | ETF_NOT_APPLICABLE
+        industry:                industry string for sector calibration (beat_rate exclusions)
+
+    Returns:
+        Modifier in range [_FM_MAX_PENALTY, _FM_MAX_BONUS], rounded to 2dp.
+        Returns 0.0 when FMP coverage is insufficient.
+    """
+    # No-op when FMP data is absent
+    if fmp_coverage not in ("FULL", "PARTIAL"):
+        return 0.0
+
+    # Beat rate component — consensus-normalized execution quality
+    # Sector calibration: skip beat_component for industries with structural analyst bias
+    beat_component = 0.0
+    if beat_rate is not None and industry not in _FM_BEAT_RATE_EXCLUDED_SECTORS:
+        if beat_rate >= 0.875:     # 7/8+ quarters
+            beat_component = 2.0
+        elif beat_rate >= 0.75:    # 6/8 quarters
+            beat_component = 1.0
+        elif beat_rate >= 0.625:   # 5/8 quarters (threshold)
+            beat_component = 0.0
+        else:                      # < 5/8 quarters
+            beat_component = -1.0
+
+    # Thesis integrity component
+    _thesis_map = {
+        "INTACT":              0.0,
+        "QUESTIONABLE":       -0.5,
+        "DETERIORATING":      -3.0,
+        "INSUFFICIENT_DATA":   0.0,
+    }
+    thesis_component = _thesis_map.get(thesis_integrity, 0.0)
+
+    # Fundamental consistency component
+    _consistency_map = {
+        "CONSISTENT":          1.0,
+        "MIXED":               0.0,
+        "CONTRADICTORY":      -1.5,
+        "DATA_ANOMALY":       -2.0,
+        "INSUFFICIENT_DATA":   0.0,
+    }
+    consistency_component = _consistency_map.get(fundamental_consistency, 0.0)
+
+    raw = beat_component + thesis_component + consistency_component
+    return round(max(_FM_MAX_PENALTY, min(_FM_MAX_BONUS, raw)), 2)
+
+
+def _classify_thesis_integrity(fmp_row: dict) -> str:
+    """Classify Thesis Integrity from FMP enriched data row.
+
+    Mirrors the JS logic in _fmpThesisIntegrity() — kept in sync.
+    """
+    cov = fmp_row.get("fmp_coverage_status", "")
+    if cov not in ("FULL", "PARTIAL"):
+        return "INSUFFICIENT_DATA"
+
+    def _f(key: str) -> Optional[float]:
+        v = fmp_row.get(key, "")
+        if not v:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    r_val = _f("revenue_growth_q1_yoy")
+    b_val = _f("beat_rate_8q")
+    a_val = _f("revenue_acceleration")
+
+    is_detr = (
+        (r_val is not None and r_val < -0.02 and b_val is not None and b_val < 0.65)
+        or (r_val is not None and r_val < -0.02 and a_val is not None and a_val < -0.50)
+    )
+    is_intact = (
+        (r_val is None or r_val >= 0)
+        and (b_val is None or b_val >= 0.625)
+        and (a_val is None or a_val >= -0.20)
+    )
+    if is_detr:
+        return "DETERIORATING"
+    if is_intact:
+        return "INTACT"
+    return "QUESTIONABLE"
+
+
+def _classify_fundamental_consistency(fmp_row: dict, ess_text: str, thesis: str) -> str:
+    """Classify Fundamental Consistency from FMP data + ESS signal.
+
+    Mirrors the JS logic in _fmpFundamentalConsistency() — kept in sync.
+    """
+    cov = fmp_row.get("fmp_coverage_status", "")
+    if cov not in ("FULL", "PARTIAL"):
+        return "INSUFFICIENT_DATA"
+
+    ess = (ess_text or "").upper()
+    ev_raw = fmp_row.get("ev_ebitda_ttm", "")
+    rev_raw = fmp_row.get("revenue_growth_q1_yoy", "")
+    beat_raw = fmp_row.get("beat_rate_8q", "")
+
+    def _f(v: str) -> Optional[float]:
+        if not v:
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    ev_v = _f(ev_raw)
+    r_val = _f(rev_raw)
+    b_val = _f(beat_raw)
+
+    sig_bullish = "BULLISH" in ess and "BEARISH" not in ess
+
+    # DATA_ANOMALY: extreme valuation with declining revenue
+    if ev_v is not None and ev_v > 80 and r_val is not None and r_val < -0.02:
+        return "DATA_ANOMALY"
+
+    if sig_bullish and thesis == "INTACT":
+        return "CONSISTENT"
+    if sig_bullish and thesis == "DETERIORATING" and (b_val is None or b_val < 0.60):
+        return "CONTRADICTORY"
+    return "MIXED"
+
+
 # ─── CW-DAS scoring ───────────────────────────────────────────────────────────
 
 def compute_cw_das(
@@ -132,6 +293,8 @@ def compute_cw_das(
     ess_text: str,
     signal_direction: str,
     in_ow_node: bool,
+    fmp_row: Optional[dict] = None,   # ISSUE-07: FMP enriched universe row
+    industry: str = "",               # ISSUE-07: for sector calibration
 ) -> tuple[float, CwDasBreakdown]:
     """Compute the Conviction-Weighted DAS for a single holding.
 
@@ -144,6 +307,8 @@ def compute_cw_das(
         ess_text:         ESS score text e.g. "VERY_BULLISH", "BULLISH", ""
         signal_direction: signal direction string e.g. "BULLISH", "NEUTRAL"
         in_ow_node:       True if the holding's allocation node is MODERATE+ overweight
+        fmp_row:          Optional FMP enriched universe row (ISSUE-07); None = no modifier
+        industry:         Industry string for sector calibration of beat_rate
 
     Returns:
         (score, breakdown) where score is max(0, raw) rounded to 2dp
@@ -190,7 +355,30 @@ def compute_cw_das(
     if pct > WARN_POSITION_PCT:
         conc_pen = min((pct - WARN_POSITION_PCT) * 4.0, 20.0)
 
-    raw = signal_c + replay_c + conviction_c + sizing_c + momentum_c - redundancy_pen - conc_pen
+    # 8. Fundamental Modifier (-5 to +3): ISSUE-07 / Phase 8.0B.1C
+    fund_mod = 0.0
+    thesis = ""
+    consistency = ""
+    if fmp_row:
+        thesis     = _classify_thesis_integrity(fmp_row)
+        consistency = _classify_fundamental_consistency(fmp_row, ess_text, thesis)
+        beat_raw   = fmp_row.get("beat_rate_8q", "")
+        beat_rate: Optional[float] = None
+        try:
+            beat_rate = float(beat_raw) if beat_raw else None
+        except (ValueError, TypeError):
+            beat_rate = None
+        fmp_coverage = fmp_row.get("fmp_coverage_status", "NO_DATA")
+        fund_mod = compute_fundamental_modifier(
+            beat_rate=beat_rate,
+            thesis_integrity=thesis,
+            fundamental_consistency=consistency,
+            fmp_coverage=fmp_coverage,
+            industry=industry,
+        )
+
+    raw = (signal_c + replay_c + conviction_c + sizing_c + momentum_c
+           + fund_mod - redundancy_pen - conc_pen)
     score = round(max(0.0, raw), 2)
 
     breakdown = CwDasBreakdown(
@@ -201,6 +389,9 @@ def compute_cw_das(
         momentum=round(momentum_c, 2),
         redundancy_pen=round(redundancy_pen, 2),
         conc_pen=round(conc_pen, 2),
+        fundamental_modifier=round(fund_mod, 2),
+        thesis_integrity=thesis,
+        fundamental_consistency=consistency,
     )
     return score, breakdown
 
@@ -318,6 +509,14 @@ def build_deployment_queue(
     # Overweight nodes for redundancy penalty
     ow_nodes = _build_ow_nodes(alignment_results)
 
+    # ISSUE-07: Load FMP enriched universe for fundamental modifier
+    fmp_by_sym: dict[str, dict] = {}
+    try:
+        from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
+        fmp_by_sym = load_fmp_enriched_universe()
+    except Exception:
+        pass  # Fail-open: modifier is 0 when FMP data unavailable
+
     # Collect candidates
     scored: list[tuple[float, float, DeploymentCandidate]] = []
     # (deployment_score, composite_score, candidate) — for stable sort
@@ -350,6 +549,13 @@ def build_deployment_queue(
         # Phase 23.5 — canonical allocation node key for this holding
         allocation_node = f"EQUITIES.{holding.geography.upper()}.{holding.market_cap_bucket.upper()}"
 
+        # ISSUE-07: FMP data and industry for sector calibration
+        fmp_row = fmp_by_sym.get(sym)
+        industry = (holding.industry or "") if hasattr(holding, "industry") else ""
+        # Fallback: look up industry from FMP row if not on holding
+        if not industry and fmp_row:
+            industry = fmp_row.get("industry", "")
+
         score, breakdown = compute_cw_das(
             symbol=sym,
             composite=composite,
@@ -359,6 +565,8 @@ def build_deployment_queue(
             ess_text=ess_text,
             signal_direction=sig_dir,
             in_ow_node=in_ow,
+            fmp_row=fmp_row,
+            industry=industry,
         )
 
         headroom_pct = round(max(0.0, 1.0 - pct / WARN_POSITION_PCT) * 100.0, 1)
@@ -385,10 +593,34 @@ def build_deployment_queue(
     # Sort: deployment_score descending, composite descending as tiebreak
     scored.sort(key=lambda t: (-t[0], -t[1]))
 
+    # ISSUE-07: CCL-over-HCA guard — no HCA candidate may outrank an unpenalized CCL
+    # candidate due to the fundamental modifier. OW-penalized CCL candidates (those
+    # with redundancy_pen > 0) are excluded from the guard since their low score
+    # reflects allocation position, not conviction quality.
+    # An HCA that outranks an unpenalized CCL would violate the tier hierarchy.
+    unpenalized_ccl_scores = [
+        s for s, _, c in scored
+        if c.narrative_tier == "CORE_CONVICTION_LEADER"
+        and c.score_breakdown.redundancy_pen == 0.0
+        and c.score_breakdown.conc_pen == 0.0
+    ]
+    if unpenalized_ccl_scores:
+        min_unpenalized_ccl_score = min(unpenalized_ccl_scores)
+        clamped: list[tuple[float, float, DeploymentCandidate]] = []
+        for s, comp, cand in scored:
+            if cand.narrative_tier != "CORE_CONVICTION_LEADER" and s > min_unpenalized_ccl_score:
+                # This HCA would outrank an unpenalized CCL — clamp it
+                clamped_score = round(min_unpenalized_ccl_score - 0.01, 2)
+                clamped.append((clamped_score, comp, cand))
+            else:
+                clamped.append((s, comp, cand))
+        clamped.sort(key=lambda t: (-t[0], -t[1]))
+        scored = clamped
+
     # Assign final ranks (frozen dataclass — rebuild with correct rank)
     result: list[DeploymentCandidate] = []
     for rank, (score, composite, cand) in enumerate(scored, start=1):
-        result.append(dataclasses.replace(cand, rank=rank))
+        result.append(dataclasses.replace(cand, rank=rank, deployment_score=score))
 
     return result
 

@@ -31,6 +31,7 @@ _OUTPUT_HEADERS = [
     "symbol",
     "price_target",
     "abr",
+    "analyst_count",
     "eps_growth_5yr",
     "current_price",
     "upside_pct",
@@ -57,9 +58,10 @@ def fetch_yahoo_supplemental(symbol: str) -> dict[str, float | None]:
     import yfinance as yf  # type: ignore
 
     sym = str(symbol).strip().upper()
-    result: dict[str, float | None] = {
+    result: dict[str, float | int | None] = {
         "price_target": None,
         "abr": None,
+        "analyst_count": None,
         "eps_growth_5yr": None,
         "current_price": None,
     }
@@ -72,6 +74,9 @@ def fetch_yahoo_supplemental(symbol: str) -> dict[str, float | None]:
 
     result["price_target"] = _to_float(info.get("targetMeanPrice"))
     result["abr"] = _to_float(info.get("recommendationMean"))
+    # Analyst count: numberOfAnalystOpinions → int or None (ISSUE-08)
+    _raw_count = info.get("numberOfAnalystOpinions")
+    result["analyst_count"] = int(_raw_count) if _raw_count else None
 
     # Current price: prefer regularMarketPrice, fall back to previousClose
     result["current_price"] = _to_float(
@@ -137,6 +142,7 @@ def fetch_yahoo_supplemental_for_symbols(
             "symbol": sym,
             "price_target": f"{target:.2f}" if target is not None else "",
             "abr": f"{data['abr']:.2f}" if data["abr"] is not None else "",
+            "analyst_count": str(data.get("analyst_count")) if data.get("analyst_count") is not None else "",
             "eps_growth_5yr": f"{data['eps_growth_5yr']:.1f}" if data["eps_growth_5yr"] is not None else "",
             "current_price": f"{price:.2f}" if price is not None else "",
             "upside_pct": f"{upside:.1f}" if upside is not None else "",

@@ -1009,6 +1009,7 @@ function renderResults(data) {
   renderMultiDimScores(data);
   renderMandatePanel(data);
   renderDeploymentQueue(data);
+  renderDislocationWatchlist(data);  // ISSUE-04C
   renderAllocationMap(data.alignment || []);
   renderConcentration(data.concentration || {});
   renderOptimizerSummary(data.recommendations || []);  // Phase 7.3B
@@ -3091,6 +3092,12 @@ function toggleNbaSection(id) {
 let _dqShowAll = false;
 const DQ_DEFAULT_ROWS = 10;
 
+// ISSUE-05 — Deployment Queue filter state
+let _dqFilterThesis      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
+let _dqFilterConsistency = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
+let _dqFilterModifier    = "ALL";  // "ALL" | "POSITIVE" | "NEUTRAL" | "NEGATIVE"
+let _dqOutsideClickBound = false;
+
 function renderDeploymentQueue(data) {
   const el = document.getElementById("deploymentQueueContainer");
   if (!el) return;
@@ -3102,6 +3109,10 @@ function renderDeploymentQueue(data) {
   }
 
   _dqShowAll = false;  // reset on each render
+  // ISSUE-05: reset filters to "All" defaults on each new analysis load
+  _dqFilterThesis      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
+  _dqFilterConsistency = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
+  _dqFilterModifier    = "ALL";
 
   const queue   = dq.queue;
   const cashCtx = dq.cash_context || {};
@@ -3284,7 +3295,36 @@ function renderDeploymentQueue(data) {
     <div class="dq-section-header">
       <span class="dq-section-title">Capital Deployment Queue</span>
       <span class="dq-version-badge">${escHtml(dq.queue_version || "CW-DAS-1.0")}</span>
-      <span class="dq-advisory-note">Guidance only — not a trade instruction</span>
+      <div class="dq-filters" id="dq-filters" onclick="event.stopPropagation()">
+        <div class="dq-filter-group">
+          <button class="dq-filter-btn" id="dq-fb-thesis" onclick="_dqToggleFilterPanel(event,'thesis')">Thesis &#9662;</button>
+          <div class="dq-filter-panel" id="dq-fp-thesis">
+            <label><input type="checkbox" checked onchange="_dqThesisChange('INTACT',this.checked)"> INTACT</label>
+            <label><input type="checkbox" checked onchange="_dqThesisChange('QUESTIONABLE',this.checked)"> QUESTIONABLE</label>
+            <label><input type="checkbox" checked onchange="_dqThesisChange('DETERIORATING',this.checked)"> DETERIORATING</label>
+          </div>
+        </div>
+        <div class="dq-filter-group">
+          <button class="dq-filter-btn" id="dq-fb-consistency" onclick="_dqToggleFilterPanel(event,'consistency')">Consistency &#9662;</button>
+          <div class="dq-filter-panel" id="dq-fp-consistency">
+            <label><input type="checkbox" checked onchange="_dqConsistencyChange('CONSISTENT',this.checked)"> CONSISTENT</label>
+            <label><input type="checkbox" checked onchange="_dqConsistencyChange('MIXED',this.checked)"> MIXED</label>
+            <label><input type="checkbox" checked onchange="_dqConsistencyChange('CONTRADICTORY',this.checked)"> CONTRADICTORY</label>
+            <label><input type="checkbox" checked onchange="_dqConsistencyChange('DATA_ANOMALY',this.checked)"> DATA ANOMALY</label>
+          </div>
+        </div>
+        <div class="dq-filter-group">
+          <button class="dq-filter-btn" id="dq-fb-modifier" onclick="_dqToggleFilterPanel(event,'modifier')">Modifier &#9662;</button>
+          <div class="dq-filter-panel" id="dq-fp-modifier">
+            <label><input type="radio" name="dq-mod-radio" value="ALL" checked onchange="_dqModifierChange('ALL')"> All</label>
+            <label><input type="radio" name="dq-mod-radio" value="POSITIVE" onchange="_dqModifierChange('POSITIVE')"> Positive (&gt;0)</label>
+            <label><input type="radio" name="dq-mod-radio" value="NEUTRAL" onchange="_dqModifierChange('NEUTRAL')"> Neutral (0)</label>
+            <label><input type="radio" name="dq-mod-radio" value="NEGATIVE" onchange="_dqModifierChange('NEGATIVE')"> Negative (&lt;0)</label>
+          </div>
+        </div>
+      </div>
+      <span class="dq-filtered-count" id="dq-filtered-count"></span>
+      <span class="dq-advisory-note">Guidance only &#8212; not a trade instruction</span>
     </div>
     ${summaryHtml}
     ${cashContextHtml}
@@ -3303,8 +3343,15 @@ function renderDeploymentQueue(data) {
     </div>
   </div>`;
 
-  // Render initial rows
-  _dqRenderTableRows(queue, tableId, DQ_DEFAULT_ROWS);
+  // Render initial rows — apply filters (default = all pass)
+  _dqRenderTableRows(_dqApplyFilters(queue), tableId, DQ_DEFAULT_ROWS);
+  // Attach outside-click handler once to close open filter panels
+  if (!_dqOutsideClickBound) {
+    document.addEventListener("click", function() {
+      document.querySelectorAll(".dq-filter-panel.open").forEach(p => p.classList.remove("open"));
+    });
+    _dqOutsideClickBound = true;
+  }
 }
 
 // Phase 7.5F — Cash deployment summary strip
@@ -3578,7 +3625,8 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
         </div>
         ${ucfSummary ? `<div class="dq-signal-summary">${escHtml(ucfSummary)}</div>` : ""}
         ${_signalAgreementPanelHtml(ov, ac2, fs2)}
-        <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)}</div>
+        ${_dqAnalystTargetHtml(ac2)}
+        <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)} <span style="font-size:0.68rem;color:var(--muted);font-weight:400">(CW-DAS v${escHtml(c.cw_das_version||'1.1')})</span></div>
         <div class="dq-breakdown-grid">
           <div class="dq-bd-card">
             <div class="dq-bd-val">${bd.signal != null ? bd.signal.toFixed(1) : "—"}</div>
@@ -3592,6 +3640,10 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-bd-val">${bd.conviction != null ? bd.conviction.toFixed(0) : "—"}</div>
             <div class="dq-bd-lbl">Conviction<br>/35</div>
           </div>
+          ${(bd.fundamental_modifier != null && bd.fundamental_modifier !== 0) ? `<div class="dq-bd-card">
+            <div class="dq-bd-val${bd.fundamental_modifier > 0 ? ' dq-score-high' : ' dq-penalty'}">${bd.fundamental_modifier > 0 ? '+' : ''}${bd.fundamental_modifier.toFixed(1)}</div>
+            <div class="dq-bd-lbl">Fund.<br>Mod</div>
+          </div>` : ''}
           <div class="dq-bd-card">
             <div class="dq-bd-val">${bd.sizing != null ? bd.sizing.toFixed(1) : "—"}</div>
             <div class="dq-bd-lbl">Sizing<br>/8</div>
@@ -3601,11 +3653,11 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-bd-lbl">Momentum<br>/10</div>
           </div>
           <div class="dq-bd-card">
-            <div class="dq-bd-val${bd.redundancy_pen > 0 ? " dq-penalty" : ""}">${bd.redundancy_pen != null ? "−" + bd.redundancy_pen.toFixed(0) : "—"}</div>
+            <div class="dq-bd-val${bd.redundancy_pen > 0 ? " dq-penalty" : ""}">${bd.redundancy_pen != null ? "\u2212" + bd.redundancy_pen.toFixed(0) : "\u2014"}</div>
             <div class="dq-bd-lbl">Redund.<br>Pen</div>
           </div>
           <div class="dq-bd-card">
-            <div class="dq-bd-val${bd.conc_pen > 0 ? " dq-penalty" : ""}">${bd.conc_pen != null ? "−" + bd.conc_pen.toFixed(0) : "—"}</div>
+            <div class="dq-bd-val${bd.conc_pen > 0 ? " dq-penalty" : ""}">${bd.conc_pen != null ? "\u2212" + bd.conc_pen.toFixed(0) : "\u2014"}</div>
             <div class="dq-bd-lbl">Conc.<br>Pen</div>
           </div>
           <div class="dq-bd-card">
@@ -3634,14 +3686,15 @@ function _dqToggleViewAll() {
   if (!dq || !Array.isArray(dq.queue)) return;
 
   _dqShowAll = !_dqShowAll;
-  const limit = _dqShowAll ? dq.queue.length : DQ_DEFAULT_ROWS;
-  _dqRenderTableRows(dq.queue, "dq-queue-table-body", limit);
+  const filtered = _dqApplyFilters(dq.queue);
+  const limit = _dqShowAll ? filtered.length : DQ_DEFAULT_ROWS;
+  _dqRenderTableRows(filtered, "dq-queue-table-body", limit);
 
   const btn = document.getElementById("dq-view-all-btn");
   if (btn) {
     btn.textContent = _dqShowAll
-      ? `▲ Show top ${DQ_DEFAULT_ROWS} only`
-      : `▼ View all ${dq.queue.length} candidates`;
+      ? `\u25b2 Show top ${DQ_DEFAULT_ROWS} only`
+      : `\u25bc View all ${filtered.length} candidates`;
   }
 }
 
@@ -3651,6 +3704,277 @@ function _dqToggleBlocked() {
   if (!body) return;
   const open = body.classList.toggle("open");
   if (btn) btn.textContent = (open ? "▾" : "▸") + btn.textContent.slice(1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ISSUE-05 — Deployment Queue Filters (Thesis / Consistency / Modifier)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ISSUE-04C — Dislocation Watchlist Panel
+// Governance: display-only. Backend payload authoritative. No scoring influence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _disShowWatch = false;  // WATCH tier visibility toggle
+
+function renderDislocationWatchlist(data) {
+  const el = document.getElementById("dislocationWatchlistContainer");
+  if (!el) return;
+
+  const disMap = data.dislocation_by_symbol || {};
+  if (!Object.keys(disMap).length) { el.style.display = "none"; return; }
+
+  // Filter to non-NONE entries
+  const all = Object.values(disMap).filter(d => d.tier !== "NONE");
+  if (!all.length) { el.style.display = "none"; return; }
+
+  el.style.display = "";
+
+  // Count by tier
+  const hcCount   = all.filter(d => d.tier === "HIGH_CONVICTION").length;
+  const modCount  = all.filter(d => d.tier === "MODERATE").length;
+  const watchCount = all.filter(d => d.tier === "WATCH").length;
+
+  // Get overlay lookup for thesis/consistency columns
+  const overlays = (data.security_overlays || []);
+  const ovBySymbol = {};
+  for (const ov of overlays) {
+    const s = (ov.symbol || ov.Symbol || "").toUpperCase();
+    if (s) ovBySymbol[s] = ov;
+  }
+
+  _disShowWatch = false;   // reset on each render
+
+  el.innerHTML = `<div class="dq-panel dis-panel">
+    <div class="dis-section-header">
+      <span class="dis-section-title">Dislocation Watchlist</span>
+      <span class="dis-version-badge">A1 v${escHtml(all[0]?.version || "1.0")}</span>
+      <span class="dis-advisory-note">Guidance only — not a trade instruction</span>
+    </div>
+    <div class="dis-subtitle">Evidence of divergence between verified fundamentals and current market signals.</div>
+    <div class="dis-advisory-strip">
+      ⚠ Evidence of divergence only — no action implied. Operator judgment required.
+    </div>
+    <div class="dis-controls">
+      <label class="dis-toggle-label">
+        <input type="checkbox" id="dis-show-watch" onchange="_disToggleWatch()" ${_disShowWatch ? "checked" : ""}>
+        Include WATCH
+      </label>
+      <div class="dis-summary-chips">
+        ${hcCount    ? `<span class="dis-chip dis-chip-hc">${hcCount} HIGH CONVICTION</span>` : ""}
+        ${modCount   ? `<span class="dis-chip dis-chip-mod">${modCount} MODERATE</span>` : ""}
+        ${watchCount ? `<span class="dis-chip dis-chip-watch">${watchCount} WATCH</span>` : ""}
+      </div>
+    </div>
+    <div class="dis-table-wrap">
+      <table class="dis-table">
+        <thead><tr>
+          <th>Symbol</th>
+          <th>Tier</th>
+          <th>Class</th>
+          <th>Evidence</th>
+        </tr></thead>
+        <tbody id="dis-table-body"></tbody>
+      </table>
+    </div>
+  </div>`;
+
+  _disRenderRows(all, ovBySymbol);
+}
+
+function _disRenderRows(all, ovBySymbol) {
+  const tbody = document.getElementById("dis-table-body");
+  if (!tbody) return;
+
+  const visible = _disShowWatch
+    ? all
+    : all.filter(d => d.tier === "HIGH_CONVICTION" || d.tier === "MODERATE");
+
+  visible.sort((a, b) => {
+    const order = { HIGH_CONVICTION: 0, MODERATE: 1, WATCH: 2 };
+    return (order[a.tier] ?? 3) - (order[b.tier] ?? 3);
+  });
+
+  if (!visible.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="dis-empty">No ${_disShowWatch ? "" : "HIGH CONVICTION or MODERATE "}dislocation detected in current portfolio.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = visible.map((d, i) => {
+    const exId = `dis-ex-${i}`;
+    const tierLabel = d.tier.replace(/_/g, " ");
+    const classShort = (d.dislocation_class || "").replace("A1_", "").replace(/_/g, " ").toLowerCase();
+    const evCount = (d.evidence || []).length;
+    const evList  = (d.evidence || []).map(e => `<li>${escHtml(e)}</li>`).join("");
+
+    return `<tr class="dis-data-row" onclick="_disToggleExpand('${exId}')">
+      <td><span class="dq-sym">${escHtml(d.symbol)}</span></td>
+      <td><span class="dis-tier dis-tier-${d.tier}">${tierLabel}</span></td>
+      <td><span class="dis-class-badge">${escHtml(classShort)}</span></td>
+      <td><span class="dis-evidence-count">${evCount} signals</span></td>
+    </tr>
+    <tr class="dis-expand-row" id="${exId}">
+      <td colspan="4">
+        <div class="dis-expand-header">${tierLabel} — ${escHtml(d.symbol)}</div>
+        <ul class="dis-evidence-list">${evList}</ul>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function _disToggleExpand(id) {
+  const row = document.getElementById(id);
+  if (row) row.classList.toggle("open");
+}
+
+function _disToggleWatch() {
+  const cb = document.getElementById("dis-show-watch");
+  _disShowWatch = cb ? cb.checked : false;
+  const data = _lastAnalysisData || _analysisResult;
+  if (!data) return;
+  const disMap = data.dislocation_by_symbol || {};
+  const all = Object.values(disMap).filter(d => d.tier !== "NONE");
+  const overlays = data.security_overlays || [];
+  const ovBySymbol = {};
+  for (const ov of overlays) {
+    const s = (ov.symbol || "").toUpperCase();
+    if (s) ovBySymbol[s] = ov;
+  }
+  _disRenderRows(all, ovBySymbol);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ISSUE-10 — Analyst Target Intelligence block (CII-005 / Layer 1 transparency)
+// Governance: display-only. No scoring, CW-DAS, CRA, or ranking influence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _dqAnalystTargetHtml(ac) {
+  // Only render when we have at least a price target or upside
+  if (!ac || (ac.price_target == null && ac.upside_pct == null)) return "";
+
+  const targetStr  = ac.price_target != null
+    ? `$${parseFloat(ac.price_target).toFixed(2)}`
+    : "—";
+
+  const upsideVal  = ac.upside_pct != null ? parseFloat(ac.upside_pct) : null;
+  const upsideStr  = upsideVal != null
+    ? `<span class="dq-ati-upside ${upsideVal >= 0 ? 'dq-ati-positive' : 'dq-ati-negative'}">${upsideVal >= 0 ? '+' : ''}${upsideVal.toFixed(1)}%</span>`
+    : "—";
+
+  // analyst_count: hide entirely when null (ISSUE-08 dependency — graceful degrade)
+  const countHtml  = (ac.analyst_count != null && ac.analyst_count > 0)
+    ? `<span class="dq-ati-item"><span class="dq-ati-lbl">Coverage</span><span class="dq-ati-val">${ac.analyst_count} analysts</span></span>`
+    : "";
+
+  const dateStr    = ac.refresh_date ? escHtml(ac.refresh_date) : "—";
+
+  return `<div class="dq-analyst-target-block">
+    <div class="dq-ati-header">Analyst Target Intelligence</div>
+    <div class="dq-ati-row">
+      <span class="dq-ati-item">
+        <span class="dq-ati-lbl">Target</span>
+        <span class="dq-ati-val">${targetStr}</span>
+      </span>
+      <span class="dq-ati-item">
+        <span class="dq-ati-lbl">Upside</span>
+        <span class="dq-ati-val">${upsideStr}</span>
+      </span>
+      ${countHtml}
+      <span class="dq-ati-item dq-ati-date">
+        <span class="dq-ati-lbl">Sourced</span>
+        <span class="dq-ati-val">${dateStr}</span>
+      </span>
+    </div>
+    <div class="dq-ati-advisory">⚠ Guidance only — analyst targets are opinions, not price forecasts. Do not use as trade triggers.</div>
+  </div>`;
+}
+
+const _DQ_THESIS_OPTIONS      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
+const _DQ_CONSISTENCY_OPTIONS = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
+
+function _dqApplyFilters(queue) {
+  const allThesis      = _dqFilterThesis.size === _DQ_THESIS_OPTIONS.size;
+  const allConsistency = _dqFilterConsistency.size === _DQ_CONSISTENCY_OPTIONS.size;
+  const allModifier    = _dqFilterModifier === "ALL";
+  if (allThesis && allConsistency && allModifier) return queue;
+
+  return queue.filter(c => {
+    const bd          = c.score_breakdown || {};
+    const thesis      = bd.thesis_integrity || "";
+    const consistency = bd.fundamental_consistency || "";
+    const mod         = parseFloat(bd.fundamental_modifier) || 0;
+
+    // Only filter on known values — unknown / empty data passes through
+    if (!allThesis && _DQ_THESIS_OPTIONS.has(thesis) && !_dqFilterThesis.has(thesis)) return false;
+    if (!allConsistency && _DQ_CONSISTENCY_OPTIONS.has(consistency) && !_dqFilterConsistency.has(consistency)) return false;
+
+    if (_dqFilterModifier === "POSITIVE" && mod <= 0) return false;
+    if (_dqFilterModifier === "NEUTRAL"  && mod !== 0) return false;
+    if (_dqFilterModifier === "NEGATIVE" && mod >= 0) return false;
+
+    return true;
+  });
+}
+
+function _dqToggleFilterPanel(e, which) {
+  e.stopPropagation();
+  ["thesis","consistency","modifier"].forEach(k => {
+    const p = document.getElementById(`dq-fp-${k}`);
+    if (p) { k === which ? p.classList.toggle("open") : p.classList.remove("open"); }
+  });
+}
+
+function _dqThesisChange(val, checked) {
+  if (checked) _dqFilterThesis.add(val); else _dqFilterThesis.delete(val);
+  _dqUpdateFilterBadge("thesis", _dqFilterThesis.size < _DQ_THESIS_OPTIONS.size);
+  _dqRefreshTable();
+}
+
+function _dqConsistencyChange(val, checked) {
+  if (checked) _dqFilterConsistency.add(val); else _dqFilterConsistency.delete(val);
+  _dqUpdateFilterBadge("consistency", _dqFilterConsistency.size < _DQ_CONSISTENCY_OPTIONS.size);
+  _dqRefreshTable();
+}
+
+function _dqModifierChange(val) {
+  _dqFilterModifier = val;
+  _dqUpdateFilterBadge("modifier", val !== "ALL");
+  _dqRefreshTable();
+}
+
+function _dqUpdateFilterBadge(which, active) {
+  const btn = document.getElementById(`dq-fb-${which}`);
+  if (btn) btn.classList.toggle("dq-filter-active", active);
+}
+
+function _dqRefreshTable() {
+  const dq = _analysisResult && _analysisResult.deployment_queue;
+  if (!dq || !Array.isArray(dq.queue)) return;
+
+  const filtered = _dqApplyFilters(dq.queue);
+  const limit    = _dqShowAll ? filtered.length : DQ_DEFAULT_ROWS;
+  _dqRenderTableRows(filtered, "dq-queue-table-body", limit);
+
+  // Update view-all button
+  const btn = document.getElementById("dq-view-all-btn");
+  if (btn) {
+    if (filtered.length <= DQ_DEFAULT_ROWS) {
+      btn.style.display = "none";
+    } else {
+      btn.style.display = "";
+      btn.textContent = _dqShowAll
+        ? `▲ Show top ${DQ_DEFAULT_ROWS} only`
+        : `▼ View all ${filtered.length} candidates`;
+    }
+  }
+
+  // Update filtered count badge
+  const countEl = document.getElementById("dq-filtered-count");
+  if (countEl) {
+    const total = dq.queue.length;
+    const shown = filtered.length;
+    countEl.textContent = shown < total ? `${shown} of ${total}` : "";
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3973,6 +4297,21 @@ function _fmpDislocationType(meta, ov, thesis, consistency) {
   return { label: "NONE", cls: "none", evidence: [] };
 }
 
+// ISSUE-04C: adapter — converts backend DislocationType dict to the {label, cls, evidence}
+// shape expected by _dqFundamentalSnapshotHtml().
+function _disFromBackend(d) {
+  if (!d || d.tier === "NONE" || d.tier === "none") {
+    return { label: "NONE", cls: "none", evidence: [] };
+  }
+  const tierMap = {
+    HIGH_CONVICTION: { label: "HIGH CONVICTION", cls: "high-conviction" },
+    MODERATE:        { label: "MODERATE",         cls: "potential" },    // reuse "potential" CSS for amber
+    WATCH:           { label: "WATCH",            cls: "watch" },
+  };
+  const mapped = tierMap[d.tier] || { label: d.tier.replace(/_/g," "), cls: "none" };
+  return { label: mapped.label, cls: mapped.cls, evidence: Array.isArray(d.evidence) ? d.evidence : [] };
+}
+
 // ── Fundamental Snapshot HTML ─────────────────────────────────────────────────
 
 function _dqFundamentalSnapshotHtml(sym, metadataMap, ov) {
@@ -3984,7 +4323,12 @@ function _dqFundamentalSnapshotHtml(sym, metadataMap, ov) {
 
   const thesis      = _fmpThesisIntegrity(meta);
   const consistency = _fmpFundamentalConsistency(meta, ov, thesis);
-  const dislocation = _fmpDislocationType(meta, ov, thesis, consistency);
+
+  // ISSUE-04C: use backend-computed dislocation when available; fall back to JS heuristic
+  const _disBackend = (_lastAnalysisData?.dislocation_by_symbol || {})[String(sym || "").toUpperCase()];
+  const dislocation = _disBackend
+    ? _disFromBackend(_disBackend)
+    : _fmpDislocationType(meta, ov, thesis, consistency);
 
   const rev    = _fmpF(meta, "fmp_revenue_growth");
   const roic   = _fmpF(meta, "fmp_roic");
@@ -4112,7 +4456,14 @@ function _dqWhySIHLikesItHtml(c, ucf, ov, bd, dp, trim) {
     bullets.push("No concentration conflicts");
   }
 
-  // 9. Low trim / sizing
+  // 9. Fundamental modifier context (ISSUE-07)
+  const fundMod = bd.fundamental_modifier != null ? parseFloat(bd.fundamental_modifier) : 0;
+  if (fundMod >= 2.0)  bullets.push(`Fundamental bonus +${fundMod.toFixed(1)} (strong business quality)`);
+  else if (fundMod >= 1.0) bullets.push(`Fundamental bonus +${fundMod.toFixed(1)} (solid fundamentals)`);
+  else if (fundMod <= -3.0) bullets.push(`Fundamental penalty ${fundMod.toFixed(1)} (thesis deterioration)`);
+  else if (fundMod <= -1.5) bullets.push(`Fundamental penalty ${fundMod.toFixed(1)} (inconsistent fundamentals)`);
+
+  // 10. Low trim / sizing
   if (trim <= 20) {
     bullets.push("Low trim pressure");
   }
@@ -4316,6 +4667,7 @@ function _dqCompanySnapshotHtml(sym, metadataMap) {
 }
 
 // Category metadata
+let _craProposal = null;   // ISSUE-09 fix: restored missing declaration
 const _CRA_CATEGORIES = [
   { key: "SIGNAL_DETERIORATION",   label: "Signal Deterioration",    num: 1 },
   { key: "STRATEGIC_EXIT",         label: "Strategic Exit",           num: 2 },
@@ -4344,10 +4696,200 @@ async function loadCRAProposal() {
     }
     _craProposal = await resp.json();
     _renderCRAProposal(_craProposal);
+    _craEnableButtons(true);
+
+    // Check for stale draft with matching run_id for Include/Skip restore
+    _craCheckDraft(_craProposal.run_id);
   } catch (e) {
     content.innerHTML = `<div class="cra-error">CRA error: ${escHtml(String(e))}</div>`;
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// ── CRA Persistence & Export ──────────────────────────────────────────────────
+
+function _craEnableButtons(on) {
+  for (const id of ["craSaveBtn","craExportCsvBtn","craExportMdBtn","craCopyBtn"]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !on;
+  }
+}
+
+async function _craSaveDraft() {
+  if (!_craProposal) return;
+  const saveBtn = document.getElementById("craSaveBtn");
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
+
+  // Collect current Include/Skip state
+  const operatorIncludeMap = {};
+  const skipCheckboxes = document.querySelectorAll(".cra-check-skip");
+  skipCheckboxes.forEach(cb => {
+    // id is "cra-skp-SYMBOL" — extract symbol
+    const sym = (cb.id || "").replace(/^cra-skp-/, "").toUpperCase();
+    if (sym) operatorIncludeMap[sym] = !cb.checked; // checked = skip → not included
+  });
+
+  const payload = { ..._craProposal, operator_include_map: operatorIncludeMap };
+
+  try {
+    const resp = await fetch("/api/cra/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+      if (saveBtn) {
+        saveBtn.textContent = "✓ Saved";
+        saveBtn.classList.add("cra-btn-saved");
+        setTimeout(() => {
+          saveBtn.textContent = "✎ Save";
+          saveBtn.classList.remove("cra-btn-saved");
+          saveBtn.disabled = false;
+        }, 2500);
+      }
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      alert("Save failed: " + (err.error || resp.status));
+      if (saveBtn) { saveBtn.textContent = "✎ Save"; saveBtn.disabled = false; }
+    }
+  } catch (e) {
+    alert("Save error: " + e);
+    if (saveBtn) { saveBtn.textContent = "✎ Save"; saveBtn.disabled = false; }
+  }
+}
+
+async function _craLoadDraft() {
+  try {
+    const resp = await fetch("/api/cra/draft");
+    if (!resp.ok) {
+      alert("No saved draft found. Generate and save a proposal first.");
+      return;
+    }
+    const draft = await resp.json();
+    if (draft.run_id === (_craProposal && _craProposal.run_id)) {
+      // Same run — restore include/skip and re-render
+      _craProposal = draft;
+      _renderCRAProposal(draft);
+      _craRestoreIncludeMap(draft.operator_include_map || {});
+      _craEnableButtons(true);
+      const banner = document.getElementById("craDraftBanner");
+      if (banner) banner.style.display = "none";
+    } else {
+      // Different run — load as new base proposal
+      _craProposal = draft;
+      _renderCRAProposal(draft);
+      _craRestoreIncludeMap(draft.operator_include_map || {});
+      _craEnableButtons(true);
+      const msg = document.getElementById("craDraftBannerMsg");
+      const banner = document.getElementById("craDraftBanner");
+      if (msg) msg.textContent = `Loaded draft from ${draft.as_of_date || "previous session"} (different run — selections may not match current portfolio).`;
+      if (banner) banner.style.display = "flex";
+    }
+  } catch (e) {
+    alert("Load error: " + e);
+  }
+}
+
+async function _craCheckDraft(currentRunId) {
+  try {
+    const resp = await fetch("/api/cra/draft");
+    if (!resp.ok) return;
+    const draft = await resp.json();
+    if (!draft || !draft.operator_include_map) return;
+    if (draft.run_id === currentRunId) {
+      // Same run — silently restore selections
+      _craRestoreIncludeMap(draft.operator_include_map);
+    } else {
+      // Stale draft — show banner
+      const msg = document.getElementById("craDraftBannerMsg");
+      const banner = document.getElementById("craDraftBanner");
+      if (msg) msg.textContent = `Saved draft from ${draft.as_of_date || "previous session"} available.`;
+      if (banner) banner.style.display = "flex";
+    }
+  } catch (_) { /* best-effort */ }
+}
+
+function _craApplyDraft() {
+  if (!_craProposal) return;
+  fetch("/api/cra/draft")
+    .then(r => r.ok ? r.json() : null)
+    .then(draft => {
+      if (draft && draft.operator_include_map) {
+        _craRestoreIncludeMap(draft.operator_include_map);
+      }
+      const banner = document.getElementById("craDraftBanner");
+      if (banner) banner.style.display = "none";
+    })
+    .catch(() => {});
+}
+
+function _craRestoreIncludeMap(map) {
+  if (!map || typeof map !== "object") return;
+  Object.entries(map).forEach(([sym, included]) => {
+    const cb = document.getElementById(`cra-skp-${sym}`);
+    if (cb) {
+      cb.checked = !included; // included=false → skip checked
+      _craSkipToggle(sym);
+    }
+  });
+}
+
+function _craExportCsv() {
+  window.location.href = "/api/cra/draft/export?format=csv";
+}
+
+function _craExportMd() {
+  window.location.href = "/api/cra/draft/export?format=md";
+}
+
+async function _craCopySummary() {
+  if (!_craProposal) return;
+  const p = _craProposal;
+  const lines = [
+    `CRA Proposal — ${p.as_of_date || ""}`,
+    `Status: ${p.proposal_status || "—"}`,
+    "",
+    `CAPITAL SOURCES ($${_craFmt(p.total_capital_pool)} est. pool)`,
+  ];
+  (p.sources || []).forEach(s => {
+    if (!s.blocked_by_policy) {
+      lines.push(`• ${s.symbol} — ${s.category.replace(/_/g, " ")} — ${s.priority} — Tax ${s.tax_bucket || "—"}`);
+    }
+  });
+  lines.push("", "DEPLOYMENT TARGETS");
+  (p.deployments || []).forEach(t => {
+    const tier = t.narrative_tier.includes("CORE") ? "CCL" : "HCA";
+    const proj = (parseFloat(t.projected_weight_pct || 0) * 100).toFixed(1);
+    lines.push(`• #${t.rank} ${t.symbol} — Add ${_craFmt(t.suggested_amount)} → ${proj}% proj. — ${tier}`);
+  });
+  const imp = p.impact || {};
+  if (imp.impact_narrative) {
+    lines.push("", "ESTIMATED IMPACT", `• ${imp.impact_narrative}`);
+  }
+  lines.push("", "Advisory only — not trade instructions.", "Generated by Security Intelligence Hub");
+
+  const text = lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById("craCopyBtn");
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = "✓ Copied";
+      setTimeout(() => { btn.innerHTML = orig; }, 2000);
+    }
+  } catch (e) {
+    // Fallback: show in a textarea for manual copy
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;top:10%;left:10%;width:80%;height:60%;z-index:9999;font-size:0.85rem;padding:10px;";
+    document.body.appendChild(ta);
+    ta.select();
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    close.style.cssText = "position:fixed;top:calc(10% - 30px);left:10%;z-index:9999;padding:4px 12px;";
+    close.onclick = () => { document.body.removeChild(ta); document.body.removeChild(close); };
+    document.body.appendChild(close);
   }
 }
 

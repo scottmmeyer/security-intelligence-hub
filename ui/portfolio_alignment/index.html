@@ -788,6 +788,97 @@
         font-size: 0.72rem; color: var(--muted); margin-left: auto;
         font-style: italic;
       }
+      /* ISSUE-05 — Deployment Queue Filters */
+      .dq-filters { display: flex; gap: 6px; align-items: center; }
+      .dq-filter-group { position: relative; }
+      .dq-filter-btn {
+        padding: 3px 9px; border-radius: 12px; border: 1px solid var(--border);
+        background: #f0f0f0; font-size: 0.70rem; font-weight: 600; cursor: pointer;
+        color: var(--text); white-space: nowrap; line-height: 1.6;
+      }
+      .dq-filter-btn:hover { background: #e2e2e2; }
+      .dq-filter-btn.dq-filter-active {
+        background: var(--accent); color: #fff; border-color: var(--accent);
+      }
+      .dq-filter-panel {
+        display: none; position: absolute; top: calc(100% + 4px); left: 0; z-index: 999;
+        background: #fff; border: 1px solid var(--border); border-radius: 8px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.12); padding: 8px 12px; min-width: 156px;
+      }
+      .dq-filter-panel.open { display: flex; flex-direction: column; gap: 5px; }
+      .dq-filter-panel label {
+        display: flex; align-items: center; gap: 7px; font-size: 0.78rem;
+        color: var(--text); cursor: pointer; white-space: nowrap; padding: 1px 0;
+      }
+      .dq-filter-panel label:hover { color: var(--accent); }
+      .dq-filtered-count {
+        font-size: 0.70rem; color: var(--accent); font-weight: 700; padding: 2px 7px;
+        background: rgba(13,92,99,0.08); border-radius: 10px; white-space: nowrap;
+      }
+      /* ISSUE-10 — Analyst Target Intelligence block */
+      .dq-analyst-target-block {
+        background: #f9f7f2; border: 1px solid #e8e0d0; border-radius: 8px;
+        padding: 10px 14px; margin: 10px 0;
+      }
+      .dq-ati-header {
+        font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.08em; color: var(--muted); margin-bottom: 7px;
+      }
+      .dq-ati-row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+      .dq-ati-item { display: flex; flex-direction: column; gap: 2px; }
+      .dq-ati-lbl {
+        font-size: 0.60rem; color: var(--muted); text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .dq-ati-val { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+      .dq-ati-positive { color: #1a7c4f; font-weight: 700; }
+      .dq-ati-negative { color: var(--sev-high); font-weight: 700; }
+      .dq-ati-date .dq-ati-val { opacity: 0.72; font-weight: 400; font-size: 0.80rem; }
+      .dq-ati-advisory {
+        font-size: 0.68rem; color: var(--muted); font-style: italic;
+        margin-top: 8px; padding-top: 7px; border-top: 1px solid #e0d8cc;
+      }
+      /* ISSUE-04C — Dislocation Watchlist Panel */
+      .dis-panel { padding: 20px; }
+      .dis-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+      .dis-section-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); }
+      .dis-version-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; background: var(--accent); color: #fff; }
+      .dis-advisory-note { font-size: 0.72rem; color: var(--muted); margin-left: auto; font-style: italic; }
+      .dis-subtitle { font-size: 0.75rem; color: var(--muted); margin-bottom: 14px; }
+      .dis-advisory-strip {
+        background: #fffbe6; border: 1px solid #f0d800; border-radius: 8px;
+        padding: 8px 12px; font-size: 0.75rem; color: #6d4c00; margin-bottom: 14px;
+      }
+      .dis-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+      .dis-filter-group { display: flex; gap: 6px; align-items: center; }
+      .dis-filter-label { font-size: 0.70rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+      .dis-summary-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+      .dis-chip { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 0.70rem; font-weight: 700; }
+      .dis-chip-hc { background: #d4edda; color: #155724; }
+      .dis-chip-mod { background: #fff3cd; color: #856404; }
+      .dis-chip-watch { background: #e2e8f0; color: #475569; }
+      .dis-table-wrap { overflow-x: auto; }
+      .dis-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      .dis-table th { background: var(--surface); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 7px 10px; text-align: left; border-bottom: 2px solid var(--border); }
+      .dis-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+      .dis-table tr.dis-data-row { cursor: pointer; }
+      .dis-table tr.dis-data-row:hover td { background: rgba(13,92,99,0.04); }
+      .dis-tier { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.70rem; font-weight: 700; }
+      .dis-tier-HIGH_CONVICTION { background: #d4edda; color: #155724; }
+      .dis-tier-MODERATE { background: #fff3cd; color: #856404; }
+      .dis-tier-WATCH { background: #e2e8f0; color: #475569; }
+      .dis-tier-NONE { background: #f5f5f5; color: #999; }
+      .dis-class-badge { font-size: 0.68rem; color: var(--muted); font-family: monospace; }
+      .dis-evidence-count { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 0.70rem; }
+      .dis-expand-row { display: none; }
+      .dis-expand-row.open { display: table-row; }
+      .dis-expand-row td { background: #fafafa; padding: 12px 16px; border-bottom: 2px solid var(--border); }
+      .dis-expand-header { font-size: 0.70rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 8px; }
+      .dis-evidence-list { list-style: disc; margin: 0 0 0 18px; padding: 0; }
+      .dis-evidence-list li { font-size: 0.82rem; color: var(--text); margin-bottom: 3px; }
+      .dis-empty { font-size: 0.82rem; color: var(--muted); font-style: italic; padding: 16px 0; text-align: center; }
+      .dis-toggle-label { font-size: 0.75rem; color: var(--text); display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+      .dis-toggle-label input { cursor: pointer; }
       .dq-summary-strip {
         display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
       }
@@ -1730,7 +1821,32 @@
       .se-status-ok    { color: var(--green); }
       .se-status-warn  { color: #856404; }
       .se-status-error { color: var(--sev-high); }
-      /* ── Phase 23.6B — Capital Rotation Advisor ─────────────── */
+      /* -- Fundamental Snapshot (dq-fs-*) + Dislocation badges */
+      .dq-fundamental-snapshot { margin-top: 10px; }
+      .dq-fs-title { font-size: 0.70rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 7px; }
+      .dq-fs-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 3px 14px; margin-bottom: 10px; font-size: 0.82rem; }
+      .dq-fs-lbl { color: var(--muted); font-size: 0.74rem; }
+      .dq-fs-val { font-weight: 600; }
+      .dq-fs-val.pos { color: #1a7c4f; }
+      .dq-fs-val.neg { color: var(--sev-high); }
+      .dq-fs-badges { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+      .dq-fs-badge-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .dq-fs-badge-lbl { font-size: 0.68rem; color: var(--muted); min-width: 130px; }
+      .dq-fs-badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.70rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      .dq-fs-badge.intact        { background: #d4edda; color: #155724; }
+      .dq-fs-badge.questionable  { background: #fff3cd; color: #856404; }
+      .dq-fs-badge.deteriorating { background: #fdecea; color: #c0392b; }
+      .dq-fs-badge.consistent    { background: #d4edda; color: #155724; }
+      .dq-fs-badge.mixed         { background: #fff3cd; color: #856404; }
+      .dq-fs-badge.contradictory { background: #fdecea; color: #c0392b; }
+      .dq-fs-badge.data-anomaly  { background: #f3e8ff; color: #6b21a8; }
+      .dq-fs-badge.insufficient  { background: #f0f0f0; color: #999; }
+      .dq-fs-badge.high-conviction { background: #d4edda; color: #155724; }
+      .dq-fs-badge.potential     { background: #fff3cd; color: #856404; }
+      .dq-fs-badge.watch         { background: #e2e8f0; color: #475569; }
+      .dq-fs-badge.none          { background: #f5f5f5; color: #aaa; }
+      .dq-fs-badge.nodata        { background: #f5f5f5; color: #aaa; }
+      /* -- Phase 23.6B: Capital Rotation Advisor */
       .cra-section { margin-top: 18px; }
       .cra-panel {
         background: var(--panel); border: 1px solid var(--border);
@@ -1754,6 +1870,57 @@
         cursor: pointer; font-weight: 600;
       }
       .cra-refresh-btn:hover { background: #f5f0e8; }
+      .cra-action-btns { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+      .cra-btn {
+        padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border);
+        background: #fff; color: var(--fg); font-size: 0.72rem;
+        cursor: pointer; font-weight: 600; white-space: nowrap;
+      }
+      .cra-btn:hover { background: #f5f0e8; }
+      .cra-btn:disabled { opacity: 0.4; cursor: default; }
+      .cra-btn-save { border-color: #16A34A; color: #16A34A; }
+      .cra-btn-save:not(:disabled):hover { background: #dcfce7; }
+      .cra-draft-banner {
+        margin: 0 0 8px; padding: 8px 12px; background: #eff6ff;
+        border: 1px solid #bfdbfe; border-radius: 7px;
+        font-size: 0.78rem; color: #1e40af;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .cra-action-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+      .cra-btn {
+        padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+        background: #fff; color: var(--fg); font-size: 0.74rem;
+        cursor: pointer; font-weight: 600; white-space: nowrap;
+      }
+      .cra-btn:hover { background: #f5f0e8; }
+      .cra-btn:disabled { opacity: 0.4; cursor: default; }
+      .cra-btn-save { border-color: #16A34A; color: #16A34A; }
+      .cra-btn-save:hover:not(:disabled) { background: #dcfce7; }
+      .cra-btn-saved { border-color: #16A34A; background: #dcfce7; color: #166534; }
+      .cra-draft-banner {
+        margin: 0 0 8px; padding: 8px 12px; background: #eff6ff;
+        border: 1px solid #bfdbfe; border-radius: 7px;
+        font-size: 0.78rem; color: #1e40af;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .cra-action-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+      .cra-btn {
+        padding: 4px 11px; border-radius: 7px; border: 1px solid var(--border);
+        background: #fff; color: var(--fg); font-size: 0.75rem;
+        cursor: pointer; font-weight: 600; white-space: nowrap;
+      }
+      .cra-btn:hover { background: #f5f0e8; }
+      .cra-btn:disabled { opacity: 0.45; cursor: default; }
+      .cra-btn-save  { border-color: #16A34A; color: #16A34A; }
+      .cra-btn-save:hover  { background: #dcfce7; }
+      .cra-btn-saved { border-color: #16A34A; background: #dcfce7; color: #166534; }
+      .cra-draft-banner {
+        margin: 0 0 8px; padding: 8px 12px; background: #eff6ff;
+        border: 1px solid #bfdbfe; border-radius: 7px;
+        font-size: 0.78rem; color: #1e40af; display: flex;
+        align-items: center; gap: 10px;
+      }
+      .cra-draft-banner button { font-size: 0.74rem; padding: 2px 8px; }
       .cra-status-badge {
         display: inline-block; padding: 3px 11px; border-radius: 12px;
         font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
@@ -2100,6 +2267,32 @@
       .cii-source-pill { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #e8f0fe; color: #1a56db; border: 1px solid #c3d7fb; }
       .cii-modal-objective { font-size: 0.82rem; color: var(--fg); line-height: 1.5; margin-top: 6px; }
       .cii-modal-footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 0.72rem; color: var(--muted); text-align: center; }
+      .cii-alpha-grid { display: grid; gap: 8px; margin-top: 2px; }
+      .cii-alpha-item { display: flex; gap: 10px; align-items: flex-start; font-size: 0.82rem; line-height: 1.45; }
+      .cii-alpha-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+      .cii-alpha-item strong { color: var(--fg); font-weight: 700; display: block; margin-bottom: 1px; }
+      .cii-alpha-item span { color: var(--muted); }
+      .cii-why-box {
+        margin-top: 6px; padding: 12px 14px;
+        background: #f9f6f0; border: 1px solid var(--border);
+        border-radius: 8px; font-size: 0.81rem; line-height: 1.55;
+        color: var(--fg);
+      }
+      .cii-why-box p { margin: 0 0 8px; }
+      .cii-why-box p:last-child { margin-bottom: 0; color: var(--muted); font-style: italic; }
+      /* ── About CII visible pill ── */
+      .cii-about-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 2px 9px 2px 7px;
+        border-radius: 12px;
+        background: var(--accent); color: #fff;
+        font-size: 0.70rem; font-weight: 700; letter-spacing: 0.03em;
+        border: none; cursor: pointer;
+        vertical-align: middle; margin-left: 6px;
+        transition: opacity 0.15s;
+        text-decoration: none;
+      }
+      .cii-about-btn:hover { opacity: 0.85; }
     </style>
   </head>
   <body>
@@ -2107,13 +2300,13 @@
     <div class="cii-modal" role="dialog" aria-modal="true" aria-labelledby="ciiModalTitle">
       <button class="cii-modal-close" onclick="_closeCIIModal()" title="Close">&times;</button>
       <div class="cii-modal-title" id="ciiModalTitle">Consensus Intelligence Investing</div>
-      <div class="cii-modal-version">Methodology Version: CII v1.0</div>
+      <div class="cii-modal-version">Methodology Version: CII v1.1</div>
       <p class="cii-modal-statement">
         Consensus Intelligence Investing (CII) is a portfolio construction methodology that
         begins with professional analyst consensus, validates that consensus against business
-        fundamentals and historical evidence, scores opportunities using an internal conviction
-        framework, and deploys capital through a risk-managed model designed
-        to maximize long-term portfolio growth.
+        fundamentals and historical evidence — with fundamental quality actively adjusting
+        conviction scores — and deploys capital through a risk-managed framework designed
+        to generate superior long-term risk-adjusted returns.
       </p>
       <div class="cii-modal-h2">Four-Layer Framework</div>
       <div class="cii-modal-layers">
@@ -2131,7 +2324,7 @@
         <div class="cii-layer">
           <div class="cii-layer-num">Layer 2</div>
           <div class="cii-layer-title">Fundamental Validation</div>
-          <div class="cii-layer-purpose">Validate whether business fundamentals support the consensus.</div>
+          <div class="cii-layer-purpose">Validate whether business fundamentals support the consensus, and adjust conviction scores accordingly.</div>
           <div class="cii-layer-sources">
             <span class="cii-source-pill">Revenue Growth</span>
             <span class="cii-source-pill">ROIC</span>
@@ -2162,10 +2355,35 @@
       </div>
       <div class="cii-modal-h2">Objective</div>
       <p class="cii-modal-objective">
-        Identify opportunities where <strong>analyst consensus</strong>,
-        <strong>business fundamentals</strong>, <strong>historical evidence</strong>,
-        and <strong>portfolio discipline</strong> align most favorably.
+        Identify and allocate capital toward high-conviction opportunities where analyst consensus,
+        business fundamentals, historical evidence, and portfolio discipline align most favorably
+        — while systematically reducing allocation errors where consensus has outrun business
+        reality — in pursuit of superior long-term risk-adjusted returns.
       </p>
+      <div class="cii-modal-h2">Expected Sources of Alpha</div>
+      <div class="cii-alpha-grid">
+        <div class="cii-alpha-item">
+          <div class="cii-alpha-icon">&#129504;</div>
+          <div><strong>Consensus Intelligence</strong><span>Leverages the collective research and judgment of professional analysts rather than relying on individual opinion.</span></div>
+        </div>
+        <div class="cii-alpha-item">
+          <div class="cii-alpha-icon">&#128200;</div>
+          <div><strong>Fundamental Confirmation</strong><span>Validates whether business performance supports the prevailing market narrative, and actively reduces conviction in deteriorating theses through the Fundamental Modifier.</span></div>
+        </div>
+        <div class="cii-alpha-item">
+          <div class="cii-alpha-icon">&#128196;</div>
+          <div><strong>Historical Validation</strong><span>Requires empirical evidence that similar signal configurations have historically produced favorable outcomes.</span></div>
+        </div>
+        <div class="cii-alpha-item">
+          <div class="cii-alpha-icon">&#9881;</div>
+          <div><strong>Portfolio Construction Discipline</strong><span>Directs capital toward the highest-conviction opportunities while managing concentration and allocation risk.</span></div>
+        </div>
+      </div>
+      <div class="cii-modal-h2">Why CII Exists</div>
+      <div class="cii-why-box">
+        <p>Consensus Intelligence Investing seeks to generate superior long-term risk-adjusted returns by combining professional analyst consensus, fundamental validation, historical evidence, and disciplined portfolio construction into a unified decision framework.</p>
+        <p>CII does not attempt to predict markets. It seeks to improve decision quality through collective market intelligence, business fundamentals, empirical evidence, and disciplined portfolio management.</p>
+      </div>
       <div class="cii-modal-footer">
         Security Intelligence Hub &nbsp;·&nbsp; Advisory intelligence only — not financial advice &nbsp;·&nbsp; Not trade execution
       </div>
@@ -2179,7 +2397,7 @@
         <p class="subtitle">
           Portfolio Alignment Analysis &nbsp;·&nbsp;
           Where Analyst Consensus Meets Portfolio Discipline
-          <button class="cii-info-btn" onclick="_openCIIModal()" title="About Consensus Intelligence Investing">ⓘ</button>
+          <button class="cii-about-btn" onclick="_openCIIModal()" title="About Consensus Intelligence Investing" aria-label="About Consensus Intelligence Investing">&#9432; About CII</button>
           &nbsp;·&nbsp;
           Advisory intelligence only — not trade execution
         </p>
@@ -2347,6 +2565,9 @@
         <!-- Capital Deployment Plan (Phase 7.5D) — rendered on demand -->
         <div id="deploymentPlanContainer" class="dq-section" style="display:none"></div>
 
+        <!-- ISSUE-04C — Dislocation Watchlist Panel -->
+        <div id="dislocationWatchlistContainer" class="dq-section" style="display:none"></div>
+
         <!-- Row 1: Allocation Map + Concentration -->
         <div class="two-col section-gap">
           <div class="panel" id="allocationPanel">
@@ -2388,9 +2609,21 @@
               <span class="cra-panel-title">Capital Rotation Advisor</span>
               <span id="craStatusBadge" class="cra-status-badge"></span>
               <span class="cra-advisory-note">Guidance only — not trade instructions</span>
-              <button class="cra-refresh-btn" id="craRefreshBtn" onclick="loadCRAProposal()">↺ Refresh Proposal</button>
+              <div class="cra-action-btns">
+                <button class="cra-btn cra-btn-save" id="craSaveBtn" onclick="_craSaveDraft()" disabled>&#9998; Save</button>
+                <button class="cra-btn" id="craLoadBtn" onclick="_craLoadDraft()">&#8633; Load</button>
+                <button class="cra-btn" id="craExportCsvBtn" onclick="_craExportCsv()" disabled>&#8659; CSV</button>
+                <button class="cra-btn" id="craExportMdBtn" onclick="_craExportMd()" disabled>&#8659; MD</button>
+                <button class="cra-btn" id="craCopyBtn" onclick="_craCopySummary()" disabled>&#10064; Copy</button>
+                <button class="cra-refresh-btn" id="craRefreshBtn" onclick="loadCRAProposal()">&#8634; Refresh</button>
+              </div>
             </div>
             <div id="craReviewFlags" class="cra-review-flags" style="display:none;"></div>
+            <div id="craDraftBanner" class="cra-draft-banner" style="display:none;">
+              <span id="craDraftBannerMsg"></span>
+              <button class="cra-btn" onclick="_craApplyDraft()">Apply Selections</button>
+              <button class="cra-btn" onclick="document.getElementById('craDraftBanner').style.display='none'">Dismiss</button>
+            </div>
             <div id="craContent">
               <div class="cra-loading">Loading Capital Rotation Advisor…</div>
             </div>
@@ -2415,6 +2648,6 @@
       </div><!-- /resultsArea -->
     </div><!-- /shell -->
 
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=25"></script>
   </body>
 </html>

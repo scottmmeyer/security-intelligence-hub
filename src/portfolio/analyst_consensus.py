@@ -79,11 +79,18 @@ def load_analyst_consensus(yahoo_csv_path: Path) -> dict[str, AnalystConsensus]:
                     except ValueError:
                         return None
 
+                def _int(key: str) -> Optional[int]:
+                    v = row.get(key, "").strip()
+                    try:
+                        return int(v) if v else None
+                    except ValueError:
+                        return None
+
                 abr = _float("abr")
                 result[sym] = AnalystConsensus(
                     symbol=sym,
                     abr=abr,
-                    analyst_count=None,          # not available in current Yahoo feed
+                    analyst_count=_int("analyst_count"),   # ISSUE-08: populated from CSV
                     price_target=_float("price_target"),
                     current_price=_float("current_price"),
                     upside_pct=_float("upside_pct"),

@@ -37,6 +37,8 @@ from .mandate import (
 )
 from .analyst_consensus import load_analyst_consensus, compute_conflict_badge
 from .fidelity_signal import load_fidelity_signals, compute_consensus_matrix
+from .dislocation import build_dislocation_payload  # ISSUE-04B
+from .outcome_tracker import persist_dislocation_detections  # ISSUE-12B
 from .models import PortfolioAnalysisRun
 from .reconciliation import run_reconciliation
 from .deployment_queue import build_deployment_queue, compute_deployable_cash, CW_DAS_VERSION, apply_policy_to_queue as _apply_policy_to_queue
@@ -1102,7 +1104,37 @@ def run_analysis(
         # Phase 7.5N — Signal Source Metadata (additive; display-only)
         # Governance: refresh dates for Zacks/Danelfin freshness display. No scoring impact.
         "signal_source_metadata": _build_signal_source_metadata(),
+        # ISSUE-04D — pass analyst consensus for Class B2
+        "dislocation_by_symbol": _build_dislocation_payload(
+            overlays, ac_by_sym=_build_consensus_payload()
+        ),
     }
+
+    # ISSUE-12B — Persist dislocation detections for outcome tracking.
+    # Governance: append-only, informational only. No scoring impact.
+    _disloc_payload = result["dislocation_by_symbol"]
+    if _disloc_payload:
+        # Load current prices from Yahoo supplemental for price_at_detection
+        _yahoo_prices: dict[str, float] = {}
+        try:
+            from src.portfolio.analyst_consensus import load_analyst_consensus
+            _cons = load_analyst_consensus(_YAHOO_SUPPLEMENTAL)
+            for _sym, _ac in _cons.items():
+                if _ac.current_price is not None:
+                    _yahoo_prices[_sym] = _ac.current_price
+        except Exception:
+            pass
+        try:
+            persist_dislocation_detections(
+                detection_date=snapshot_date,
+                run_id=run_id,
+                dislocation_payload=_disloc_payload,
+                overlays=overlays,
+                dq_payload=dq_payload,
+                yahoo_prices=_yahoo_prices or None,
+            )
+        except Exception:
+            pass  # never let tracking errors break the analysis run
 
 
 def _build_consensus_payload() -> dict:
@@ -1171,6 +1203,21 @@ def _build_fidelity_payload() -> dict:
             "consensus_matrix": matrix,
         }
     return result
+
+
+def _build_dislocation_payload(overlays: list, ac_by_sym: Optional[dict] = None) -> dict:
+    """Build dislocation_by_symbol payload using FMP enriched universe.
+
+    ISSUE-04D: passes analyst consensus for Class B2 support.
+    Governance: informational only — no scoring, ranking, or CW-DAS influence.
+    """
+    try:
+        from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
+        fmp_by_sym = load_fmp_enriched_universe()
+    except Exception:
+        fmp_by_sym = {}
+    return build_dislocation_payload(overlays=overlays, fmp_by_sym=fmp_by_sym,
+                                     ac_by_sym=ac_by_sym or {})
 
 
 def _build_signal_source_metadata() -> dict:
@@ -1345,6 +1392,12 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
 
     # signal_source_metadata (Phase 7.5N — display-only refresh dates)
     result["signal_source_metadata"] = _build_signal_source_metadata()
+
+    # dislocation_by_symbol (ISSUE-04D — informational, Classes A1/D1/B2)
+    result["dislocation_by_symbol"] = _build_dislocation_payload(
+        result.get("security_overlays", []),
+        ac_by_sym=_build_consensus_payload(),
+    )
 
     # For pre-upgrade runs that lack embedded drilldown, compute on demand
     recs_list = result.get("recommendations", [])
