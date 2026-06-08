@@ -237,6 +237,18 @@ class PortfolioRecommendation:
     # Phase F-2 — Vehicle suitability scoring (populated for INCREASE_UNDERWEIGHT recs)
     vehicle_suitability_notes: tuple = ()  # tuple[VehicleSuitabilityNote], sorted by suitability_score desc
 
+    # PRA-IMPL-01 — Typed recommendation contract (additive; no existing fields changed)
+    card_type: str = "DIAGNOSTIC"
+    # Canonical values: ACTION | OBSERVATION | NARRATIVE | EXPLAINABILITY | DIAGNOSTIC
+    execution_state: str = "EXECUTABLE"
+    # Canonical values: EXECUTABLE | BLOCKED_BY_POLICY | DEFERRED_BY_POLICY | INFORMATIONAL_ONLY
+    effective_action: str = ""
+    # Human-readable resolved action phrase; empty until policy pass (PRA-IMPL-02)
+    evidence_link: str = ""
+    # Reference ID for supporting artifact; empty if none
+    card_lifecycle_state: str = "OBSERVED"
+    # Canonical values: OBSERVED | ACTION_QUALIFIED | POLICY_ADJUSTED | DECISION_PENDING | EXECUTED
+
 
 @dataclass(frozen=True)
 class VehicleSuitabilityNote:

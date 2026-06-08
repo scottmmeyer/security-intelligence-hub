@@ -401,6 +401,8 @@ def generate_recommendations(
             replay_run_ids=tuple(replay_ids),
             created_at_utc=now_utc,
             vehicle_suitability_notes=suitability_notes if is_increase else (),
+            card_type="ACTION",
+            execution_state="EXECUTABLE",
         ))
 
     # ── 2. Concentration risk recommendations ────────────────────────────────
@@ -426,6 +428,8 @@ def generate_recommendations(
             severity="HIGH" if concentration.concentration_tier == "CRITICAL" else "MODERATE",
             replay_run_ids=(),
             created_at_utc=now_utc,
+            card_type="ACTION",
+            execution_state="EXECUTABLE",
         ))
 
     # ── 3. Security-level TRIM signals (Phase D: use STI when available) ────
@@ -464,6 +468,8 @@ def generate_recommendations(
                 severity="MODERATE",
                 replay_run_ids=(),
                 created_at_utc=now_utc,
+                card_type="ACTION",
+                execution_state="EXECUTABLE",
             ))
 
     # ── 4. Replay-supported underweight opportunities ─────────────────────────
@@ -500,6 +506,8 @@ def generate_recommendations(
                 severity=ar.severity,
                 replay_run_ids=tuple(replay_ids[:3]),
                 created_at_utc=now_utc,
+                card_type="ACTION",
+                execution_state="EXECUTABLE",
             ))
 
     # ── Phase C: downgrade pass ───────────────────────────────────────────────
@@ -1807,6 +1815,8 @@ def _maybe_thematic_concentration_rec(
         created_at_utc=now_utc,
         rec_state="INFORMATIONAL",
         reasoning_trace=trace,
+        card_type="ACTION",
+        execution_state="EXECUTABLE",
     )
 
 
@@ -1936,6 +1946,8 @@ def _generate_strategic_trim_recs(
             created_at_utc=now_utc,
             rec_state="ACTIVE",
             reasoning_trace=trace,
+            card_type="ACTION",
+            execution_state="EXECUTABLE",
         ))
 
     # ── Strategic retain signals (cap to 2) ───────────────────────────────────
@@ -1968,6 +1980,8 @@ def _generate_strategic_trim_recs(
             created_at_utc=now_utc,
             rec_state="INFORMATIONAL",
             reasoning_trace=p.classification_trace,
+            card_type="OBSERVATION",
+            execution_state="INFORMATIONAL_ONLY",
         ))
 
     return recs

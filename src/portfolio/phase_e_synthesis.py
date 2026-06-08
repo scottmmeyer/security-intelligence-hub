@@ -442,6 +442,8 @@ def _build_thematic_saturation_rec(
         created_at_utc=now_utc,
         rec_state="INFORMATIONAL",
         reasoning_trace=trace,
+        card_type="NARRATIVE",
+        execution_state="INFORMATIONAL_ONLY",
     )
 
 
@@ -538,6 +540,8 @@ def _generate_retain_narratives(
             created_at_utc=now_utc,
             rec_state="INFORMATIONAL",
             reasoning_trace=trace,
+            card_type="NARRATIVE",
+            execution_state="INFORMATIONAL_ONLY",
         ))
 
     return recs
@@ -614,6 +618,8 @@ def _generate_top_trim_recs(
             created_at_utc=now_utc,
             rec_state="ACTIVE",
             reasoning_trace=reasoning_trace,
+            card_type="ACTION",
+            execution_state="EXECUTABLE",
         ))
 
     return recs
@@ -786,6 +792,8 @@ def _generate_portfolio_construction_narrative(
         created_at_utc=now_utc,
         rec_state="ACTIVE",
         reasoning_trace=trace,
+        card_type="NARRATIVE",
+        execution_state="INFORMATIONAL_ONLY",
     )
 
 
@@ -856,6 +864,8 @@ def _generate_replay_alignment_context(
         created_at_utc=now_utc,
         rec_state="INFORMATIONAL",
         reasoning_trace="Phase 7.1 Part C replay alignment explainability",
+        card_type="EXPLAINABILITY",
+        execution_state="INFORMATIONAL_ONLY",
     )
 
 
@@ -979,6 +989,8 @@ def _generate_conviction_explainability_cards(
             created_at_utc=now_utc,
             rec_state="INFORMATIONAL",
             reasoning_trace=f"Phase 7.1 Part D | {p.symbol} | {p.strategic_classification}",
+            card_type="EXPLAINABILITY",
+            execution_state="INFORMATIONAL_ONLY",
         ))
 
     return recs
