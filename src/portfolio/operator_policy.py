@@ -392,3 +392,84 @@ def compute_execution_state(
         return "INFORMATIONAL_ONLY", "MONITOR_ONLY"
 
     return "EXECUTABLE", flag or "HOLD"
+
+
+# ─── Recommendation policy normalization (PRA-IMPL-02) ───────────────────────
+
+# recommendation_type → opportunity_flag for policy evaluation
+# Types not listed here have no sell-context and are left at EXECUTABLE.
+_REC_TYPE_SELL_FLAGS: dict[str, str] = {
+    "REDUCE_OVERWEIGHT":         "REDUCE",
+    "STRATEGIC_TRIM_CANDIDATE":  "TRIM",
+    "TOP_TRIM_CANDIDATES":       "TRIM",
+    "IMPROVE_RISK_PROFILE":      "TRIM",
+}
+
+
+def apply_policy_to_recommendations(
+    recs: list[dict],
+    registry: "OperatorPolicyRegistry",
+) -> None:
+    """Annotate recommendation dicts with policy execution state in-place.
+
+    For each sell-context recommendation, resolves the most restrictive policy
+    state across the affected_symbols list and sets:
+        execution_state     — BLOCKED_BY_POLICY | DEFERRED_BY_POLICY | EXECUTABLE
+        effective_action    — MONITOR_ONLY | <FLAG>_SELL_LAST | <FLAG>
+        card_lifecycle_state — POLICY_ADJUSTED (when policy modifies execution)
+
+    Precedence (most restrictive wins across all affected symbols):
+        1. BLOCKED_BY_POLICY  (DO_NOT_SELL on any affected symbol)
+        2. DEFERRED_BY_POLICY (SELL_LAST on any affected symbol)
+        3. INFORMATIONAL_ONLY (CORE_ANCHOR on any affected symbol)
+        4. EXECUTABLE         (no sell-context policy)
+
+    Intelligence scores, ranking, and generation logic are never modified.
+    Only the output-layer annotation fields are updated.
+    """
+    for rd in recs:
+        rec_type = rd.get("recommendation_type", "")
+        sell_flag = _REC_TYPE_SELL_FLAGS.get(rec_type)
+        if not sell_flag:
+            # Non-sell-context rec: resolve effective_action from rec type and
+            # leave execution_state as EXECUTABLE (already set by PRA-IMPL-01).
+            if rd.get("execution_state") == "EXECUTABLE" and not rd.get("effective_action"):
+                _set_executable_effective_action(rd, rec_type)
+            continue
+
+        symbols: list[str] = rd.get("affected_symbols") or []
+
+        # Evaluate policy state for each affected symbol; take most restrictive.
+        best_state = "EXECUTABLE"
+        best_action = sell_flag
+
+        for sym in symbols:
+            state, action = compute_execution_state(sym, sell_flag, registry)
+            if state == "BLOCKED_BY_POLICY":
+                best_state = "BLOCKED_BY_POLICY"
+                best_action = "MONITOR_ONLY"
+                break  # can't get more restrictive
+            if state == "DEFERRED_BY_POLICY" and best_state == "EXECUTABLE":
+                best_state = "DEFERRED_BY_POLICY"
+                best_action = action
+            if state == "INFORMATIONAL_ONLY" and best_state == "EXECUTABLE":
+                best_state = "INFORMATIONAL_ONLY"
+                best_action = "MONITOR_ONLY"
+
+        rd["execution_state"] = best_state
+        rd["effective_action"] = best_action
+        if best_state != "EXECUTABLE":
+            rd["card_lifecycle_state"] = "POLICY_ADJUSTED"
+
+
+def _set_executable_effective_action(rd: dict, rec_type: str) -> None:
+    """Set effective_action for non-sell-context EXECUTABLE recommendations."""
+    _INCREASE_TYPES = {
+        "INCREASE_UNDERWEIGHT",
+        "IMPROVE_REPLAY_ALIGNMENT",
+        "IMPROVE_SECTOR_EXPOSURE",
+    }
+    if rec_type in _INCREASE_TYPES:
+        rd["effective_action"] = "BUY"
+    elif rec_type == "DIVERSIFY_CONCENTRATION":
+        rd["effective_action"] = "REDUCE"

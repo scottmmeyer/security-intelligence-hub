@@ -46,6 +46,7 @@ from .deployment_planner import build_deployment_plan, PLANNER_VERSION
 from .unified_conviction import build_ucf_verdicts, UCF_VERSION
 from .operator_policy import (
     OperatorPolicyRegistry,
+    apply_policy_to_recommendations as _apply_policy_to_recs,
     build_policy_annotations,
     build_policy_suppressed_entries,
     compute_execution_state,
@@ -745,6 +746,10 @@ def run_analysis(
     deployment_queue, _policy_suppressed = _apply_policy_to_queue(
         deployment_queue, _policy_registry
     )
+    # ── PRA-IMPL-02 — Normalise policy execution state on recommendation dicts ─
+    # Mutates execution_state, effective_action, card_lifecycle_state in-place.
+    # Scoring, ranking, and generation logic are NOT affected.
+    _apply_policy_to_recs(recs_with_drilldown, _policy_registry)
     _policy_suppressed_from_overlays = build_policy_suppressed_entries(
         overlays, _policy_registry
     )
