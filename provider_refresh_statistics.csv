@@ -1,0 +1,7 @@
+provider,sourced_date,symbols_attempted,symbols_with_data,symbols_no_data,badge_status,notes
+zacks,2026-06-09,702,671,31,FRESH,"31 symbols returned null rank/score — sourced_date still written to today"
+danelfin,2026-06-09,497,497,0,FRESH,"100% success rate"
+yahoo,2026-06-09,697,696,1,FRESH,"eps_growth_5yr=0/697 today — partial field failure; badge unaffected"
+zacks_abr,2026-06-09,702,0,702,FRESH,"abr field empty for all 702 today — only populated via on-demand fetch"
+zacks_price_target,2026-06-09,702,0,702,FRESH,"price_target empty for all 702 today — only on-demand fetch"
+yahoo_eps_growth_5yr,2026-06-09,697,0,697,FRESH,"eps_growth_5yr empty for all 697 today — possible provider API change"
