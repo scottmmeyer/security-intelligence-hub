@@ -259,6 +259,33 @@
       .validator-name { font-weight: 600; font-size: 0.82rem; }
       .validator-errors { color: var(--fail); font-size: 0.78rem; margin-top: 3px; }
 
+      /* ── AI-001/AI-002: Dataset source banners and compliance explainability ── */
+      .dataset-source-banner {
+        display: flex; align-items: flex-start; gap: 8px;
+        padding: 9px 14px; border-radius: 8px; margin-bottom: 14px;
+        font-size: 0.82rem; line-height: 1.5;
+        border-left: 4px solid;
+      }
+      .source-strategic {
+        background: #eef4fb; border-left-color: #1a5c8a; color: #1a3a5c;
+      }
+      .source-actual {
+        background: #fdf6ec; border-left-color: #e07300; color: #6b3800;
+      }
+      .source-effective {
+        background: #f0faf4; border-left-color: #1a7c4f; color: #0d3d27;
+      }
+      .badge.advisory {
+        background: #fff3e0; color: #e07300;
+        border: 1px solid #ffe0b2;
+      }
+      .alloc-explainability-note {
+        background: var(--bg); border: 1px solid var(--border);
+        border-radius: 8px; padding: 12px 16px;
+        font-size: 0.82rem; line-height: 1.6; color: var(--muted);
+        margin-bottom: 16px;
+      }
+
       /* ── Policy limits grid ── */
       .policy-grid {
         display: grid;
@@ -398,6 +425,9 @@
         <div class="card-body" id="recalc-body">
           <div id="snapshot-meta" class="meta-row"></div>
           <div id="change-summary" style="margin-top:12px;"></div>
+          <div class="dataset-source-banner source-strategic">
+            ℹ️ <strong>Strategic Target Recalculation Compliance</strong> &mdash; validates the allocation model, not current portfolio holdings.
+          </div>
           <div id="validator-grid" class="validator-grid" style="margin-top:14px;"></div>
           <div class="recalc-actions">
             <span style="font-size:0.82rem;color:var(--muted);">
@@ -426,6 +456,9 @@
           <button class="toggle-btn" id="targets-toggle">▲ collapse</button>
         </div>
         <div class="card-body" id="targets-body">
+          <div class="dataset-source-banner source-strategic">
+            📌 <strong>Strategic Target Allocation</strong> &mdash; these are the <em>planned target percentages</em> from the current allocation model. They represent where the portfolio is intended to be, not its current state.
+          </div>
           <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
             <select id="filter-asset-class" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:0.88rem;background:#fff;">
               <option value="">All Asset Classes</option>
@@ -454,7 +487,29 @@
           <button class="toggle-btn" id="concentration-toggle">▲ collapse</button>
         </div>
         <div class="card-body" id="concentration-body">
+          <div class="dataset-source-banner source-strategic">
+            📌 <strong>Strategic Target Compliance</strong> &mdash; bars show <em>strategic target percentages</em> vs policy ceilings. A PASS here means the allocation model is within policy, not that current holdings are. See <em>Current Portfolio Compliance</em> below for actual holdings.
+          </div>
           <div id="concentration-bars"></div>
+        </div>
+      </div>
+
+      <!-- ─── Section 6B: Current Portfolio Compliance (AI-001 Option D) ─── -->
+      <div class="panel" id="section-portfolio-compliance" style="display:none;">
+        <div class="card-header" onclick="toggleCard('portfolio-compliance-body','portfolio-compliance-toggle')">
+          <h2>Current Portfolio Compliance</h2>
+          <button class="toggle-btn" id="portfolio-compliance-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="portfolio-compliance-body">
+          <div class="dataset-source-banner source-actual">
+            📊 <strong>Current Portfolio Allocation</strong> &mdash; bars show <em>actual portfolio holdings</em> vs policy ceilings. OVER here means the current portfolio exceeds a policy ceiling today.
+          </div>
+          <div class="alloc-explainability-note" id="compliance-explainability">
+            <strong>Why might Strategic Targets show PASS while Current Portfolio shows OVER?</strong><br>
+            Strategic Target Compliance validates the <em>allocation planning model</em>. It checks whether the intended target percentages are within policy limits. Current Portfolio Compliance evaluates your <em>actual holdings today</em>. The difference between them is <em>allocation drift</em> &mdash; natural movement as market prices change and trades occur. Both indicators are correct; they measure different things.
+          </div>
+          <div id="portfolio-compliance-bars"></div>
+          <p id="portfolio-compliance-empty" class="empty-state" style="display:none;">No portfolio analysis available. Upload a portfolio to see current allocation compliance.</p>
         </div>
       </div>
 
@@ -465,6 +520,9 @@
           <button class="toggle-btn" id="recommendation-toggle">▲ collapse</button>
         </div>
         <div class="card-body" id="recommendation-body">
+          <div class="dataset-source-banner source-effective">
+            📈 <strong>Effective Allocation After Overlays</strong> &mdash; chart and table show strategic target percentages adjusted by any active tactical momentum overlays. This is the <em>recommended allocation</em> for the current period, not current portfolio state.
+          </div>
           <div class="chart-wrap"><canvas id="recommendation-chart"></canvas></div>
           <div class="table-scroll" style="margin-top:14px;">
             <table class="data-table" id="recommendation-table"></table>

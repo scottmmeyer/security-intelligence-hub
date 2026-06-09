@@ -466,7 +466,7 @@ function renderTargets(targets) {
   show("section-targets");
 }
 
-// ─── Section 6: Concentration Risk ───────────────────────────────────────────
+// ─── Section 6: Concentration Risk (Strategic Target Compliance) ─────────────
 
 function renderConcentration(targets, policy) {
   const el = document.getElementById("concentration-bars");
@@ -475,26 +475,26 @@ function renderConcentration(targets, policy) {
   const sp = policy?.structural_policy || {};
   const checks = [
     {
-      label: "EQUITIES.US.MEGA (Mega concentration)",
+      label: "EQUITIES.US.MEGA (Mega concentration) — strategic target",
       value: parseFloat(targets.find(t => t.node_key === "EQUITIES.US.MEGA")?.target_pct_of_total || 0),
       ceiling: sp.max_mega_concentration_pct ?? 50,
       ac: "EQUITIES",
     },
     {
-      label: "DIGITAL (Digital assets ceiling)",
+      label: "DIGITAL (Digital assets ceiling) — strategic target",
       value: parseFloat(targets.find(t => t.node_key === "DIGITAL")?.target_pct_of_total || 0),
       ceiling: sp.max_digital_assets_pct ?? 8,
       ac: "DIGITAL",
     },
     {
-      label: "Micro Cap combined",
+      label: "Micro Cap combined — strategic target",
       value: targets.filter(t => t.node_key.includes("MICRO"))
                .reduce((sum, t) => sum + parseFloat(t.target_pct_of_total || 0), 0),
       ceiling: sp.max_micro_cap_pct ?? 5,
       ac: "EQUITIES",
     },
     {
-      label: "CASH (floor check)",
+      label: "CASH (floor check) — strategic target",
       value: parseFloat(targets.find(t => t.node_key === "CASH")?.target_pct_of_total || 0),
       ceiling: 100, floor: sp.cash_floor_pct ?? 2,
       ac: "CASH",
@@ -527,6 +527,103 @@ function renderConcentration(targets, policy) {
   }).join("");
 
   show("section-concentration");
+}
+
+// ─── Section 6B: Current Portfolio Compliance (AI-001 Option D) ──────────────
+
+async function renderPortfolioCompliance(policy) {
+  const barsEl  = document.getElementById("portfolio-compliance-bars");
+  const emptyEl = document.getElementById("portfolio-compliance-empty");
+  if (!barsEl) return;
+
+  // Load latest PAR run to get actual allocation
+  let actualByNode = {};
+  try {
+    const runs = await fetchJson("/api/portfolio/runs");
+    if (runs && runs.length) {
+      const latestRunId = runs[runs.length - 1].run_id;
+      const par = await fetchJson(`/api/portfolio/runs/${latestRunId}`);
+      const alignment = par?.alignment || [];
+      for (const row of alignment) {
+        if (row.node_key) actualByNode[row.node_key] = parseFloat(row.actual_pct || 0);
+      }
+    }
+  } catch (_) { /* no portfolio available */ }
+
+  const sp = policy?.structural_policy || {};
+
+  if (!Object.keys(actualByNode).length) {
+    if (emptyEl) emptyEl.style.display = "";
+    barsEl.style.display = "none";
+    show("section-portfolio-compliance");
+    return;
+  }
+
+  if (emptyEl) emptyEl.style.display = "none";
+  barsEl.style.display = "";
+
+  // Compute actual micro-cap combined
+  const actualMicro = Object.entries(actualByNode)
+    .filter(([k]) => k.includes("MICRO"))
+    .reduce((s, [, v]) => s + v, 0);
+
+  const checks = [
+    {
+      label: "EQUITIES.US.MEGA — actual portfolio",
+      value: actualByNode["EQUITIES.US.MEGA"] ?? 0,
+      ceiling: sp.max_mega_concentration_pct ?? 50,
+      ac: "EQUITIES",
+    },
+    {
+      label: "DIGITAL — actual portfolio",
+      value: actualByNode["DIGITAL"] ?? 0,
+      ceiling: sp.max_digital_assets_pct ?? 8,
+      ac: "DIGITAL",
+    },
+    {
+      label: "Micro Cap combined (US + Intl) — actual portfolio",
+      value: actualMicro,
+      ceiling: sp.max_micro_cap_pct ?? 5,
+      ac: "EQUITIES",
+    },
+    {
+      label: "CASH — actual portfolio",
+      value: actualByNode["CASH"] ?? 0,
+      ceiling: 100, floor: sp.cash_floor_pct ?? 2,
+      ac: "CASH",
+    },
+  ];
+
+  barsEl.innerHTML = checks.map(c => {
+    const pct = c.value;
+    const ceiling = c.ceiling;
+    const ratio = Math.min(1, pct / (ceiling || 100));
+    const over = pct > ceiling;
+    const exceedance = over ? (pct - ceiling) : 0;
+    const advisory = over && exceedance < 3; // <3pp = advisory, >=3pp = warning
+    const color = over ? (advisory ? "var(--warn)" : "var(--fail)") : acColor(c.ac);
+    const badgeClass = over ? (advisory ? "advisory" : "fail") : "pass";
+    const badgeText = over ? (advisory ? "ADVISORY" : "OVER") : "OK";
+    const exceedanceNote = over
+      ? `<span style="font-size:0.75rem;color:${advisory?"var(--warn)":"var(--fail)"}"> (+${exceedance.toFixed(2)}pp drift)</span>`
+      : "";
+
+    return `<div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-size:0.85rem;">${c.label}</span>
+        <span>
+          <strong style="font-size:0.88rem;">${pct.toFixed(2)}%</strong>${exceedanceNote}
+          <span style="font-size:0.8rem;color:var(--muted);"> / ${ceiling}% ceiling</span>
+          <span class="badge ${badgeClass}" style="margin-left:6px;">${badgeText}</span>
+        </span>
+      </div>
+      <div class="alloc-bar-bg" style="height:12px;">
+        <div class="alloc-bar-fill" style="width:${(ratio * 100).toFixed(1)}%;background:${color};"></div>
+      </div>
+    </div>`;
+  }).join("");
+
+  show("section-portfolio-compliance");
 }
 
 // ─── Section 7: Allocation Recommendation ────────────────────────────────────
@@ -748,6 +845,7 @@ async function loadAllData() {
   renderOverlays(state.overlays);
   renderTargets(state.targets);
   renderConcentration(state.targets, state.policy);
+  renderPortfolioCompliance(state.policy);  // AI-001 Option D: actual portfolio vs policy
   renderRecommendation(state.recommendations, state.targets);
   renderHistory(state.manifest);
 
