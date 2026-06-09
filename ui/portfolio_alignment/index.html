@@ -1269,6 +1269,49 @@
       .rec-lane-body { display: flex; flex-direction: column; gap: 10px; }
       .rec-lane-body.lane-collapsed { display: none; }
 
+      /* PRA-IMPL-06: Top Conviction Anchors */
+      .anchor-top-section {
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        background: #f0faf4;
+        border: 1px solid #a3d9b8;
+        border-radius: 8px;
+      }
+      .anchor-top-label {
+        font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.1em; color: #1a7c4f; margin-bottom: 8px;
+      }
+      .anchor-top-grid {
+        display: flex; flex-wrap: wrap; gap: 8px;
+      }
+      .anchor-top-card {
+        flex: 1 1 140px; min-width: 120px; max-width: 200px;
+        background: #fff; border: 1px solid #a3d9b8;
+        border-radius: 8px; padding: 8px 10px;
+        cursor: pointer; transition: box-shadow 0.15s;
+      }
+      .anchor-top-card:hover { box-shadow: 0 2px 8px rgba(26,124,79,0.15); }
+      .anchor-top-header {
+        display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+      }
+      .anchor-top-sym {
+        font-weight: 800; font-size: 0.9rem; color: var(--fg);
+      }
+      .anchor-top-score {
+        margin-left: auto; font-size: 0.72rem; color: #1a7c4f; font-weight: 700;
+      }
+      .anchor-top-rationale {
+        font-size: 0.73rem; color: var(--muted); line-height: 1.4;
+      }
+      .anchor-tier-badge {
+        display: inline-block; padding: 1px 6px; border-radius: 6px;
+        font-size: 0.65rem; font-weight: 800; letter-spacing: 0.04em;
+      }
+      .anchor-tier-ccl { background: #1a7c4f; color: #fff; }
+      .anchor-tier-hca { background: #1a5c8a; color: #fff; }
+      .anchor-tier-tgc { background: #e07300; color: #fff; }
+      .tier-none       { background: #ccc;     color: #555; }
+
       /* Typed KPI count strip for recommendations */
       .rec-kpi-typed {
         display: flex; flex-wrap: wrap; gap: 16px;

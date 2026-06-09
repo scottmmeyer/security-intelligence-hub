@@ -2417,11 +2417,129 @@ function renderRecommendations(recs) {
     </div>`;
   };
 
+  // ── PRA-IMPL-06: Conviction Anchors — ranked Top 5 + full registry ─────
+  const buildConvictionAnchorLane = (items) => {
+    if (!items.length) return "";
+
+    // Ranking: tier → composite score → replay → portfolio weight
+    const _TIER_ORDER = {
+      CORE_CONVICTION_LEADER: 0,
+      HIGH_CONVICTION_ANCHOR: 1,
+      TACTICAL_GROWTH_CANDIDATE: 2,
+      WATCH_TRIM_CANDIDATE: 3,
+    };
+    const _tierShort = t =>
+      t === "CORE_CONVICTION_LEADER" ? "CCL"
+      : t === "HIGH_CONVICTION_ANCHOR" ? "HCA"
+      : t === "TACTICAL_GROWTH_CANDIDATE" ? "TGC"
+      : t === "WATCH_TRIM_CANDIDATE" ? "WTC" : "—";
+
+    // Build per-symbol deduplicated list (prefer CONVICTION_EXPLAINABILITY_CARD for info depth)
+    const bySymbol = {};
+    for (const r of items) {
+      const sym = (r.affected_symbols || [])[0] || r.recommendation_id;
+      if (!bySymbol[sym] || r.recommendation_type === "CONVICTION_EXPLAINABILITY_CARD") {
+        bySymbol[sym] = r;
+      }
+    }
+    const unique = Object.values(bySymbol);
+
+    // Sort unique symbols by tier → composite → replay → weight using drilldown data
+    unique.sort((a, b) => {
+      // Extract tier from reasoning_trace or title (available from card data)
+      const getTier = r => {
+        const trace = r.reasoning_trace || r.title || "";
+        if (trace.includes("CORE_CONVICTION_LEADER")) return 0;
+        if (trace.includes("HIGH_CONVICTION_ANCHOR"))  return 1;
+        if (trace.includes("TACTICAL_GROWTH_CANDIDATE")) return 2;
+        if (trace.includes("WATCH_TRIM_CANDIDATE")) return 3;
+        // Fallback: priority field (lower = better conviction)
+        return (r.priority || 9);
+      };
+      const getComposite = r => {
+        const dd = r.drilldown || {};
+        const holdings = dd.holdings || [];
+        if (holdings.length) return parseFloat(holdings[0].composite_score || 0);
+        return 0;
+      };
+      const getReplay = r => {
+        const dd = r.drilldown || {};
+        const holdings = dd.holdings || [];
+        return holdings.some(h => h.replay_supported === true || h.replay_supported === "True") ? 0 : 1;
+      };
+      const getWeight = r => {
+        const dd = r.drilldown || {};
+        const holdings = dd.holdings || [];
+        return holdings.reduce((s, h) => s + parseFloat(h.percent_of_portfolio || 0), 0);
+      };
+      const ta = getTier(a), tb = getTier(b);
+      if (ta !== tb) return ta - tb;
+      const ca = getComposite(a), cb = getComposite(b);
+      if (Math.abs(ca - cb) > 0.001) return cb - ca;
+      const ra = getReplay(a), rb = getReplay(b);
+      if (ra !== rb) return ra - rb;
+      return getWeight(b) - getWeight(a);
+    });
+
+    const TOP_N = 5;
+    const top5   = unique.slice(0, TOP_N);
+    const restAll = items; // full original list for registry
+
+    // Build Top 5 compact cards
+    const buildTopCard = (r, idx) => {
+      const sym = (r.affected_symbols || [])[0] || "—";
+      const trace = r.reasoning_trace || r.title || "";
+      let tier = "—", tierCls = "tier-none";
+      if (trace.includes("CORE_CONVICTION_LEADER"))     { tier = "CCL"; tierCls = "anchor-tier-ccl"; }
+      else if (trace.includes("HIGH_CONVICTION_ANCHOR"))  { tier = "HCA"; tierCls = "anchor-tier-hca"; }
+      else if (trace.includes("TACTICAL_GROWTH_CANDIDATE")) { tier = "TGC"; tierCls = "anchor-tier-tgc"; }
+
+      const dd = r.drilldown || {};
+      const holdings = dd.holdings || [];
+      const composite = holdings.length ? parseFloat(holdings[0].composite_score || 0) : 0;
+      const compStr = composite > 0 ? composite.toFixed(3) : "—";
+
+      // Pull a short rationale from the first sentence of the narrative
+      const rationale = (r.rationale || "").split(".")[0].trim();
+      const shortRationale = rationale.length > 100 ? rationale.slice(0, 97) + "…" : rationale;
+
+      return `<div class="anchor-top-card" onclick="document.getElementById('lane-body-anchor-full').classList.remove('lane-collapsed');document.querySelector('#lane-body-anchor-full .rec-lane-toggle')&&(document.querySelector('#lane-body-anchor-full .rec-lane-toggle').textContent='Hide ▴')">
+        <div class="anchor-top-header">
+          <span class="anchor-top-sym">${sym}</span>
+          <span class="anchor-tier-badge ${tierCls}">${tier}</span>
+          ${composite > 0 ? `<span class="anchor-top-score">${compStr}</span>` : ""}
+        </div>
+        <div class="anchor-top-rationale">${shortRationale || r.title || ""}</div>
+      </div>`;
+    };
+
+    const top5Html = top5.map((r, i) => buildTopCard(r, i)).join("");
+
+    // Full registry: all original cards (deduplicated by symbol for count display, full for cards)
+    const registryBodyId = "lane-body-anchor-full";
+    const registryCards = restAll.map(r => buildCard(r, ++globalIdx)).join("");
+
+    return `<div class="rec-lane">
+      <div class="rec-lane-header lane-anchor">
+        <span class="lane-label">Conviction Anchors</span>
+        <span class="lane-count">${items.length}</span>
+        <button class="rec-lane-toggle" onclick="_toggleLane('lane-body-anchor-full', this)">Show all ▾</button>
+      </div>
+      <div class="anchor-top-section">
+        <div class="anchor-top-label">Top Conviction Anchors</div>
+        <div class="anchor-top-grid">${top5Html}</div>
+      </div>
+      <div class="rec-lane-body lane-collapsed" id="${registryBodyId}">
+        ${registryCards}
+      </div>
+    </div>`;
+  };
+
   const html = [
     buildLane(laneAction,    "action",    "Actions",              false),
     buildLane(laneBlocked,   "blocked",   "Blocked / Deferred",   false),
     buildLane(laneObs,       "anchor",    "Observations",         false),
-    buildLane(laneAnchor,    "anchor",    "Conviction Anchors",   true),
+    buildConvictionAnchorLane(laneAnchor),
     buildLane(laneNarrative, "narrative", "Portfolio Narrative",  true),
     buildLane(laneExplain,   "explain",   "Explainability",       true),
   ].join("");
