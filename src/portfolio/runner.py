@@ -1131,7 +1131,10 @@ def run_analysis(
         "reconciliation_status": reconciliation.overall_status,
         "reconciliation_checks_passed": reconciliation.checks_passed,
         "reconciliation_checks_failed": reconciliation.checks_failed,
+        "reconciliation_checks_warned": reconciliation.checks_warned,
         "reconciliation_certification": reconciliation.certification,
+        # UX-PA-02: Full check array for explainability panel
+        "reconciliation_checks": [dataclasses.asdict(c) for c in reconciliation.checks],
         "taxonomy_status": next(
             (c.status for c in reconciliation.checks if c.check_id == "RC-12"),
             "N/A",
@@ -1469,8 +1472,47 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
         ac_by_sym=_build_consensus_payload(),
     )
 
-    # For pre-upgrade runs that lack embedded drilldown, compute on demand
+    # ── STALE-PAR-01: Policy replay on load ──────────────────────────────────
+    # Re-apply current operator policy to recommendation dicts on every load.
+    # This ensures that if policies changed after the PAR was generated, the
+    # loaded recs reflect current policy — not the stale on-disk state.
+    #
+    # Governance:
+    #   - Only execution_state, effective_action, card_lifecycle_state are
+    #     mutated (output-layer annotation only).  Scoring, ranking, and
+    #     generation logic are untouched.
+    #   - The on-disk recommendations.json is NOT rewritten — this is a
+    #     live-view transform, not a re-run.
+    #   - Policy staleness is signalled via "policy_replay_applied": True so
+    #     the UI can display a staleness advisory if desired.
     recs_list = result.get("recommendations", [])
+    _load_registry = OperatorPolicyRegistry.load(_OPERATOR_STATE)
+    if recs_list:
+        _apply_policy_to_recs(recs_list, _load_registry)
+        result["policy_replay_applied"] = True
+        result["policy_replay_timestamp"] = datetime.now(timezone.utc).isoformat()
+    else:
+        result["policy_replay_applied"] = False
+
+    # Expose current policy snapshot so the UI can detect policy drift
+    result["current_policy_snapshot"] = _load_registry.policy_snapshot()
+    # Compare against PAR-time snapshot to flag staleness
+    par_policy_snap = (result.get("run_metadata") or {}).get("policy_snapshot", {})
+    result["policy_is_stale"] = (par_policy_snap != result["current_policy_snapshot"])
+
+    # ── Reconciliation checks (for UX-PA-02 explainability) ──────────────────
+    recon_path = run_dir / "reconciliation.json"
+    if recon_path.exists():
+        with open(recon_path) as fh:
+            recon_data = json.load(fh)
+        result["reconciliation_checks"] = recon_data.get("checks", [])
+        result["reconciliation_status"] = recon_data.get("overall_status", "")
+        result["reconciliation_checks_passed"] = recon_data.get("checks_passed", 0)
+        result["reconciliation_checks_failed"] = recon_data.get("checks_failed", 0)
+        result["reconciliation_checks_warned"] = recon_data.get("checks_warned", 0)
+        result["reconciliation_certification"] = recon_data.get("certification", "")
+
+    # For pre-upgrade runs that lack embedded drilldown, compute on demand
     if (
         recs_list
         and holdings_for_drilldown

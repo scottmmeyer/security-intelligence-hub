@@ -1071,8 +1071,10 @@ function renderResults(data) {
   document.getElementById("resultsArea").style.display = "block";
   _lastAnalysisData = data;  // Phase E: make STI profiles available to card helpers
   renderKPIs(data);
+  renderNarrativeSummary(data);      // UX-PA-09
   renderMultiDimScores(data);
   renderMandatePanel(data);
+  renderReconciliationPanel(data);   // UX-PA-02
   renderDeploymentQueue(data);
   renderDislocationWatchlist(data);  // ISSUE-04C
   renderAllocationMap(data.alignment || []);
@@ -1166,16 +1168,200 @@ function _kpiTypedRecommendations(recs) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 6.2.2 — Multi-Dimensional Scorecards
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// UX-PA-09 — "What matters right now" portfolio narrative summary
+// ─────────────────────────────────────────────────────────────────────────────
+function renderNarrativeSummary(data) {
+  const el = document.getElementById("narrativeSummaryContainer");
+  if (!el) return;
+
+  const recs = data.recommendations || [];
+  const alignment = data.alignment || [];
+  const score = parseFloat(data.overall_alignment_score ?? 0);
+
+  // Build top 3 observations
+  const obs = [];
+
+  // Stale PAR advisory
+  if (data.policy_is_stale) {
+    obs.push({ type: "warn", text: "Policy replay applied — viewed PAR pre-dates a policy change. Recommendations updated to reflect current policy." });
+  }
+
+  // Reconciliation issue
+  const reconFailed = (data.reconciliation_checks_failed || 0) > 0;
+  const reconWarned = (data.reconciliation_checks_warned || 0) > 0;
+  if (reconFailed) {
+    const nFail = data.reconciliation_checks_failed;
+    obs.push({ type: "warn", text: `${nFail} reconciliation check${nFail > 1 ? "s" : ""} failed — some holdings may be unclassified and excluded from allocation scoring.` });
+  } else if (reconWarned) {
+    obs.push({ type: "warn", text: `Reconciliation advisory: ${data.reconciliation_checks_warned} check(s) with non-critical warnings.` });
+  }
+
+  // Overall alignment
+  if (score < 0.50) {
+    obs.push({ type: "act", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — portfolio is materially off target. High-priority rebalancing needed.` });
+  } else if (score < 0.70) {
+    obs.push({ type: "obs", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — moderate deviation from target. Review overweight nodes.` });
+  } else {
+    obs.push({ type: "ok", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — portfolio is broadly on target.` });
+  }
+
+  // Blocked actions
+  const blocked = recs.filter(r => r.execution_state === "BLOCKED_BY_POLICY");
+  if (blocked.length > 0) {
+    const syms = [...new Set(blocked.flatMap(r => r.affected_symbols || []))].slice(0, 3).join(", ");
+    obs.push({ type: "obs", text: `${blocked.length} action${blocked.length > 1 ? "s" : ""} blocked by operator policy (${syms}). Review if policy intent remains current.` });
+  }
+
+  // Overweight nodes
+  const overweight = alignment.filter(r => parseFloat(r.drift_pct || 0) > 2 && r.severity && r.severity !== "NONE").slice(0, 2);
+  if (overweight.length > 0) {
+    obs.push({ type: "obs", text: `Largest overweight: ${overweight.map(r => `${r.node_label || r.node_key} (+${parseFloat(r.drift_pct).toFixed(1)}pp)`).join(", ")}.` });
+  }
+
+  const topObs = obs.slice(0, 3);
+
+  // Build top 3 actionable items
+  const acts = [];
+  const actionRecs = recs.filter(r => r.card_type === "ACTION" && r.execution_state === "EXECUTABLE").slice(0, 3);
+  for (const r of actionRecs) {
+    const syms = (r.affected_symbols || []).slice(0, 2).join(", ");
+    acts.push({ type: "act", text: `${r.title || r.recommendation_type}${syms ? ` — ${syms}` : ""}` });
+  }
+  if (acts.length === 0) {
+    acts.push({ type: "ok", text: "No immediately executable actions. Portfolio is stable or all sell-context actions are policy-blocked." });
+  }
+  const topActs = acts.slice(0, 3);
+
+  const dotClass = { obs: "narrative-dot-obs", act: "narrative-dot-act", ok: "narrative-dot-ok", warn: "narrative-dot-act" };
+
+  const staleBadge = data.policy_is_stale
+    ? `<div class="narrative-stale-badge">&#9888; Policy replay applied — stale PAR corrected to current policy</div>`
+    : "";
+
+  el.innerHTML = `
+    <div class="narrative-summary">
+      ${staleBadge}
+      <div class="narrative-summary-title">&#9679; What matters right now</div>
+      <div class="narrative-cols">
+        <div>
+          <div class="narrative-col-title">Observations</div>
+          ${topObs.map(o => `
+            <div class="narrative-item">
+              <div class="narrative-dot ${dotClass[o.type] || 'narrative-dot-obs'}"></div>
+              <span>${escHtml(o.text)}</span>
+            </div>`).join("")}
+        </div>
+        <div>
+          <div class="narrative-col-title">Actionable Items</div>
+          ${topActs.map(a => `
+            <div class="narrative-item">
+              <div class="narrative-dot ${dotClass[a.type] || 'narrative-dot-act'}"></div>
+              <span>${escHtml(a.text)}</span>
+            </div>`).join("")}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UX-PA-02 — Reconciliation FAIL explainability panel
+// ─────────────────────────────────────────────────────────────────────────────
+function renderReconciliationPanel(data) {
+  const el = document.getElementById("reconciliationContainer");
+  if (!el) return;
+
+  const status = data.reconciliation_status || "";
+  const cert   = data.reconciliation_certification || "";
+  const checks = data.reconciliation_checks || [];
+
+  // Only show if there's a FAIL or WARN — hide on PASS to reduce clutter
+  const hasFail = checks.some(c => c.status === "FAIL");
+  const hasWarn = checks.some(c => c.status === "WARN");
+  if (!hasFail && !hasWarn && status === "PASS") { el.innerHTML = ""; return; }
+
+  const panelId = "reconBodyPanel";
+  const toggleId = "reconToggleBtn";
+
+  const nonPassChecks = checks.filter(c => c.status !== "PASS");
+
+  const rows = nonPassChecks.map(c => {
+    const subSummary = (c.sub_checks || []).length > 0
+      ? `<div class="recon-symbols">${(c.sub_checks).slice(0,5).map(s =>
+          `${escHtml(s.symbol || s.node || "")}${s.root_cause ? ` (${escHtml(s.root_cause)})` : ""}`
+        ).join(" · ")}</div>`
+      : "";
+    const affectsRecs = c.affects_recommendations != null
+      ? (c.affects_recommendations
+          ? `<span class="recon-affect-recs-warn">&#9888; May affect recommendations</span>`
+          : `<span class="recon-affect-recs-ok">&#10003; Recommendations unaffected</span>`)
+      : `<span class="recon-affect-recs-ok">&#10003; Recommendations unaffected</span>`;
+
+    return `<tr>
+      <td><span class="recon-status-${c.status}">${c.status}</span></td>
+      <td>
+        <strong>${escHtml(c.name || c.check_id)}</strong>
+        <div class="recon-impact">${escHtml(c.detail ? (Array.isArray(c.detail) ? c.detail[0] : c.detail) : "")}</div>
+        ${subSummary}
+      </td>
+      <td style="text-align:right;white-space:nowrap">${escHtml(c.expected || "")}</td>
+      <td style="text-align:right;white-space:nowrap">${escHtml(c.actual || "")}</td>
+      <td>
+        <div class="recon-guidance">${escHtml(c.operator_guidance || (c.status === "FAIL" ? "Resolve classification gap before acting on affected allocations." : "Advisory only — no action required."))}</div>
+        ${affectsRecs}
+      </td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="recon-panel">
+      <div class="recon-header" onclick="document.getElementById('${panelId}').classList.toggle('recon-body-hidden');document.getElementById('${toggleId}').textContent=document.getElementById('${panelId}').classList.contains('recon-body-hidden')?'▸ Show':'▾ Hide'">
+        <span class="recon-title">Reconciliation &amp; Data Quality</span>
+        <span class="recon-badge recon-badge-${status || 'UNKNOWN'}">${status || '—'}</span>
+        <span class="recon-cert">${escHtml(cert)}</span>
+        <span class="recon-toggle" id="${toggleId}">▾ Hide</span>
+      </div>
+      <div class="recon-body" id="${panelId}">
+        <table class="recon-table">
+          <thead><tr>
+            <th style="width:60px">Status</th>
+            <th>Check / Detail</th>
+            <th style="text-align:right">Expected</th>
+            <th style="text-align:right">Actual</th>
+            <th>Guidance</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function renderMultiDimScores(data) {
   const el = document.getElementById("multiDimContainer");
   const mds = data.multi_dimensional_score;
   if (!el || !mds) { if (el) el.innerHTML = ""; return; }
 
   const dims = [
-    { key: "allocation_alignment_score",   label: "Allocation Alignment",   tooltip: "Distance from target model allocations", anchor: "allocationPanel" },
-    { key: "portfolio_quality_score",      label: "Portfolio Quality",       tooltip: "Concentration, signal quality, strategic classification", anchor: "deploymentQueueContainer" },
-    { key: "implementation_quality_score", label: "Implementation Quality",  tooltip: "Vehicle suitability and operational integrity", anchor: "portfolioActionPipelineSection" },
-    { key: "replay_alignment_score",       label: "Replay Alignment",        tooltip: "Replay-supported exposure coverage and quality", anchor: "replayPanel" },
+    {
+      key: "allocation_alignment_score", label: "Allocation Alignment",
+      tooltip: "Distance from target model allocations", anchor: "allocationPanel",
+      defn: "How close the portfolio is to its target asset class weights. 100 = perfectly on target; lower = larger gaps from mandate.",
+    },
+    {
+      key: "portfolio_quality_score", label: "Portfolio Quality",
+      tooltip: "Concentration, signal quality, strategic classification", anchor: "deploymentQueueContainer",
+      defn: "Signal strength, concentration risk, and strategic profile of holdings. Low score = weak signals or concentrated exposure.",
+    },
+    {
+      key: "implementation_quality_score", label: "Implementation Quality",
+      tooltip: "Vehicle suitability and operational integrity", anchor: "portfolioActionPipelineSection",
+      defn: "How well each position is implemented — direct stock vs ETF, liquidity, and operational hygiene.",
+    },
+    {
+      key: "replay_alignment_score", label: "Replay Alignment",
+      tooltip: "Replay-supported exposure coverage and quality", anchor: "replayPanel",
+      defn: "How much of the portfolio has replay evidence backing it. Low = limited historical outcome data for current holdings.",
+    },
   ];
 
   const cards = dims.map(d => {
@@ -1183,7 +1369,6 @@ function renderMultiDimScores(data) {
     const pct  = Math.min(100, Math.max(0, raw));
     const color = pct >= 75 ? "var(--green)" : pct >= 50 ? "var(--accent-2)" : "var(--sev-high)";
     const label = pct >= 75 ? "Strong" : pct >= 50 ? "Moderate" : "Needs attention";
-    const navEl = d.anchor ? document.getElementById(d.anchor) : null;
     const navHtml = d.anchor
       ? `<div class="multidim-nav" onclick="(function(){const el=document.getElementById('${d.anchor}');if(el){el.scrollIntoView({behavior:'smooth',block:'start'});}})()" title="Jump to section">&#8595; View</div>`
       : "";
@@ -1194,6 +1379,7 @@ function renderMultiDimScores(data) {
       <div class="multidim-track">
         <div class="multidim-fill" style="width:${pct.toFixed(0)}%;background:${color}"></div>
       </div>
+      <div class="multidim-defn">${escHtml(d.defn)}</div>
       ${navHtml}
     </div>`;
   }).join("");
@@ -1267,6 +1453,41 @@ function renderAllocationMap(rows) {
     return (a.recommendation_priority || 9) - (b.recommendation_priority || 9);
   });
 
+  // ── UX-PA-05: Top allocation drivers summary ──────────────────────────────
+  const l1Rows = sorted.filter(r => depthOf(r.node_key) === 1 && r.node_key !== "CASH");
+  const withDrift = l1Rows.map(r => ({
+    label: r.node_label || r.node_key,
+    drift: parseFloat(r.drift_pct) || 0,
+    actual: parseFloat(r.effective_actual_pct ?? r.actual_pct ?? 0) || 0,
+    target: parseFloat(r.target_pct || 0),
+  })).filter(r => r.actual > 0 || Math.abs(r.drift) > 0);
+
+  const overweights = [...withDrift].sort((a, b) => b.drift - a.drift).filter(r => r.drift > 0.5).slice(0, 3);
+  const underweights = [...withDrift].sort((a, b) => a.drift - b.drift).filter(r => r.drift < -0.5).slice(0, 3);
+  const gaps = [...withDrift].sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift)).slice(0, 3);
+
+  const driverItem = (label, drift, cls) =>
+    `<div class="alloc-driver-item">
+      <span class="alloc-driver-sym">${escHtml(label)}</span>
+      <span class="alloc-driver-pct ${cls}">${drift > 0 ? "+" : ""}${drift.toFixed(1)}pp</span>
+    </div>`;
+
+  const driversHtml = `
+    <div class="alloc-driver-strip">
+      <div class="alloc-driver-card">
+        <div class="alloc-driver-title">Largest Overweights</div>
+        ${overweights.length ? overweights.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-pos")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">None above threshold</div>'}
+      </div>
+      <div class="alloc-driver-card">
+        <div class="alloc-driver-title">Largest Underweights</div>
+        ${underweights.length ? underweights.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-neg")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">None below threshold</div>'}
+      </div>
+      <div class="alloc-driver-card">
+        <div class="alloc-driver-title">Largest Alignment Gaps</div>
+        ${gaps.length ? gaps.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-gap")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">No gaps</div>'}
+      </div>
+    </div>`;
+
   const tbody = sorted.map(r => {
     const depth = depthOf(r.node_key);
     const driftN = parseFloat(r.drift_pct) || 0;
@@ -1300,7 +1521,7 @@ function renderAllocationMap(rows) {
     </tr>`;
   }).join("");
 
-  el.innerHTML = `
+  el.innerHTML = driversHtml + `
     <table class="alloc-table">
       <thead><tr>
         <th>Node</th>
