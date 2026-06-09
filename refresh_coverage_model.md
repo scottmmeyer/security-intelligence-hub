@@ -55,4 +55,4 @@ Primary field 0% check: a separate gate catches systematic field failures (e.g.,
 |---|---|---|---|---|---|
 | Zacks | 702 | 671 | 95.6% | zacks_rank/score: 95.6% | FRESH |
 | Danelfin | 497 | 497 | 100% | all: 100% | FRESH |
-| Yahoo | 697 | 696 | 99.9% | price_target: 98.1%, analyst_count: 98.1% | FRESH_PARTIAL (eps_growth_5yr: 0%) |
+| Yahoo | 697 | 696 | 99.9% | price_target: 98.1%, analyst_count: 98.1%, current_price: 99.9% | FRESH (advisory: zero_coverage_fields=[eps_growth_5yr]) |

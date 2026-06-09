@@ -56,7 +56,7 @@ Date: 2026-06-09
     },
     "degraded_fields": [],
     "zero_coverage_fields": ["eps_growth_5yr"],
-    "badge_state": "FRESH_PARTIAL"
+    "badge_state": "FRESH"
   },
   "_running": false
 }
@@ -69,8 +69,5 @@ None. `sourced_date`, `stale`, `exists` are preserved. New fields are additive.
 ## Notes
 
 - `degraded_fields` is empty for Yahoo despite `eps_growth_5yr` being 0%, because `eps_growth_5yr` is not a primary field. It appears in `zero_coverage_fields` as an advisory.
-- `badge_state = FRESH_PARTIAL` for Yahoo is triggered because `eps_growth_5yr` is in `zero_coverage_fields` (non-primary 0% fields alone do not trigger FRESH_PARTIAL in the current logic; FRESH_PARTIAL is triggered by primary field degradation or <95% row coverage).
-
-**Update to logic for Yahoo case:** The `zero_coverage_fields` advisory shows the `eps_growth_5yr` gap. For the Yahoo FRESH_PARTIAL case specifically: the implementation will show FRESH_PARTIAL if any zero_coverage_fields exist (expanded from primary-only) — see implementation note in `_signal_status()`.
-
-> Implementation note: The current implementation triggers FRESH_PARTIAL only for primary field 0% or <95% row coverage. `eps_growth_5yr` (a non-primary field) at 0% surfaces in `zero_coverage_fields` and shows the advisory badge in the UI. Whether to promote non-primary zero-coverage fields to FRESH_PARTIAL is a governance decision left to the operator. For now: visible advisory but badge remains FRESH.
+- Yahoo `badge_state = FRESH`. `eps_growth_5yr` is a supplemental (non-primary) field; 0% coverage does not trigger FRESH_PARTIAL. It surfaces as a yellow advisory tag ("0% today: eps_growth_5yr") in the UI pill detail row.
+- FRESH_PARTIAL is only triggered by: primary field at 0% coverage, OR row coverage < 95%.
