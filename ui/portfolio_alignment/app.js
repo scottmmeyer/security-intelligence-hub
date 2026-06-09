@@ -1036,7 +1036,7 @@ function renderKPIs(data) {
     ${kpiCard((data.holding_count || 0).toString(), "Holdings")}
     ${kpiCard(formatMV(data.total_market_value), "Portfolio Value")}
     ${kpiCard((score * 100).toFixed(0) + "%", "Legacy Alignment", scoreLabel)}
-    ${kpiCard((data.recommendation_count || 0).toString(), "Recommendations")}
+    ${_kpiTypedRecommendations(data.recommendations || [])}
     ${kpiCard(concTier, "Concentration", "", `tier-${concTier}`)}
     ${kpiCard(data.source_format || "—", "Format")}
   `;
@@ -1046,6 +1046,55 @@ function kpiCard(value, label, sub = "", extraClass = "") {
   return `<div class="kpi-card ${extraClass}">
     <div class="kpi-value">${value}</div>
     <div class="kpi-label">${label}${sub ? `<br><span style="font-size:0.7rem;color:var(--muted)">${sub}</span>` : ""}</div>
+  </div>`;
+}
+
+// ─── PRA-IMPL-03: Lane count computation ─────────────────────────────────────
+
+const _CONVICTION_ANCHOR_TYPES = new Set([
+  "STRATEGIC_RETAIN_SIGNAL",
+  "STRATEGIC_RETAIN_NARRATIVE",
+  "CONVICTION_EXPLAINABILITY_CARD",
+]);
+const _NARRATIVE_TYPES = new Set([
+  "PORTFOLIO_CONSTRUCTION_NARRATIVE",
+  "THEMATIC_SATURATION_NARRATIVE",
+]);
+const _EXPLAINABILITY_TYPES = new Set([
+  "REPLAY_ALIGNMENT_CONTEXT",
+]);
+
+function computeLaneCounts(recs) {
+  let action = 0, blocked = 0, anchor = 0, narrative = 0, explainability = 0, observation = 0;
+  for (const r of recs) {
+    const ct  = r.card_type        || "DIAGNOSTIC";
+    const es  = r.execution_state  || "EXECUTABLE";
+    const rt  = r.recommendation_type || "";
+    if (_CONVICTION_ANCHOR_TYPES.has(rt))  { anchor++; }
+    else if (_NARRATIVE_TYPES.has(rt))     { narrative++; }
+    else if (_EXPLAINABILITY_TYPES.has(rt)){ explainability++; }
+    else if (ct === "ACTION") {
+      if (es === "BLOCKED_BY_POLICY" || es === "DEFERRED_BY_POLICY") { blocked++; }
+      else { action++; }
+    } else { observation++; }
+  }
+  return { action, blocked, anchor, narrative, explainability, observation, total: recs.length };
+}
+
+function _kpiTypedRecommendations(recs) {
+  const c = computeLaneCounts(recs);
+  const chip = (num, label, cls) =>
+    `<div class="rec-kpi-chip"><span class="chip-num ${cls}">${num}</span><span class="chip-label">${label}</span></div>`;
+  return `<div class="kpi-card" style="min-width:220px;">
+    <div class="kpi-label" style="margin-bottom:6px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Recommendations</div>
+    <div class="rec-kpi-typed">
+      ${chip(c.action,      "Actions",     "chip-action")}
+      ${c.blocked  ? chip(c.blocked,   "Blocked",     "chip-blocked")  : ""}
+      ${chip(c.anchor,      "Anchors",     "chip-anchor")}
+      ${c.narrative    ? chip(c.narrative,   "Narratives",  "chip-narrative") : ""}
+      ${c.explainability ? chip(c.explainability, "Explain", "chip-explain") : ""}
+    </div>
+    <div style="font-size:0.65rem;color:var(--muted)">Total cards: ${c.total}</div>
   </div>`;
 }
 
@@ -1310,6 +1359,14 @@ function toggleTrace(traceId) {
   if (!body) return;
   const open = body.classList.toggle("open");
   if (btn) btn.textContent = open ? "▾ Why this state?" : "▸ Why this state?";
+}
+
+// PRA-IMPL-03 — Lane collapse/expand toggle
+function _toggleLane(bodyId, btn) {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const collapsed = body.classList.toggle("lane-collapsed");
+  btn.textContent = collapsed ? "Show ▾" : "Hide ▴";
 }
 
 function togglePmiMandate(pmiId) {
@@ -2132,7 +2189,29 @@ function renderRecommendations(recs) {
   // Cache all recs by ID for later use in drilldown functions
   recs.forEach(r => { if (r.recommendation_id) _recDataCache[r.recommendation_id] = r; });
 
-  const cards = recs.map((r, i) => {
+  // ── PRA-IMPL-03: Partition recs into lanes ──────────────────────────────
+  const laneAction   = [];
+  const laneBlocked  = [];
+  const laneAnchor   = [];
+  const laneNarrative = [];
+  const laneExplain  = [];
+  const laneObs      = [];
+
+  recs.forEach(r => {
+    const ct = r.card_type       || "DIAGNOSTIC";
+    const es = r.execution_state || "EXECUTABLE";
+    const rt = r.recommendation_type || "";
+    if (_CONVICTION_ANCHOR_TYPES.has(rt))   { laneAnchor.push(r); }
+    else if (_NARRATIVE_TYPES.has(rt))      { laneNarrative.push(r); }
+    else if (_EXPLAINABILITY_TYPES.has(rt)) { laneExplain.push(r); }
+    else if (ct === "ACTION") {
+      if (es === "BLOCKED_BY_POLICY" || es === "DEFERRED_BY_POLICY") { laneBlocked.push(r); }
+      else { laneAction.push(r); }
+    } else { laneObs.push(r); }
+  });
+
+  // ── Card builder (same logic as before, reused for all lanes) ──────────
+  const buildCard = (r, i) => {
     const symbols = (r.affected_symbols || []).map(s =>
       `<span class="rec-symbol">${s}</span>`
     ).join("");
@@ -2140,6 +2219,15 @@ function renderRecommendations(recs) {
     const driftStr = r.drift_pct != null
       ? `<span style="font-size:0.78rem;color:var(--muted)">Drift: ${parseFloat(r.drift_pct) > 0 ? "+" : ""}${parseFloat(r.drift_pct).toFixed(1)}pp</span>`
       : "";
+
+    // Policy execution state badge (PRA-IMPL-02)
+    const execState = r.execution_state || "";
+    let policyBadgeHtml = "";
+    if (execState === "BLOCKED_BY_POLICY") {
+      policyBadgeHtml = `<span class="rec-policy-badge policy-blocked">🔒 Operator Protected — not executable</span>`;
+    } else if (execState === "DEFERRED_BY_POLICY") {
+      policyBadgeHtml = `<span class="rec-policy-badge policy-deferred">⏸ Sell Last — deferred</span>`;
+    }
 
     // Phase C — rec_state badge
     const state = r.rec_state || "ACTIVE";
@@ -2194,7 +2282,6 @@ function renderRecommendations(recs) {
     const optimizerViewHtml   = _buildOptimizerViewBlock(r);
 
     // Phase 23.5 — Block Diagnostics + Next Best Action panel
-    // Replaces the old simple banner for MANDATE_BLOCKED / NO_CANDIDATES cases.
     const blockDiagnosticsHtml = _renderBlockDiagnosticsPanel(r);
 
     // Drill-down toggle button — only shown when drilldown data exists
@@ -2208,8 +2295,6 @@ function renderRecommendations(recs) {
     const recType = r.recommendation_type || "";
     const isPhaseE = _PHASE_E_TYPES.has(recType);
 
-    // Phase 22D.2 WS-C: Legacy simple banner kept only for NON-INCREASE_UNDERWEIGHT blocked recs.
-    // For INCREASE_UNDERWEIGHT, the full Block Diagnostics panel (blockDiagnosticsHtml) is used.
     let blockedWarningHtml = "";
     if (recType !== "INCREASE_UNDERWEIGHT" && r.optimizer_metadata) {
       const decision = r.optimizer_metadata.optimizer_decision || "";
@@ -2230,6 +2315,7 @@ function renderRecommendations(recs) {
     return `<div class="rec-card pri-${r.priority} state-${state} type-${recType} urgency-${r.mandate_urgency || ""}">
       ${isPhaseE ? _phaseETypeHeader(recType) : ""}
       <div class="rec-title">#${i+1} &nbsp; ${escHtml(r.title)}</div>
+      ${policyBadgeHtml}
       <div class="rec-rationale">${escHtml(r.rationale)}</div>
       ${blockedWarningHtml}
       ${blockDiagnosticsHtml}
@@ -2262,9 +2348,38 @@ function renderRecommendations(recs) {
       ${drillBtn}
       <div class="rec-drilldown" id="drilldown-panel-${r.recommendation_id}"></div>
     </div>`;
-  }).join("");
+  };
 
-  el.innerHTML = sepHtml + `<div class="rec-list">${cards}</div>`;
+  // ── Lane section builder ────────────────────────────────────────────────
+  let globalIdx = 0;
+  const buildLane = (items, laneClass, label, collapsedByDefault = false) => {
+    if (!items.length) return "";
+    const bodyId = `lane-body-${laneClass}`;
+    const bodyClass = collapsedByDefault ? "rec-lane-body lane-collapsed" : "rec-lane-body";
+    const toggleLabel = collapsedByDefault ? "Show ▾" : "Hide ▴";
+    const cards = items.map(r => buildCard(r, ++globalIdx)).join("");
+    return `<div class="rec-lane">
+      <div class="rec-lane-header lane-${laneClass}">
+        <span class="lane-label">${label}</span>
+        <span class="lane-count">${items.length}</span>
+        <button class="rec-lane-toggle" onclick="_toggleLane('${bodyId}', this)">${toggleLabel}</button>
+      </div>
+      <div class="${bodyClass}" id="${bodyId}">
+        ${cards}
+      </div>
+    </div>`;
+  };
+
+  const html = [
+    buildLane(laneAction,    "action",    "Actions",              false),
+    buildLane(laneBlocked,   "blocked",   "Blocked / Deferred",   false),
+    buildLane(laneObs,       "anchor",    "Observations",         false),
+    buildLane(laneAnchor,    "anchor",    "Conviction Anchors",   true),
+    buildLane(laneNarrative, "narrative", "Portfolio Narrative",  true),
+    buildLane(laneExplain,   "explain",   "Explainability",       true),
+  ].join("");
+
+  el.innerHTML = sepHtml + html;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

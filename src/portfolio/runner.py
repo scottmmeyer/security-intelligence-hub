@@ -66,6 +66,53 @@ _ZACKS_LATEST       = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.
 _DANELFIN_LATEST    = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
 _OPERATOR_STATE     = str(_REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json")
 
+# PRA-IMPL-03 — recommendation_type sets for typed lane counting
+_CONVICTION_ANCHOR_TYPES: frozenset[str] = frozenset({
+    "STRATEGIC_RETAIN_SIGNAL",
+    "STRATEGIC_RETAIN_NARRATIVE",
+    "CONVICTION_EXPLAINABILITY_CARD",
+})
+_NARRATIVE_TYPES: frozenset[str] = frozenset({
+    "PORTFOLIO_CONSTRUCTION_NARRATIVE",
+    "THEMATIC_SATURATION_NARRATIVE",
+})
+_EXPLAINABILITY_TYPES: frozenset[str] = frozenset({
+    "REPLAY_ALIGNMENT_CONTEXT",
+})
+
+
+def _compute_typed_rec_counts(recs: list[dict]) -> dict[str, int]:
+    """Return additive typed lane counts for run_metadata (PRA-IMPL-03).
+
+    Keys are additive and backwards-compatible with existing recommendation_count.
+    """
+    action = blocked = anchor = narrative = explainability = observation = 0
+    for rd in recs:
+        ct = rd.get("card_type", "DIAGNOSTIC")
+        es = rd.get("execution_state", "EXECUTABLE")
+        rt = rd.get("recommendation_type", "")
+        if rt in _CONVICTION_ANCHOR_TYPES:
+            anchor += 1
+        elif rt in _NARRATIVE_TYPES:
+            narrative += 1
+        elif rt in _EXPLAINABILITY_TYPES:
+            explainability += 1
+        elif ct == "ACTION":
+            if es in ("BLOCKED_BY_POLICY", "DEFERRED_BY_POLICY"):
+                blocked += 1
+            else:
+                action += 1
+        else:
+            observation += 1
+    return {
+        "action_count": action,
+        "blocked_action_count": blocked,
+        "conviction_anchor_count": anchor,
+        "narrative_count": narrative,
+        "explainability_count": explainability,
+        "observation_count": observation,
+    }
+
 
 def _run_id(snapshot_date: str) -> str:
     digest = uuid.uuid4().hex[:8].upper()
@@ -1047,6 +1094,8 @@ def run_analysis(
         "concentration_tier": concentration.concentration_tier,
         "overall_alignment_score": overall_score,
         "recommendation_count": len(recs),
+        # PRA-IMPL-03 — Additive typed lane counts (client can also compute locally)
+        **_compute_typed_rec_counts(recs_with_drilldown),
         # Full detail arrays — included so the UI renders immediately
         "alignment": [dataclasses.asdict(r) for r in alignment],
         "concentration": dataclasses.asdict(concentration),

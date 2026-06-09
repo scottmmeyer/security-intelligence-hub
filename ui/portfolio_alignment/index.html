@@ -670,6 +670,15 @@
       .opt-badge-NO_CANDIDATES       { background: #f0f0f0; color: #777;    border-color: #ddd; }
       .opt-badge-ETF_GATED           { background: #fdecea; color: #c0392b; border-color: #f5c6c0; }
 
+      /* PRA-IMPL-02/03: Policy execution state badges on recommendation cards */
+      .rec-policy-badge {
+        display: inline-flex; align-items: center;
+        padding: 3px 9px; border-radius: 12px; font-size: 0.72rem; font-weight: 700;
+        margin: 4px 0 6px; letter-spacing: 0.03em;
+      }
+      .policy-blocked  { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .policy-deferred { background: #fff3e0; color: #e07300; border: 1px solid #ffe0b2; }
+
       /* Phase 22D.2 WS-C: blocked implementation warning banner */
       .rec-blocked-banner {
         display: flex; align-items: flex-start; gap: 8px;
@@ -1220,6 +1229,68 @@
         letter-spacing: 0.12em; color: var(--muted);
         border-bottom: 1px solid var(--border); margin-bottom: 12px;
       }
+
+      /* ── PRA-IMPL-03: Lane headers ───────────────────────────────────── */
+      .rec-lane { margin-bottom: 22px; }
+      .rec-lane-header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 6px 0 8px;
+        font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.12em;
+        border-bottom: 2px solid var(--border); margin-bottom: 10px;
+      }
+      .rec-lane-header .lane-label { color: var(--fg); }
+      .rec-lane-header .lane-count {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 22px; height: 18px; padding: 0 6px;
+        background: var(--border); color: var(--fg);
+        border-radius: 10px; font-size: 0.68rem; font-weight: 800;
+      }
+      .rec-lane-header.lane-action    { border-bottom-color: var(--sev-high); }
+      .rec-lane-header.lane-action    .lane-label { color: var(--sev-high); }
+      .rec-lane-header.lane-action    .lane-count { background: var(--sev-high); color: #fff; }
+      .rec-lane-header.lane-blocked   { border-bottom-color: #e09030; }
+      .rec-lane-header.lane-blocked   .lane-label { color: #e09030; }
+      .rec-lane-header.lane-blocked   .lane-count { background: #e09030; color: #fff; }
+      .rec-lane-header.lane-anchor    { border-bottom-color: #1a7c4f; }
+      .rec-lane-header.lane-anchor    .lane-label { color: #1a7c4f; }
+      .rec-lane-header.lane-anchor    .lane-count { background: #1a7c4f; color: #fff; }
+      .rec-lane-header.lane-narrative { border-bottom-color: #1a5c8a; }
+      .rec-lane-header.lane-narrative .lane-label { color: #1a5c8a; }
+      .rec-lane-header.lane-narrative .lane-count { background: #1a5c8a; color: #fff; }
+      .rec-lane-header.lane-explain   { border-bottom-color: #666; }
+      .rec-lane-header.lane-explain   .lane-label { color: #666; }
+      .rec-lane-toggle {
+        margin-left: auto; font-size: 0.7rem; font-weight: 700; cursor: pointer;
+        color: var(--muted); background: none; border: none; padding: 0;
+        letter-spacing: 0.04em; text-transform: none;
+      }
+      .rec-lane-toggle:hover { color: var(--fg); }
+      .rec-lane-body { display: flex; flex-direction: column; gap: 10px; }
+      .rec-lane-body.lane-collapsed { display: none; }
+
+      /* Typed KPI count strip for recommendations */
+      .rec-kpi-typed {
+        display: flex; flex-wrap: wrap; gap: 16px;
+        padding: 6px 0 10px;
+        border-bottom: 1px solid var(--border); margin-bottom: 14px;
+      }
+      .rec-kpi-chip {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 0.72rem; font-weight: 700;
+      }
+      .rec-kpi-chip .chip-num {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 24px; height: 20px; padding: 0 7px;
+        border-radius: 10px; font-size: 0.7rem; font-weight: 800; color: #fff;
+      }
+      .rec-kpi-chip .chip-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+      .chip-action   { background: var(--sev-high); }
+      .chip-blocked  { background: #e09030; }
+      .chip-anchor   { background: #1a7c4f; }
+      .chip-narrative{ background: #1a5c8a; }
+      .chip-explain  { background: #666; }
+      .chip-total    { background: var(--muted); }
       /* ── Phase 7.3C: Optimizer Preferred Comparison Panel ───────────── */
       .optpref-panel {
         margin: 10px 0 6px;
