@@ -1100,7 +1100,7 @@ function renderKPIs(data) {
   el.innerHTML = `
     ${kpiCard((data.holding_count || 0).toString(), "Holdings")}
     ${kpiCard(formatMV(data.total_market_value), "Portfolio Value")}
-    ${kpiCard((score * 100).toFixed(0) + "%", "Legacy Alignment", scoreLabel)}
+    ${kpiCard((score * 100).toFixed(0) + "%", "Allocation Alignment", scoreLabel)}
     ${_kpiTypedRecommendations(data.recommendations || [])}
     ${kpiCard(concTier, "Concentration", "", `tier-${concTier}`)}
     ${kpiCard(data.source_format || "—", "Format")}
@@ -1172,10 +1172,10 @@ function renderMultiDimScores(data) {
   if (!el || !mds) { if (el) el.innerHTML = ""; return; }
 
   const dims = [
-    { key: "allocation_alignment_score",   label: "Allocation Alignment",   tooltip: "Distance from target model allocations" },
-    { key: "portfolio_quality_score",      label: "Portfolio Quality",       tooltip: "Concentration, signal quality, strategic classification" },
-    { key: "implementation_quality_score", label: "Implementation Quality",  tooltip: "Vehicle suitability and operational integrity" },
-    { key: "replay_alignment_score",       label: "Replay Alignment",        tooltip: "Replay-supported exposure coverage and quality" },
+    { key: "allocation_alignment_score",   label: "Allocation Alignment",   tooltip: "Distance from target model allocations", anchor: "allocationPanel" },
+    { key: "portfolio_quality_score",      label: "Portfolio Quality",       tooltip: "Concentration, signal quality, strategic classification", anchor: "deploymentQueueContainer" },
+    { key: "implementation_quality_score", label: "Implementation Quality",  tooltip: "Vehicle suitability and operational integrity", anchor: "portfolioActionPipelineSection" },
+    { key: "replay_alignment_score",       label: "Replay Alignment",        tooltip: "Replay-supported exposure coverage and quality", anchor: "replayPanel" },
   ];
 
   const cards = dims.map(d => {
@@ -1183,6 +1183,10 @@ function renderMultiDimScores(data) {
     const pct  = Math.min(100, Math.max(0, raw));
     const color = pct >= 75 ? "var(--green)" : pct >= 50 ? "var(--accent-2)" : "var(--sev-high)";
     const label = pct >= 75 ? "Strong" : pct >= 50 ? "Moderate" : "Needs attention";
+    const navEl = d.anchor ? document.getElementById(d.anchor) : null;
+    const navHtml = d.anchor
+      ? `<div class="multidim-nav" onclick="(function(){const el=document.getElementById('${d.anchor}');if(el){el.scrollIntoView({behavior:'smooth',block:'start'});}})()" title="Jump to section">&#8595; View</div>`
+      : "";
     return `<div class="multidim-card" title="${escHtml(d.tooltip)}">
       <div class="multidim-score" style="color:${color}">${pct.toFixed(0)}</div>
       <div class="multidim-label">${d.label}</div>
@@ -1190,6 +1194,7 @@ function renderMultiDimScores(data) {
       <div class="multidim-track">
         <div class="multidim-fill" style="width:${pct.toFixed(0)}%;background:${color}"></div>
       </div>
+      ${navHtml}
     </div>`;
   }).join("");
 
@@ -2289,9 +2294,18 @@ function renderRecommendations(recs) {
     const execState = r.execution_state || "";
     let policyBadgeHtml = "";
     if (execState === "BLOCKED_BY_POLICY") {
-      policyBadgeHtml = `<span class="rec-policy-badge policy-blocked">🔒 Operator Protected — not executable</span>`;
+      // UX-PA-06: Show which symbol is blocked and how to unblock it
+      const blockedSym = (r.affected_symbols || [])[0] || "";
+      const unblockHint = blockedSym
+        ? `<span class="rec-unblock-hint">To unblock: remove DO_NOT_SELL policy on ${escHtml(blockedSym)}.</span>`
+        : "";
+      policyBadgeHtml = `<span class="rec-policy-badge policy-blocked">🔒 Operator Protected — not executable</span>${unblockHint}`;
     } else if (execState === "DEFERRED_BY_POLICY") {
-      policyBadgeHtml = `<span class="rec-policy-badge policy-deferred">⏸ Sell Last — deferred</span>`;
+      const deferredSym = (r.affected_symbols || []).find(s => s) || "";
+      const deferHint = deferredSym
+        ? `<span class="rec-unblock-hint">To prioritize: remove SELL_LAST policy on ${escHtml(deferredSym)}.</span>`
+        : "";
+      policyBadgeHtml = `<span class="rec-policy-badge policy-deferred">⏸ Sell Last — deferred</span>${deferHint}`;
     }
 
     // Phase C — rec_state badge
@@ -3497,6 +3511,7 @@ function renderDeploymentQueue(data) {
     <div class="dq-summary-card dq-cash">
       <div class="dq-summary-val dq-gold">${formatMV(_adjDeployableMv)}</div>
       <div class="dq-summary-lbl">${_hasSettlement ? "Adj. Deployable Cash" : "Deployable Cash"}</div>
+      <div class="dq-summary-sublbl" title="Excess above ${_cashTargetPct}% mandate floor. Full cash: ${formatMV(cashCtx.cash_mv || 0)}. Floor reserve: ${formatMV(cashCtx.floor_mv || 0)}.">Excess above ${_cashTargetPct}% mandate floor ⓘ</div>
     </div>
     <div class="dq-summary-card">
       <div class="dq-summary-val">${dq.candidate_count || queue.length}</div>

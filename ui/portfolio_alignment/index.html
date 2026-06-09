@@ -549,6 +549,8 @@
       .multidim-sublabel { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
       .multidim-track { height: 5px; background: #e8e0d4; border-radius: 3px; margin-top: 8px; overflow: hidden; }
       .multidim-fill  { height: 100%; border-radius: 3px; }
+      .multidim-nav   { margin-top: 6px; font-size: 0.7rem; color: var(--accent-2); cursor: pointer; text-decoration: underline; text-align: center; }
+      .multidim-nav:hover { color: var(--primary); }
 
       /* ── Phase 6.2.2: Mandate Assessment Panel ──────────────────── */
       .mandate-panel { margin-top: 14px; }
@@ -678,6 +680,7 @@
       }
       .policy-blocked  { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
       .policy-deferred { background: #fff3e0; color: #e07300; border: 1px solid #ffe0b2; }
+      .rec-unblock-hint { display: block; font-size: 0.72rem; color: var(--muted); margin: 2px 0 4px 2px; font-style: italic; }
 
       /* Phase 22D.2 WS-C: blocked implementation warning banner */
       .rec-blocked-banner {
@@ -912,6 +915,9 @@
       .dq-summary-lbl {
         font-size: 0.7rem; color: var(--muted); margin-top: 5px;
         text-transform: uppercase; letter-spacing: 0.05em;
+      }
+      .dq-summary-sublbl {
+        font-size: 0.65rem; color: var(--muted); margin-top: 2px; font-style: italic; cursor: default;
       }
       /* Cash context strip (Phase 22D.6 / 22D.10) */
       .dq-cash-context-strip {
@@ -2724,15 +2730,7 @@
           </div>
         </div>
 
-        <!-- Row 3: Security Intelligence -->
-        <div class="section-gap">
-          <div class="panel">
-            <p class="panel-title">Security-Level Intelligence Overlay</p>
-            <div id="securityContent"></div>
-          </div>
-        </div>
-
-        <!-- Row 4b: Capital Rotation Advisor (Phase 23.6B) -->
+        <!-- Row 3b: Capital Rotation Advisor (Phase 23.6B) — before Security Intelligence -->
         <div class="cra-section section-gap" id="craSection" style="display:none;">
           <div class="cra-panel">
             <div class="cra-panel-header">
@@ -2760,7 +2758,7 @@
           </div>
         </div>
 
-        <!-- Row 4: Portfolio Action Pipeline (Phase 23.0C) -->
+        <!-- Row 3c: Portfolio Action Pipeline (Phase 23.0C) — before Security Intelligence -->
         <div class="pap-section section-gap" id="portfolioActionPipelineSection" style="display:none;">
           <div class="pap-panel">
             <div class="pap-panel-header">
@@ -2772,6 +2770,14 @@
               </span>
             </div>
             <div id="portfolioActionPipelineContent"></div>
+          </div>
+        </div>
+
+        <!-- Row 4: Security Intelligence -->
+        <div class="section-gap">
+          <div class="panel">
+            <p class="panel-title">Security-Level Intelligence Overlay</p>
+            <div id="securityContent"></div>
           </div>
         </div>
 
