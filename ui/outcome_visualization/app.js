@@ -1454,14 +1454,68 @@ function _renderSignalPills(data) {
     const info    = data[key];
     const label   = labels[key];
     const dateStr = info.sourced_date || "—";
-    const dotCls  = !info.sourced_date ? "dot-unknown" : info.stale ? "dot-stale" : "dot-fresh";
-    const stsCls  = !info.sourced_date ? "pill-status-unknown" : info.stale ? "pill-status-stale" : "pill-status-fresh";
-    const stsLbl  = !info.sourced_date ? "no data" : info.stale ? "stale" : "fresh";
-    return `<div class="signal-pill">
+
+    // SI-REFRESH-02: Use badge_state when available, fall back to stale boolean
+    const badgeState = info.badge_state ||
+      (!info.sourced_date ? "UNKNOWN" : info.stale ? "STALE" : "FRESH");
+
+    const dotCls = {
+      FRESH:         "dot-fresh",
+      FRESH_PARTIAL: "dot-partial",
+      STALE:         "dot-stale",
+      REFRESHING:    "dot-refreshing",
+      ERROR:         "dot-stale",
+      UNKNOWN:       "dot-unknown",
+    }[badgeState] || "dot-unknown";
+
+    const stsCls = {
+      FRESH:         "pill-status-fresh",
+      FRESH_PARTIAL: "pill-status-partial",
+      STALE:         "pill-status-stale",
+      REFRESHING:    "pill-status-refreshing",
+      ERROR:         "pill-status-stale",
+      UNKNOWN:       "pill-status-unknown",
+    }[badgeState] || "pill-status-unknown";
+
+    const stsLbl = {
+      FRESH:         "fresh",
+      FRESH_PARTIAL: "fresh — partial",
+      STALE:         "stale",
+      REFRESHING:    "refreshing",
+      ERROR:         "error",
+      UNKNOWN:       "no data",
+    }[badgeState] || "unknown";
+
+    // Coverage detail line (SI-REFRESH-02)
+    let coverageHtml = "";
+    if (info.attempted_count != null) {
+      const covPct = info.coverage_pct != null ? info.coverage_pct.toFixed(1) : "—";
+      coverageHtml = `<span class="pill-coverage">${info.with_data_count}/${info.attempted_count} rows · ${covPct}%</span>`;
+    }
+
+    // Degraded fields warning
+    let degradedHtml = "";
+    if (info.degraded_fields && info.degraded_fields.length > 0) {
+      const fields = info.degraded_fields.join(", ");
+      degradedHtml = `<span class="pill-degraded">⚠ 0% coverage: ${fields}</span>`;
+    } else if (info.zero_coverage_fields && info.zero_coverage_fields.length > 0) {
+      // Non-primary zero-coverage fields shown as advisory
+      const fields = info.zero_coverage_fields.join(", ");
+      degradedHtml = `<span class="pill-degraded-advisory">0% today: ${fields}</span>`;
+    }
+
+    const extraLines = [coverageHtml, degradedHtml].filter(Boolean).join(" ");
+
+    return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
-      <span class="pill-label">${label}</span>
-      <span class="pill-date">${dateStr}</span>
-      <span class="${stsCls}">(${stsLbl})</span>
+      <div class="pill-body">
+        <div class="pill-main-row">
+          <span class="pill-label">${label}</span>
+          <span class="pill-date">${dateStr}</span>
+          <span class="${stsCls}">(${stsLbl})</span>
+        </div>
+        ${extraLines ? `<div class="pill-detail-row">${extraLines}</div>` : ""}
+      </div>
     </div>`;
   }).join("");
 }

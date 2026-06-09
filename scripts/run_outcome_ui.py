@@ -215,11 +215,76 @@ def _signal_status() -> dict:
     result: dict[str, dict] = {}
     for name, path in _SIGNAL_FILES.items():
         sd = _sourced_date(path)
-        result[name] = {
+        entry: dict = {
             "sourced_date": sd,
             "stale": sd != today,
             "exists": path.exists(),
         }
+        # ── SI-REFRESH-02: Add coverage metrics ──────────────────────────────
+        # Primary fields define data quality; 0% coverage on any primary field
+        # indicates a silent partial failure even when sourced_date == today.
+        _PRIMARY_FIELDS: dict[str, list[str]] = {
+            "zacks":    ["zacks_rank", "zacks_score"],
+            "danelfin": ["danelfin_raw", "danelfin_score"],
+            "yahoo":    ["price_target", "analyst_count", "current_price"],
+        }
+        _ALL_SCORE_FIELDS: dict[str, list[str]] = {
+            "zacks":    ["zacks_rank", "zacks_score", "abr", "price_target", "eps_growth"],
+            "danelfin": ["danelfin_raw", "danelfin_score"],
+            "yahoo":    ["price_target", "abr", "analyst_count", "current_price",
+                         "upside_pct", "eps_growth_5yr"],
+        }
+        primary_fields = _PRIMARY_FIELDS.get(name, [])
+        all_fields = _ALL_SCORE_FIELDS.get(name, [])
+
+        if path.exists() and sd == today:
+            try:
+                today_rows: list[dict] = []
+                with path.open("r", encoding="utf-8", newline="") as fh:
+                    for row in csv.DictReader(fh):
+                        if str(row.get("sourced_date", "")).strip() == today:
+                            today_rows.append(row)
+                attempted = len(today_rows)
+                # "with data" = row has at least one primary field non-empty
+                with_data = sum(
+                    1 for r in today_rows
+                    if any(r.get(f, "").strip() for f in primary_fields)
+                ) if primary_fields else attempted
+                coverage_pct = round(with_data / attempted * 100, 1) if attempted else 0.0
+                # Per-field coverage on score fields
+                field_coverage: dict[str, float] = {}
+                for f in all_fields:
+                    n = sum(1 for r in today_rows if r.get(f, "").strip())
+                    field_coverage[f] = round(n / attempted * 100, 1) if attempted else 0.0
+                # Degraded fields = primary fields with 0% coverage today
+                degraded = [f for f in primary_fields if field_coverage.get(f, 100) == 0.0]
+                # All score fields with 0% coverage (for extended reporting)
+                zero_fields = [f for f in all_fields if field_coverage.get(f, 100) == 0.0]
+
+                entry["attempted_count"]     = attempted
+                entry["with_data_count"]     = with_data
+                entry["coverage_pct"]        = coverage_pct
+                entry["primary_field_coverage"] = {
+                    f: field_coverage[f] for f in primary_fields
+                }
+                entry["degraded_fields"]     = degraded  # primary fields at 0%
+                entry["zero_coverage_fields"] = zero_fields  # all fields at 0%
+
+                # Badge state
+                # FRESH: today, ≥95% row coverage, no primary field at 0%
+                # FRESH_PARTIAL: today but coverage <95% OR a primary field at 0%
+                if coverage_pct < 95.0 or degraded:
+                    entry["badge_state"] = "FRESH_PARTIAL"
+                else:
+                    entry["badge_state"] = "FRESH"
+            except Exception:
+                entry["badge_state"] = "FRESH"  # degrade gracefully
+        elif sd == today:
+            entry["badge_state"] = "FRESH"
+        else:
+            entry["badge_state"] = "STALE"
+
+        result[name] = entry
     return result
 
 
