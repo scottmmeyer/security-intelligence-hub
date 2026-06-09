@@ -1,0 +1,235 @@
+# Fund Vehicle Intelligence (FVI) Peer Group Registry — Phase 1 Advisory Estimates
+# 
+# Source: fvi_peer_group_registry.md, fvi_scoring_methodology.md
+# Date: 2026-06-09
+# Note: These are Phase 1 advisory estimates, NOT provider-calculated values.
+#       Actual Morningstar/Lipper-derived scores require Phase 2 data integration.
+#       data_source: MANUAL_ADVISORY_ESTIMATE for all Phase 1 entries.
+#
+# Governance: Do not use these scores for automated execution decisions.
+#             Advisory display only. Operator retains full execution authority.
+
+version: 1
+effective_date: "2026-06-09"
+phase: "PHASE_1_ADVISORY"
+data_note: "Advisory estimates. Phase 2 will integrate live peer-relative data."
+
+funds:
+
+  # ── Index ETFs — Equity ──────────────────────────────────────────────────────
+
+  VOO:
+    peer_group: "US Large Blend ETF"
+    morningstar_category: "Large Blend"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 90
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Near-lowest cost S&P 500 ETF with deepest liquidity. Optimal implementation vehicle for US Large Blend exposure."
+    retain_advisory: true
+
+  VB:
+    peer_group: "US Small Blend ETF"
+    morningstar_category: "Small Blend"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 85
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Near-lowest cost US Small Cap blend ETF. Strong tracking, minimal drag. Preferred small-cap implementation vehicle."
+    retain_advisory: true
+
+  VO:
+    peer_group: "US Mid Blend ETF"
+    morningstar_category: "Mid-Cap Blend"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 85
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Near-lowest cost US Mid Cap blend ETF. Strong tracking efficiency. Preferred mid-cap implementation vehicle."
+    retain_advisory: true
+
+  VEA:
+    peer_group: "Foreign Large Blend ETF"
+    morningstar_category: "Foreign Large Blend"
+    asset_class: "EQUITIES"
+    geography: "INTERNATIONAL"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 82
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Lowest cost developed international equity ETF. Strong tracking of FTSE Developed ex-US index. Preferred International Large Blend vehicle."
+    retain_advisory: true
+
+  VWO:
+    peer_group: "Diversified Emerging Markets ETF"
+    morningstar_category: "Diversified Emerging Mkts"
+    asset_class: "EQUITIES"
+    geography: "EMERGING_MARKETS"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 80
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Leading emerging market index ETF. Competitive cost vs EEM alternatives. Broad EM coverage with reasonable liquidity."
+    retain_advisory: true
+
+  # ── Index Mutual Funds — Equity ──────────────────────────────────────────────
+
+  FXAIX:
+    peer_group: "US Large Blend Index Fund"
+    morningstar_category: "Large Blend"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "INDEX_MUTUAL_FUND"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 88
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Zero expense ratio Fidelity S&P 500 index fund. Functionally equivalent to VOO at lower cost. Top-tier US Large Blend vehicle."
+    retain_advisory: true
+
+  # ── Active Mutual Funds — Equity ─────────────────────────────────────────────
+
+  DODFX:
+    peer_group: "Foreign Large Value"
+    morningstar_category: "Foreign Large Value"
+    asset_class: "EQUITIES"
+    geography: "INTERNATIONAL"
+    vehicle_type: "ACTIVE_MUTUAL_FUND"
+    fvi_tier: "HIGH"
+    estimated_fvi_score: 75
+    confidence: "MEDIUM"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "HIGH quality active international value fund. Dodge & Cox team-based management with long tenure and consistent process. Competitive expense (~0.63%). Retain as preferred International Large Value vehicle. Consider retaining over lower-quality peers in any sleeve reduction."
+    retain_advisory: true
+
+  FIGFX:
+    peer_group: "Foreign Large Growth"
+    morningstar_category: "Foreign Large Growth"
+    asset_class: "EQUITIES"
+    geography: "INTERNATIONAL"
+    vehicle_type: "ACTIVE_MUTUAL_FUND"
+    fvi_tier: "MEDIUM"
+    estimated_fvi_score: 55
+    confidence: "LOW"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "MEDIUM quality active international growth fund. Active foreign large growth has mixed long-term performance record vs passive alternatives. Reduction candidate before higher-quality peers in International Large sleeve reduction."
+    retain_advisory: false
+
+  FMCSX:
+    peer_group: "US Mid Cap Active Fund"
+    morningstar_category: "Mid-Cap Growth"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "ACTIVE_MUTUAL_FUND"
+    fvi_tier: "MEDIUM"
+    estimated_fvi_score: 55
+    confidence: "LOW"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "MEDIUM quality active US mid-cap fund. Active mid-cap growth has historically mixed record vs passive alternatives. Small position weight reduces urgency."
+    retain_advisory: false
+
+  FCPGX:
+    peer_group: "US Small Growth Active Fund"
+    morningstar_category: "Small Growth"
+    asset_class: "EQUITIES"
+    geography: "US"
+    vehicle_type: "ACTIVE_MUTUAL_FUND"
+    fvi_tier: "MEDIUM"
+    estimated_fvi_score: 52
+    confidence: "LOW"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "MEDIUM quality active small-cap growth fund. Active small growth has mixed peer-relative record. Very small position weight."
+    retain_advisory: false
+
+  # ── Fixed Income ETFs ────────────────────────────────────────────────────────
+
+  BND:
+    peer_group: "US Core Bond ETF"
+    morningstar_category: "Intermediate Core Bond"
+    asset_class: "FIXED_INCOME"
+    geography: "US"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 82
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Benchmark US total bond market ETF. Lowest cost broad bond index. Preferred US fixed income vehicle."
+    retain_advisory: true
+
+  BNDX:
+    peer_group: "World Bond (Hedged) ETF"
+    morningstar_category: "World Bond-USD Hedged"
+    asset_class: "FIXED_INCOME"
+    geography: "INTERNATIONAL"
+    vehicle_type: "INDEX_ETF"
+    fvi_tier: "ELITE"
+    estimated_fvi_score: 80
+    confidence: "HIGH"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Lowest cost hedged international bond ETF. Currency-hedged approach removes FX drag for USD investors. Preferred international bond vehicle."
+    retain_advisory: true
+
+  # ── Digital Asset ETFs ───────────────────────────────────────────────────────
+
+  FBTC:
+    peer_group: "Bitcoin Spot ETF"
+    morningstar_category: "Cryptocurrency"
+    asset_class: "DIGITAL"
+    geography: "GLOBAL"
+    vehicle_type: "DIGITAL_ASSET_ETF"
+    fvi_tier: "HIGH"
+    estimated_fvi_score: 72
+    confidence: "MEDIUM"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Leading Bitcoin spot ETF from Fidelity. Competitive fee structure, institutional-grade issuer. Preferred Bitcoin vehicle within digital allocation."
+    retain_advisory: true
+
+  FETH:
+    peer_group: "Ethereum Spot ETF"
+    morningstar_category: "Cryptocurrency"
+    asset_class: "DIGITAL"
+    geography: "GLOBAL"
+    vehicle_type: "DIGITAL_ASSET_ETF"
+    fvi_tier: "HIGH"
+    estimated_fvi_score: 68
+    confidence: "MEDIUM"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "Fidelity Ethereum spot ETF. Established issuer with competitive structure. Ethereum category is newer than Bitcoin with shorter track record."
+    retain_advisory: true
+
+  XRP:
+    peer_group: "XRP/Altcoin Digital Asset ETF"
+    morningstar_category: "Cryptocurrency"
+    asset_class: "DIGITAL"
+    geography: "GLOBAL"
+    vehicle_type: "DIGITAL_ASSET_ETF"
+    fvi_tier: "MEDIUM"
+    estimated_fvi_score: 45
+    confidence: "LOW"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "MEDIUM quality XRP ETF. Newer instrument with limited track record. Bitwise issuer is credible but XRP category maturity is lower than Bitcoin/Ethereum."
+    retain_advisory: false
+
+  FSOL:
+    peer_group: "Solana/Altcoin Digital Asset ETF"
+    morningstar_category: "Cryptocurrency"
+    asset_class: "DIGITAL"
+    geography: "GLOBAL"
+    vehicle_type: "DIGITAL_ASSET_ETF"
+    fvi_tier: "LOW"
+    estimated_fvi_score: 38
+    confidence: "LOW"
+    data_source: "MANUAL_ADVISORY_ESTIMATE"
+    advisory_text: "LOW quality assessment due to very new instrument status and limited track record. Very small position weight. High-risk category."
+    retain_advisory: false

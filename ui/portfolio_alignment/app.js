@@ -457,6 +457,18 @@ function _policyBadgeLabel(policyType) {
   return map[policyType] || policyType;
 }
 
+// PRA-IMPL-05: FVI advisory badge HTML
+function _fviBadgeHtml(fvi, showDetail = false) {
+  if (!fvi || !fvi.fvi_tier) return "";
+  const tier = fvi.fvi_tier;
+  const badge = `<span class="fvi-badge fvi-${tier}" title="${escHtml(fvi.peer_group || "")}">FVI: ${tier}</span>`;
+  if (!showDetail) return badge;
+  const retainCls = fvi.retain_advisory ? "fvi-retain" : "fvi-reduce";
+  const retainTxt = fvi.retain_advisory ? "↑ Retain preferred" : "↓ Reduction candidate";
+  const detail = `<span class="fvi-detail">${escHtml(fvi.peer_group || "")} · <span class="${retainCls}">${retainTxt}</span></span>`;
+  return badge + detail;
+}
+
 function _renderPolicyList() {
   const container = document.getElementById("policyListContainer");
   if (!container) return;
@@ -564,6 +576,8 @@ function _computePortfolioActions(data) {
   const recommendations = data.recommendations || [];
   const deploymentQueue = data.deployment_queue || {};
   const dqEntries      = deploymentQueue.queue || [];
+  // PRA-IMPL-05: FVI advisory data (keyed by uppercase symbol)
+  const fviData        = data.fvi_data || {};
 
   // Build conviction tier map from deployment_queue entries
   const convictionTierBySymbol = {};
@@ -750,6 +764,7 @@ function _computePortfolioActions(data) {
         effective_action: cat3EffAction,
         policy_type:      ovPolicyType3,
         policy_badge:     ov.policy_annotation || "",
+        fvi: fviData[sym] || null,  // PRA-IMPL-05: FVI advisory record
       });
     }
   }
@@ -811,6 +826,7 @@ function _computePortfolioActions(data) {
       priority: isLastResort ? "LAST_RESORT" : (isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW"),
       policy_type:  ovPolicyType4,
       policy_badge: ov.policy_annotation || "",
+      fvi: fviData[sym] || null,  // PRA-IMPL-05: FVI advisory record
     });
   }
   // Sort: LAST_RESORT (SELL_LAST) always at end, then HIGH/MEDIUM/LOW, then score asc
@@ -944,7 +960,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Overweight Node</th><th>Drift</th>
-              <th>Signal</th><th>% Port</th><th>Priority</th><th>Note</th>
+              <th>Signal</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Note</th>
             </tr></thead>
             <tbody>
               ${cat3.map(c => `<tr class="pap-row ${c.severity === "HIGH" ? "pap-row-high" : ""}">
@@ -956,6 +972,7 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
                 <td><span class="pap-pri pap-pri-${c.severity}">${c.severity}</span></td>
+                <td>${_fviBadgeHtml(c.fvi, true)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">${c.is_protected ? "Protected — consider reducing via index vehicles" : "Node overweight reduction candidate"}</td>
               </tr>`).join("")}
             </tbody>
@@ -981,7 +998,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Flag</th><th>Signal</th>
-              <th>Score</th><th>% Port</th><th>Priority</th><th>Cross-Reference</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
             </tr></thead>
             <tbody>
               ${cat4.map(c => `<tr class="pap-row ${c.priority === "HIGH" ? "pap-row-high" : c.priority === "MEDIUM" ? "pap-row-med" : ""}">
@@ -991,6 +1008,7 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
+                <td>${_fviBadgeHtml(c.fvi, false)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">
                   ${c.primary_category
                     ? `<span class="pap-xref pap-xref-${c.primary_category}">${escHtml(c.funding_reason)}</span>`

@@ -54,6 +54,7 @@ from .operator_policy import (
 from .recommendations import build_security_overlays, generate_recommendations, generate_recommendations_with_phase_e_warnings, identify_funding_sources
 from .scoring import compute_multi_dimensional_score, detect_intentional_asymmetry
 from .trim_intelligence import build_strategic_profiles, validate_trim_intelligence_consistency
+from .fvi_loader import load_fvi_registry, build_fvi_data_for_holdings
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INGESTION_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion"
@@ -1096,6 +1097,8 @@ def run_analysis(
         "recommendation_count": len(recs),
         # PRA-IMPL-03 — Additive typed lane counts (client can also compute locally)
         **_compute_typed_rec_counts(recs_with_drilldown),
+        # PRA-IMPL-05 — FVI advisory data (additive; advisory-only; no scoring impact)
+        "fvi_data": _build_fvi_payload([h.symbol for h in investable]),
         # Full detail arrays — included so the UI renders immediately
         "alignment": [dataclasses.asdict(r) for r in alignment],
         "concentration": dataclasses.asdict(concentration),
@@ -1189,6 +1192,19 @@ def run_analysis(
             )
         except Exception:
             pass  # never let tracking errors break the analysis run
+
+
+def _build_fvi_payload(symbols: list[str]) -> dict[str, dict]:
+    """Load FVI advisory data for portfolio holdings (PRA-IMPL-05).
+
+    Advisory-only — never mutates scores, rankings, or recommendations.
+    Graceful degradation: returns empty dict if config is missing.
+    """
+    try:
+        registry = load_fvi_registry()
+        return build_fvi_data_for_holdings(symbols, registry)
+    except Exception:
+        return {}
 
 
 def _build_consensus_payload() -> dict:
