@@ -99,6 +99,15 @@ _ETF_OVERRIDES: dict[str, dict] = {
     "FCPGX": dict(asset_class="EQUITIES", geography="US",            market_cap_bucket="SMALL",  mega_subtier="N/A", sector="Broad Market",   industry="ALL"),  # Fidelity Small Cap Growth
     # ── ADRs — International equity ──────────────────────────────────────────
     "TTNDY": dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="LARGE",  mega_subtier="N/A", sector="Industrials",    industry="Consumer Electronics"),  # Techtronic Industries Co. ADR (HKG: 669)
+    # ── Individual equity overrides — RC-02 classification gap fix ───────────
+    # These symbols are absent from analytical_universe.csv but present in the
+    # portfolio.  Without an override they fall through to asset_class=UNKNOWN,
+    # causing L1 allocation sum < 100% (RC-02 FAIL).
+    # Source: company_profile data + security_metadata (sector/industry/country).
+    # Classification follows SIH taxonomy conventions.
+    "BSVN":  dict(asset_class="EQUITIES", geography="US",            market_cap_bucket="MICRO",  mega_subtier="N/A", sector="FINANCIAL SERVICES", industry="Banks - Regional"),   # Bank7 Corp, Oklahoma City, US; ~$300M market cap
+    "STNG":  dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="SMALL",  mega_subtier="N/A", sector="ENERGY",            industry="Oil & Gas Midstream"), # Scorpio Tankers Inc., Monaco-domiciled, NYSE-listed; ~$1.3B market cap
+    "SIMO":  dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="SMALL",  mega_subtier="N/A", sector="TECHNOLOGY",        industry="Semiconductors"),      # Silicon Motion Technology ADR, Hong Kong; ~$1.4B market cap
     # ── Zero-value contra entries ─────────────────────────────────────────────
     # M26CNT069 is a Fidelity-internal identifier for a CyberArk contra lot.
     # Market value is $0.00; included here to prevent UNKNOWN classification.
