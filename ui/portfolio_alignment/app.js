@@ -699,6 +699,37 @@ function _computePortfolioActions(data) {
       const ov = overlayBySymbol[sym];
       if (!ov) continue;  // Not in portfolio
       const tier = convictionTierBySymbol[sym] || "";
+
+      // PA-004 FIX: Apply policy gate for Cat 3 (reduction context).
+      // ov.policy_type is used directly because ov.execution_state reflects
+      // the overlay's opportunity_flag context (e.g. HOLD → EXECUTABLE), not
+      // the reduction context Cat 3 implies for every symbol here.
+      const ovPolicyType3 = ov.policy_type || "";
+      if (ovPolicyType3 === "DO_NOT_SELL") {
+        // Block: add to cat5 for operator transparency
+        cat5.push({
+          symbol:           sym,
+          ess:              ov.ess_score_text || "",
+          signal:           ov.signal_direction || "",
+          flag:             "REDUCE",
+          original_action:  "REDUCE",
+          policy_type:      ovPolicyType3,
+          policy_badge:     ov.policy_annotation || "🔒 Operator Protected",
+          effective_action: "MONITOR_ONLY",
+          percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
+          composite_score:      parseFloat(ov.composite_score || 0),
+          source_lane: "cat3",
+        });
+        cat3Syms.add(sym);
+        continue;
+      }
+
+      // SELL_LAST: include but deferred, tail-ranked
+      const cat3ExecState = ovPolicyType3 === "SELL_LAST" ? "DEFERRED_BY_POLICY" : "EXECUTABLE";
+      const cat3EffAction = ovPolicyType3 === "SELL_LAST" ? "REDUCE_SELL_LAST"   : "REDUCE";
+      const cat3Priority  = ovPolicyType3 === "SELL_LAST" ? "LOW"
+                          : (nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM");
+
       // Include even protected tiers in allocation reduction (strategic context)
       // but mark them as protected so UI can render with appropriate context
       cat3Syms.add(sym);
@@ -708,18 +739,27 @@ function _computePortfolioActions(data) {
         node_label: node.nodeLabel,
         drift_pct:  node.drift,
         severity:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
-        priority:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
+        priority:   cat3Priority,
         conviction_tier: tier,
         is_protected: _PROTECTED_CONVICTION_TIERS.has(tier),
         ov_flag:  ov.opportunity_flag || "",
         ov_signal: ov.signal_direction || "",
         percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
         composite_score:      parseFloat(ov.composite_score || 0),
+        execution_state:  cat3ExecState,
+        effective_action: cat3EffAction,
+        policy_type:      ovPolicyType3,
+        policy_badge:     ov.policy_annotation || "",
       });
     }
   }
-  // Sort: higher drift (more overweight) first, then alpha
-  cat3.sort((a, b) => Math.abs(b.drift_pct) - Math.abs(a.drift_pct) || a.symbol.localeCompare(b.symbol));
+  // Sort: DEFERRED_BY_POLICY last, then higher drift first, then alpha
+  cat3.sort((a, b) => {
+    const aDeferred = (a.execution_state === "DEFERRED_BY_POLICY") ? 1 : 0;
+    const bDeferred = (b.execution_state === "DEFERRED_BY_POLICY") ? 1 : 0;
+    if (aDeferred !== bDeferred) return aDeferred - bDeferred;
+    return Math.abs(b.drift_pct) - Math.abs(a.drift_pct) || a.symbol.localeCompare(b.symbol);
+  });
 
   // ── Category 4: Funding Sources ────────────────────────────────────────────
   const cat4 = [];
@@ -735,6 +775,11 @@ function _computePortfolioActions(data) {
     // Only include holdings with meaningful size
     const pct = parseFloat(ov.percent_of_portfolio || 0);
     if (pct < 0.05) continue;
+
+    // PA-004 FIX: Apply policy gate for Cat 4 (funding source context is always sell-context)
+    const ovPolicyType4 = ov.policy_type || "";
+    if (ovPolicyType4 === "DO_NOT_SELL") continue;  // Never a funding source
+    const isLastResort = ovPolicyType4 === "SELL_LAST";  // Must be last priority
 
     // Exclude cash-equivalents, money market
     const flag   = ov.opportunity_flag || "";
@@ -763,12 +808,14 @@ function _computePortfolioActions(data) {
       replay_supported: ov.replay_supported === true || ov.replay_supported === "True",
       primary_category: isCat1 ? "SIGNAL_DETERIORATION" : isCat3 ? "ALLOCATION_REDUCTION" : null,
       funding_reason: fundingReason,
-      priority: isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW",
+      priority: isLastResort ? "LAST_RESORT" : (isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW"),
+      policy_type:  ovPolicyType4,
+      policy_badge: ov.policy_annotation || "",
     });
   }
-  // Sort: Cat1 cross-refs first (HIGH), then Cat3 cross-refs (MEDIUM), then by score asc
+  // Sort: LAST_RESORT (SELL_LAST) always at end, then HIGH/MEDIUM/LOW, then score asc
   cat4.sort((a, b) => {
-    const priorityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    const priorityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, LAST_RESORT: 3 };
     const po = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
     if (po !== 0) return po;
     return a.composite_score - b.composite_score;
