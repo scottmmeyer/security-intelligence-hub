@@ -2512,22 +2512,39 @@ function renderRecommendations(recs) {
       ? `<span style="font-size:0.78rem;color:var(--muted)">Drift: ${parseFloat(r.drift_pct) > 0 ? "+" : ""}${parseFloat(r.drift_pct).toFixed(1)}pp</span>`
       : "";
 
-    // Policy execution state badge (PRA-IMPL-02)
+    // Policy execution state badge (PRA-IMPL-02 / ARCH-04 per-symbol)
     const execState = r.execution_state || "";
+    const symStates = r.symbol_execution_states || {};
     let policyBadgeHtml = "";
     if (execState === "BLOCKED_BY_POLICY") {
-      // UX-PA-06: Show which symbol is blocked and how to unblock it
-      const blockedSym = (r.affected_symbols || [])[0] || "";
+      // All symbols blocked — find the blocked one for the unblock hint
+      const blockedSym = Object.keys(symStates).find(s => symStates[s].execution_state === "BLOCKED_BY_POLICY") || (r.affected_symbols || [])[0] || "";
       const unblockHint = blockedSym
         ? `<span class="rec-unblock-hint">To unblock: remove DO_NOT_SELL policy on ${escHtml(blockedSym)}.</span>`
         : "";
       policyBadgeHtml = `<span class="rec-policy-badge policy-blocked">🔒 Operator Protected — not executable</span>${unblockHint}`;
     } else if (execState === "DEFERRED_BY_POLICY") {
-      const deferredSym = (r.affected_symbols || []).find(s => s) || "";
+      // All symbols deferred — find the deferred one for the hint
+      const deferredSym = Object.keys(symStates).find(s => symStates[s].execution_state === "DEFERRED_BY_POLICY") || (r.affected_symbols || []).find(s => s) || "";
       const deferHint = deferredSym
         ? `<span class="rec-unblock-hint">To prioritize: remove SELL_LAST policy on ${escHtml(deferredSym)}.</span>`
         : "";
       policyBadgeHtml = `<span class="rec-policy-badge policy-deferred">⏸ Sell Last — deferred</span>${deferHint}`;
+    } else if (execState === "EXECUTABLE" && Object.keys(symStates).length > 0) {
+      // ARCH-04: rec is executable but some symbols may still be individually constrained — show compact per-symbol badges
+      const constrainedSyms = Object.entries(symStates).filter(([, v]) => v.execution_state !== "EXECUTABLE");
+      if (constrainedSyms.length > 0) {
+        const symBadges = constrainedSyms.map(([sym, v]) => {
+          if (v.execution_state === "BLOCKED_BY_POLICY") {
+            return `<span class="rec-policy-badge policy-blocked" title="To unblock: remove DO_NOT_SELL policy on ${escHtml(sym)}">🔒 ${escHtml(sym)}: Blocked</span>`;
+          }
+          if (v.execution_state === "DEFERRED_BY_POLICY") {
+            return `<span class="rec-policy-badge policy-deferred" title="To prioritize: remove SELL_LAST policy on ${escHtml(sym)}">⏸ ${escHtml(sym)}: Sell Last</span>`;
+          }
+          return "";
+        }).filter(Boolean).join(" ");
+        policyBadgeHtml = symBadges ? `<div class="rec-sym-policy-strip">${symBadges}</div>` : "";
+      }
     }
 
     // Phase C — rec_state badge

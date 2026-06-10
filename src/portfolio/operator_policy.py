@@ -412,19 +412,22 @@ def apply_policy_to_recommendations(
 ) -> None:
     """Annotate recommendation dicts with policy execution state in-place.
 
-    For each sell-context recommendation, resolves the most restrictive policy
-    state across the affected_symbols list and sets:
-        execution_state     — BLOCKED_BY_POLICY | DEFERRED_BY_POLICY | EXECUTABLE
-        effective_action    — MONITOR_ONLY | <FLAG>_SELL_LAST | <FLAG>
-        card_lifecycle_state — POLICY_ADJUSTED (when policy modifies execution)
+    ARCH-04: Per-symbol policy evaluation (replaces most-restrictive-wins).
 
-    Precedence (most restrictive wins across all affected symbols):
-        1. BLOCKED_BY_POLICY  (DO_NOT_SELL on any affected symbol)
-        2. DEFERRED_BY_POLICY (SELL_LAST on any affected symbol)
-        3. INFORMATIONAL_ONLY (CORE_ANCHOR on any affected symbol)
-        4. EXECUTABLE         (no sell-context policy)
+    For each sell-context recommendation:
+      1. Evaluates policy state independently for EACH affected symbol.
+      2. Stores per-symbol results in ``symbol_execution_states`` (new additive field).
+      3. Annotates drilldown.holdings with per-symbol execution_state/policy_type.
+      4. Sets rec-level ``execution_state`` to the LEAST RESTRICTIVE viable state:
+           - EXECUTABLE         if at least one symbol is EXECUTABLE
+           - DEFERRED_BY_POLICY if no symbol is EXECUTABLE but some are DEFERRED
+           - BLOCKED_BY_POLICY  if ALL symbols are BLOCKED (or empty symbol list)
 
-    Intelligence scores, ranking, and generation logic are never modified.
+    This means a multi-symbol rec containing both a DEFERRED and an EXECUTABLE symbol
+    is classified EXECUTABLE at the rec level, while the per-symbol states capture the
+    individual constraints. The PAP Actions lane shows the rec with per-symbol badges.
+
+    Governance: Intelligence scores, ranking, and generation logic are never modified.
     Only the output-layer annotation fields are updated.
     """
     for rd in recs:
@@ -439,26 +442,69 @@ def apply_policy_to_recommendations(
 
         symbols: list[str] = rd.get("affected_symbols") or []
 
-        # Evaluate policy state for each affected symbol; take most restrictive.
-        best_state = "EXECUTABLE"
-        best_action = sell_flag
+        # ── Per-symbol evaluation (ARCH-04) ─────────────────────────────────
+        # Evaluate all symbols: affected_symbols + any additional drilldown holdings
+        drilldown_syms: list[str] = [
+            h.get("symbol", "") for h in rd.get("drilldown", {}).get("holdings", [])
+            if h.get("symbol")
+        ]
+        all_syms = list(dict.fromkeys(
+            [s.upper() for s in symbols] + [s.upper() for s in drilldown_syms]
+        ))  # dedup, preserve order, affected_symbols first
 
-        for sym in symbols:
+        sym_states: dict[str, dict] = {}
+        for sym in all_syms:
             state, action = compute_execution_state(sym, sell_flag, registry)
-            if state == "BLOCKED_BY_POLICY":
-                best_state = "BLOCKED_BY_POLICY"
-                best_action = "MONITOR_ONLY"
-                break  # can't get more restrictive
-            if state == "DEFERRED_BY_POLICY" and best_state == "EXECUTABLE":
-                best_state = "DEFERRED_BY_POLICY"
-                best_action = action
-            if state == "INFORMATIONAL_ONLY" and best_state == "EXECUTABLE":
-                best_state = "INFORMATIONAL_ONLY"
-                best_action = "MONITOR_ONLY"
+            policy_type = registry.active_policy_type(sym) or ""
+            sym_states[sym] = {
+                "execution_state": state,
+                "effective_action": action,
+                "policy_type":     policy_type,
+            }
 
-        rd["execution_state"] = best_state
-        rd["effective_action"] = best_action
-        if best_state != "EXECUTABLE":
+        # Store per-symbol states on the rec dict (additive field)
+        rd["symbol_execution_states"] = sym_states
+
+        # Annotate drilldown holdings in-place (additive)
+        for h in rd.get("drilldown", {}).get("holdings", []):
+            sym_upper = (h.get("symbol") or "").upper()
+            if sym_upper in sym_states:
+                h["execution_state"] = sym_states[sym_upper]["execution_state"]
+                h["effective_action"] = sym_states[sym_upper]["effective_action"]
+                h["policy_type"]      = sym_states[sym_upper]["policy_type"]
+
+        # ── Rec-level state: uses affected_symbols only (not drilldown extras) ──
+        # Drilldown symbols annotated above but don't change rec-level semantics.
+        affected_syms_upper = [s.upper() for s in symbols]
+        if not affected_syms_upper:
+            rd["execution_state"] = "EXECUTABLE"
+            rd["effective_action"] = sell_flag
+            continue
+
+        states_values = [
+            sym_states[s]["execution_state"]
+            for s in affected_syms_upper
+            if s in sym_states
+        ] or ["EXECUTABLE"]
+        any_executable  = "EXECUTABLE"         in states_values
+        any_deferred    = "DEFERRED_BY_POLICY" in states_values
+        any_blocked     = "BLOCKED_BY_POLICY"  in states_values
+        any_constrained = any_blocked or any_deferred
+
+        if any_executable:
+            best_state  = "EXECUTABLE"
+            best_action = sell_flag
+        elif any_deferred:
+            best_state  = "DEFERRED_BY_POLICY"
+            best_action = f"{sell_flag}_SELL_LAST"
+        else:
+            # All BLOCKED_BY_POLICY
+            best_state  = "BLOCKED_BY_POLICY"
+            best_action = "MONITOR_ONLY"
+
+        rd["execution_state"]    = best_state
+        rd["effective_action"]   = best_action
+        if any_constrained:
             rd["card_lifecycle_state"] = "POLICY_ADJUSTED"
 
 
