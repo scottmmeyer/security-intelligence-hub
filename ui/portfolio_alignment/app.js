@@ -1309,8 +1309,8 @@ function renderPortfolioConstructionStyle(data) {
   const asym        = data.intentional_asymmetry || {};
   const asymState   = asym.asymmetry_state || "";
 
-  const allocPct    = (allocScore * 100).toFixed(0);
-  const convPct     = (convScore  * 100).toFixed(0);
+  const allocPct    = (allocScore * 100).toFixed(0);  // overall_alignment_score is 0–1, ×100 is correct
+  const convPct     = convScore.toFixed(0);            // portfolio_quality_score is already 0–100, no ×100
 
   // Style label based on asymmetry state
   const styleLabels = {
