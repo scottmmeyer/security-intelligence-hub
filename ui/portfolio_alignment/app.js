@@ -811,7 +811,7 @@ function _computePortfolioActions(data) {
     // Compute a funding priority score: lower composite = better funding candidate
     // Also penalize if already in Cat3 (allocation reduction — useful cross-reference)
     const isCat3 = cat3.some(c => c.symbol === sym);
-    const fundingReason = isCat1 ? "Signal Deterioration" : isCat3 ? "Allocation Reduction" : "Low Conviction";
+    const fundingReason = isCat1 ? "Signal Deterioration" : isCat3 ? "Allocation Reduction" : "Opportunity Cost";
 
     cat4.push({
       symbol:   sym,
@@ -1071,6 +1071,7 @@ function renderResults(data) {
   document.getElementById("resultsArea").style.display = "block";
   _lastAnalysisData = data;  // Phase E: make STI profiles available to card helpers
   renderKPIs(data);
+  renderPortfolioConstructionStyle(data);   // UI Clarity Sprint — Problem 5
   renderNarrativeSummary(data);      // UX-PA-09
   renderMultiDimScores(data);
   renderMandatePanel(data);
@@ -1169,6 +1170,68 @@ function _kpiTypedRecommendations(recs) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 6.2.2 — Multi-Dimensional Scorecards
 // ─────────────────────────────────────────────────────────────────────────────
+// UI Clarity Sprint — Problem 5: Portfolio Construction Style framing card
+// Presentation-only. No changes to scoring, recommendations, or mandate logic.
+// ─────────────────────────────────────────────────────────────────────────────
+function renderPortfolioConstructionStyle(data) {
+  const el = document.getElementById("portfolioConstructionStyleContainer");
+  if (!el) return;
+
+  const allocScore  = parseFloat(data.overall_alignment_score ?? 0);
+  const mds         = data.multi_dimensional_score || {};
+  const convScore   = parseFloat(mds.portfolio_quality_score ?? mds.conviction_score ?? 0);
+  const asym        = data.intentional_asymmetry || {};
+  const asymState   = asym.asymmetry_state || "";
+
+  const allocPct    = (allocScore * 100).toFixed(0);
+  const convPct     = (convScore  * 100).toFixed(0);
+
+  // Style label based on asymmetry state
+  const styleLabels = {
+    HIGH_CONVICTION:    "Intentional Conviction-Weighted",
+    LIKELY_INTENTIONAL: "Active Conviction Tilt",
+    ACCIDENTAL:         "Passive Drift Detected",
+  };
+  const styleLabel = styleLabels[asymState] || "Active Equity Portfolio";
+
+  // Interpretation text
+  let interpText = "";
+  if (asymState === "HIGH_CONVICTION") {
+    interpText = `This portfolio is intentionally asymmetric. Allocation gaps reflect deliberate conviction weighting — not tracking error. ` +
+      `Under the active mandate, higher-conviction positions receive larger weights, independent of classical index targets.`;
+  } else if (asymState === "LIKELY_INTENTIONAL") {
+    interpText = `Moderate conviction tilt detected. Some allocation divergence reflects active positioning. ` +
+      `Review mandate parameters to confirm intentionality.`;
+  } else if (asymState === "ACCIDENTAL") {
+    interpText = `Allocation asymmetry appears circumstantial rather than planned. ` +
+      `Review whether current weights reflect active conviction or passive drift.`;
+  } else {
+    interpText = `Portfolio construction posture is being assessed. Load a PAR to see alignment metrics.`;
+  }
+
+  el.innerHTML = `<div class="pcs-card">
+    <div class="pcs-header">
+      <span class="pcs-title">Portfolio Construction Style</span>
+      <span class="pcs-style-badge">${escHtml(styleLabel)}</span>
+    </div>
+    <div class="pcs-metrics-row">
+      <div class="pcs-metric">
+        <div class="pcs-metric-val">${allocPct}%</div>
+        <div class="pcs-metric-label">Allocation Discipline</div>
+        <div class="pcs-metric-sub">Classical model alignment</div>
+      </div>
+      <div class="pcs-metric-divider">vs.</div>
+      <div class="pcs-metric">
+        <div class="pcs-metric-val">${convPct}%</div>
+        <div class="pcs-metric-label">Conviction Discipline</div>
+        <div class="pcs-metric-sub">Portfolio quality score</div>
+      </div>
+    </div>
+    <div class="pcs-interpretation">${escHtml(interpText)}</div>
+    <div class="pcs-governance-note">Display-only framing — no scoring influence.</div>
+  </div>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UX-PA-09 — "What matters right now" portfolio narrative summary
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3132,7 +3195,7 @@ function renderOptimizerSummary(recs) {
     <div class="opt-summary-grid">
       ${_optStatCard(withMeta.length, "Recs Reviewed", "")}
       ${_optStatCard(mandateBlocked, "Mandate Blocked", mandateBlocked > 0 ? "warn" : "")}
-      ${_optStatCard(etfGateFailed,  "ETF Gate Failed", etfGateFailed  > 0 ? "alert" : "")}
+      ${_optStatCard(etfGateFailed,  "Superior Security Available", etfGateFailed  > 0 ? "alert" : "")}
       ${_optStatCard(secSuperior,    "Security Superior", "")}
       ${_optStatCard(noActionable,   "No Candidates", "")}
       ${_optStatCard(noConflict,     "No Conflict", "")}
@@ -3176,7 +3239,7 @@ function _buildOptimizerBadges(r) {
   );
   for (const c of etfFailed) {
     badges.push(
-      `<span class="opt-badge opt-badge-ETF_GATE_FAILED" title="${escHtml(c.etf_gate)}">ETF_GATE_FAILED: ${escHtml(c.symbol)}</span>`
+      `<span class="opt-badge opt-badge-ETF_GATE_FAILED" title="${escHtml(c.etf_gate)}">SUPERIOR_SECURITY_AVAILABLE: ${escHtml(c.symbol)}</span>`
     );
   }
 
@@ -3251,6 +3314,29 @@ function _buildOptimizerViewBlock(r) {
                : etfCandidates.some(c => !String(c.etf_gate || "").startsWith("PASS")) ? " optview-chip-blocked"
                : "";
 
+  // Mandate dual-view framing block (Problem 1 — UI Clarity Sprint)
+  // Only shown when mandate_blocked: explains the classical-vs-policy divergence.
+  const mandateDualViewHtml = om.mandate_blocked
+    ? `<div class="optview-mandate-dualview">
+        <div class="optview-dualview-row">
+          <span class="optview-view-badge optview-view-classical">CLASSICAL ALLOCATION VIEW</span>
+          <span class="optview-dualview-text">
+            Allocation gap detected in <strong>${escHtml(om.target_node || "—")}</strong>.
+            A standard model would treat this as underweight and recommend ETF deployment to close the gap.
+          </span>
+        </div>
+        <div class="optview-dualview-row optview-dualview-override-row">
+          <span class="optview-view-badge optview-view-override">CONCENTRATED ALPHA POLICY OVERRIDE</span>
+          <span class="optview-dualview-text">
+            This underweight is <strong>intentional</strong> under the active mandate
+            (<strong>${escHtml(om.mandate_type || "—")}</strong>).
+            Deployment into generic ETF vehicles is not warranted.
+            Recommended action: deploy capital into higher-conviction individual securities in this node.
+          </span>
+        </div>
+      </div>`
+    : "";
+
   // Security alternatives HTML
   const secAltHtml = secAlts.length
     ? secAlts.map(c =>
@@ -3276,6 +3362,7 @@ function _buildOptimizerViewBlock(r) {
 
   return `<button class="optimizer-view-toggle" onclick="toggleOptimizerView('${optId}')">&#9656; Optimizer View</button>
   <div class="optimizer-view-body" id="${optId}">
+    ${mandateDualViewHtml}
     <div class="optview-row">
       <div class="optview-label">Legacy Recommendation</div>
       <div class="optview-val">${escHtml(legacyVehicles)}</div>
@@ -3991,6 +4078,7 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
     const _fssBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol)  || {};
     const _ucfBySymDQ  = (_analysisResult   && _analysisResult.ucf_verdicts_by_symbol)        || {};
     const _fmpBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol)           || {};
+    const _pcBySymDQ   = (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol)      || {};
     const _ovBySymDQ2  = {};
     for (const ov2 of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
       if (ov2 && ov2.symbol) _ovBySymDQ2[(ov2.symbol || "").toUpperCase()] = ov2;
@@ -4002,7 +4090,8 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
       _fmpBySymDQ[sym.toUpperCase()] || null,
       _ucfBySymDQ[sym.toUpperCase()] || {},
       _ovBySymDQ2[sym.toUpperCase()] || {},
-      { isReduction: false, isDeployment: true, category: cand.narrative_tier || "" }
+      { isReduction: false, isDeployment: true, category: cand.narrative_tier || "" },
+      _pcBySymDQ[sym.toUpperCase()] || null
     );
     const _dilDQId = `da-intel-${rec.rank}`;
     const _dilBtnHtml = `<button class="da-intel-btn" onclick="(function(){const p=document.getElementById('${_dilDQId}');if(p){p.classList.toggle('dil-open');this.textContent=p.classList.contains('dil-open')?'▲ Intel':'⚡ Intel';}}).call(this)">⚡ Intel</button>
@@ -4302,8 +4391,9 @@ function _dqToggleBlocked() {
 // Every output cites its signal source and date. Operator remains decision maker.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context) {
+function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
   // context = { isReduction: bool, isDeployment: bool, category: string }
+  // priceCtx = { return_1d, return_5d, return_1m, pct_52w_range, next_earnings_date, ... } (optional, display-only)
   const today_str = new Date().toISOString().split("T")[0];
 
   // Signal extraction
@@ -4468,12 +4558,27 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context) {
   if (ucfLabel)
     evidence.push(`UCF: ${escHtml(ucfLabel)} [Computed, PAR time]`);
 
-  return { posture, postureClass, rationale, keyPoints: keyPoints.filter(Boolean), evidence };
+  // DIL Phase 2 — price context (display-only; no scoring influence)
+  const pcObj = priceCtx || {};
+  let priceContextDisplay = null;
+  if (pcObj.return_1d != null || pcObj.return_5d != null || pcObj.pct_52w_range != null) {
+    const fmt = v => v != null ? `${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%` : "—";
+    const r1d = pcObj.return_1d != null ? fmt(pcObj.return_1d) : "—";
+    const r5d = pcObj.return_5d != null ? fmt(pcObj.return_5d) : "—";
+    const r1m = pcObj.return_1m != null ? fmt(pcObj.return_1m) : "—";
+    const w52 = pcObj.pct_52w_range != null ? `${Number(pcObj.pct_52w_range).toFixed(0)}th %ile` : "—";
+    const earningsNote = pcObj.next_earnings_date
+      ? `Next earnings: ${escHtml(pcObj.next_earnings_date)}`
+      : "";
+    priceContextDisplay = { r1d, r5d, r1m, w52, earningsNote };
+  }
+
+  return { posture, postureClass, rationale, keyPoints: keyPoints.filter(Boolean), evidence, priceContextDisplay };
 }
 
 function _dilHtml(dilResult) {
   if (!dilResult || !dilResult.posture) return "";
-  const { posture, postureClass, rationale, keyPoints, evidence } = dilResult;
+  const { posture, postureClass, rationale, keyPoints, evidence, priceContextDisplay } = dilResult;
 
   const kpHtml = keyPoints.length > 0
     ? `<ul class="dil-key-points">${keyPoints.map(p => `<li>${p}</li>`).join("")}</ul>`
@@ -4491,12 +4596,26 @@ function _dilHtml(dilResult) {
       </div>`
     : "";
 
+  const pcHtml = priceContextDisplay
+    ? `<div class="dil-price-context">
+        <div class="dil-price-ctx-title">Price Context <span class="dil-price-ctx-note">(display-only)</span></div>
+        <div class="dil-price-ctx-grid">
+          <div class="dil-price-ctx-cell"><span class="dil-pc-label">1D</span><span class="dil-pc-val">${priceContextDisplay.r1d}</span></div>
+          <div class="dil-price-ctx-cell"><span class="dil-pc-label">5D</span><span class="dil-pc-val">${priceContextDisplay.r5d}</span></div>
+          <div class="dil-price-ctx-cell"><span class="dil-pc-label">1M</span><span class="dil-pc-val">${priceContextDisplay.r1m}</span></div>
+          <div class="dil-price-ctx-cell"><span class="dil-pc-label">52W</span><span class="dil-pc-val">${priceContextDisplay.w52}</span></div>
+        </div>
+        ${priceContextDisplay.earningsNote ? `<div class="dil-earnings-note">${priceContextDisplay.earningsNote}</div>` : ""}
+      </div>`
+    : "";
+
   return `<div class="dil-section">
     <div class="dil-section-title">⚡ Decision Intelligence</div>
     <div class="dil-posture ${escHtml(postureClass)}">${escHtml(posture)}</div>
     <div class="dil-rationale-text">${rationale}</div>
     ${kpHtml}
     ${evHtml}
+    ${pcHtml}
     <div class="dil-advisory">Advisory only — all postures are interpretive. Operator remains the decision maker.</div>
   </div>`;
 }
@@ -4519,7 +4638,7 @@ const _RQ_CATEGORY_LABELS = {
   STRATEGIC_EXIT:         "Strategic Exit",
   OVERWEIGHT_REDUCTION:   "Overweight Reduction",
   TAX_AWARE_EXIT:         "Tax-Aware Exit",
-  LOW_CONVICTION_REDUCTION: "Low Conviction",
+  LOW_CONVICTION_REDUCTION: "Passive Exposure",
 };
 
 function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfBySymbol, fidBySymbol) {
@@ -4726,6 +4845,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
 
     // ── DIL Phase 1: compute and inject decision intelligence panel ──────────
     const _fmpBySymDIL = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol) || {};
+    const _pcBySymDIL  = (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol) || {};
     const _dilResult = computeDIL(
       sym,
       (renderReductionQueue._consBySymbol || {})[symUpper] || {},
@@ -4733,7 +4853,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       _fmpBySymDIL[symUpper] || null,
       ucfBySymbol[symUpper] || {},
       overlayBySymbol[symUpper] || {},
-      { isReduction: true, isDeployment: false, category: s.category || "" }
+      { isReduction: true, isDeployment: false, category: s.category || "" },
+      _pcBySymDIL[symUpper] || null
     );
     const dilPanelHtml = _dilHtml(_dilResult);
 
@@ -5741,7 +5862,7 @@ const _CRA_CATEGORIES = [
   { key: "STRATEGIC_EXIT",         label: "Strategic Exit",           num: 2 },
   { key: "OVERWEIGHT_REDUCTION",   label: "Exposure Reduction",       num: 3 },
   { key: "TAX_AWARE_EXIT",         label: "Tax-Aware Exit",           num: 4 },
-  { key: "LOW_CONVICTION_REDUCTION", label: "Low Conviction Reduction", num: 5 },
+  { key: "LOW_CONVICTION_REDUCTION", label: "Opportunity Cost Reduction", num: 5 },
 ];
 
 async function loadCRAProposal() {
@@ -6005,15 +6126,84 @@ function _renderCRAProposal(p) {
     }
   }
 
-  content.innerHTML = `<div class="cra-columns">
-    ${_craBuildSourcesCol(p)}
-    ${_craBuildRotationMapCol(p)}
-    ${_craBuildImpactCol(p)}
-  </div>`;
+  content.innerHTML = `
+    ${_craBuildRotationObjectiveBanner(p)}
+    <div class="cra-columns">
+      ${_craBuildSourcesCol(p)}
+      ${_craBuildRotationMapCol(p)}
+      ${_craBuildImpactCol(p)}
+    </div>`;
 
   // Expand first non-empty category automatically
   const firstGroup = content.querySelector(".cra-cat-group");
   if (firstGroup) _craCatToggle(firstGroup);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRA Rotation Objective Banner (UI Clarity Sprint — Problem 3)
+// Presentation-only — auto-classifies based on source category distribution.
+// No changes to CRA logic, scoring, or proposal generation.
+// ─────────────────────────────────────────────────────────────────────────────
+function _craBuildRotationObjectiveBanner(p) {
+  const sources = (p.sources || []).filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
+  if (!sources.length) return "";
+
+  const counts = {};
+  for (const s of sources) {
+    const cat = s.category || "UNKNOWN";
+    counts[cat] = (counts[cat] || 0) + 1;
+  }
+  const total = sources.length;
+
+  const sigDet  = counts["SIGNAL_DETERIORATION"]    || 0;
+  const owRed   = counts["OVERWEIGHT_REDUCTION"]     || 0;
+  const taxExit = counts["TAX_AWARE_EXIT"]           || 0;
+  const lowConv = counts["LOW_CONVICTION_REDUCTION"] || 0;
+  const stratEx = counts["STRATEGIC_EXIT"]           || 0;
+
+  let objective, objectiveCls, objectiveDesc;
+  const majorityThreshold = total * 0.5;
+
+  if (sigDet + stratEx >= majorityThreshold) {
+    objective     = "HIGHER CONVICTION";
+    objectiveCls  = "cra-obj-conviction";
+    objectiveDesc = "Primary driver: rotate out of deteriorating signals into higher-conviction positions.";
+  } else if (owRed >= majorityThreshold) {
+    objective     = "ALLOCATION REPAIR";
+    objectiveCls  = "cra-obj-allocation";
+    objectiveDesc = "Primary driver: reduce overweight nodes to restore mandate-aligned allocation.";
+  } else if (taxExit >= majorityThreshold) {
+    objective     = "TAX HARVESTING";
+    objectiveCls  = "cra-obj-tax";
+    objectiveDesc = "Primary driver: exit tax-inefficient positions to improve after-tax returns.";
+  } else if (lowConv >= majorityThreshold) {
+    objective     = "OPPORTUNITY COST REDUCTION";
+    objectiveCls  = "cra-obj-oppcost";
+    objectiveDesc = "Primary driver: replace passive exposure with higher-conviction equity candidates.";
+  } else {
+    objective     = "MIXED OBJECTIVE";
+    objectiveCls  = "cra-obj-mixed";
+    objectiveDesc = "Multiple drivers: signal deterioration, allocation repair, and/or tax considerations present.";
+  }
+
+  const catChips = [
+    sigDet  ? `<span class="cra-obj-chip">Signal Det. ×${sigDet}</span>`  : "",
+    stratEx ? `<span class="cra-obj-chip">Strategic ×${stratEx}</span>`   : "",
+    owRed   ? `<span class="cra-obj-chip">OW Reduction ×${owRed}</span>`  : "",
+    taxExit ? `<span class="cra-obj-chip">Tax Exit ×${taxExit}</span>`    : "",
+    lowConv ? `<span class="cra-obj-chip">Opp. Cost ×${lowConv}</span>`   : "",
+  ].filter(Boolean).join("");
+
+  return `<div class="cra-rotation-objective-banner ${objectiveCls}">
+    <div class="cra-obj-left">
+      <div class="cra-obj-label">Rotation Objective</div>
+      <div class="cra-obj-value">${escHtml(objective)}</div>
+    </div>
+    <div class="cra-obj-right">
+      <div class="cra-obj-desc">${escHtml(objectiveDesc)}</div>
+      <div class="cra-obj-chips">${catChips}</div>
+    </div>
+  </div>`;
 }
 
 // ── Column 1: Capital Sources ────────────────────────────────────────────────

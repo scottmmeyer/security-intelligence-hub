@@ -1167,6 +1167,8 @@ def run_analysis(
         # DIL Phase 1 — FMP fundamental context for Decision Intelligence Layer (display-only)
         # Governance: read-only display fields. Never fed back into any scoring system.
         "fmp_data_by_symbol": _build_fmp_payload([h.symbol for h in investable]),
+        # DIL Phase 2 — recent price context (display-only; no scoring impact)
+        "price_context_by_symbol": _build_price_context_payload([h.symbol for h in investable]),
         # ISSUE-04D — pass analyst consensus for Class B2
         "dislocation_by_symbol": _build_dislocation_payload(
             overlays, ac_by_sym=_build_consensus_payload()
@@ -1213,7 +1215,72 @@ def _build_fvi_payload(symbols: list[str]) -> dict[str, dict]:
         return {}
 
 
-def _build_fmp_payload(symbols: list[str]) -> dict[str, dict]:
+def _build_price_context_payload(symbols: list[str]) -> dict[str, dict]:
+    """DIL Phase 2 — recent price context for Decision Intelligence Layer (display-only).
+
+    Fetches 1D/5D/1M returns, 52-week range position, and next earnings date via yfinance.
+    Governance: additive display layer only. Never injected into CW-DAS, RPS, ESS, or any
+    scoring system. Falls back gracefully to empty dict if yfinance unavailable.
+    """
+    if not symbols:
+        return {}
+    try:
+        import yfinance as yf
+        import datetime as dt
+
+        result: dict[str, dict] = {}
+        tickers = yf.Tickers(" ".join(symbols))
+
+        for sym in symbols:
+            try:
+                ticker = tickers.tickers.get(sym.upper())
+                if ticker is None:
+                    continue
+                info = ticker.fast_info
+                hist = ticker.history(period="1mo", auto_adjust=True)
+                if hist.empty:
+                    continue
+
+                current = float(hist["Close"].iloc[-1])
+                price_1d_ago = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else current
+                price_5d_ago = float(hist["Close"].iloc[-6]) if len(hist) >= 6 else float(hist["Close"].iloc[0])
+                price_1m_ago = float(hist["Close"].iloc[0])
+
+                high_52w = getattr(info, "year_high", None)
+                low_52w  = getattr(info, "year_low", None)
+                pct_52w  = None
+                if high_52w and low_52w and high_52w > low_52w:
+                    pct_52w = round((current - low_52w) / (high_52w - low_52w) * 100, 1)
+
+                entry: dict = {
+                    "current_price": round(current, 2),
+                    "return_1d":     round((current - price_1d_ago) / price_1d_ago * 100, 2) if price_1d_ago else None,
+                    "return_5d":     round((current - price_5d_ago) / price_5d_ago * 100, 2) if price_5d_ago else None,
+                    "return_1m":     round((current - price_1m_ago) / price_1m_ago * 100, 2) if price_1m_ago else None,
+                    "high_52w":      round(high_52w, 2) if high_52w else None,
+                    "low_52w":       round(low_52w, 2) if low_52w else None,
+                    "pct_52w_range": pct_52w,
+                }
+
+                # Next earnings date (best-effort)
+                try:
+                    cal = ticker.calendar
+                    if cal is not None and not cal.empty:
+                        earnings_col = [c for c in cal.columns if "Earnings" in str(c)]
+                        if earnings_col:
+                            ed = cal[earnings_col[0]].iloc[0]
+                            entry["next_earnings_date"] = str(ed)[:10] if ed else None
+                except Exception:
+                    pass
+
+                result[sym.upper()] = entry
+            except Exception:
+                continue
+
+        return result
+    except Exception:
+        return {}
+
     """Load FMP enriched universe fields for DIL Phase 1 (display-only).
 
     Exposes fundamental context fields (EPS surprise, beat rate, revenue
@@ -1501,6 +1568,8 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
     # DIL Phase 1 — FMP fundamental context (display-only; no scoring impact)
     _held_syms = [row.get("symbol", "") for row in holdings_for_drilldown if row.get("symbol")]
     result["fmp_data_by_symbol"] = _build_fmp_payload(_held_syms)
+    # DIL Phase 2 — recent price context (display-only; no scoring impact)
+    result["price_context_by_symbol"] = _build_price_context_payload(_held_syms)
 
     # dislocation_by_symbol (ISSUE-04D — informational, Classes A1/D1/B2)
     result["dislocation_by_symbol"] = _build_dislocation_payload(

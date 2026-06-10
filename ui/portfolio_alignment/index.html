@@ -2677,6 +2677,241 @@
         text-decoration: none;
       }
       .cii-about-btn:hover { opacity: 0.85; }
+
+      /* ── UI Clarity Sprint — Problem 1: Mandate Dual-View Framing ─────────── */
+      .optview-mandate-dualview {
+        border: 1px solid #d4e8f5;
+        border-radius: 6px;
+        background: #f0f7fc;
+        margin-bottom: 10px;
+        overflow: hidden;
+      }
+      .optview-dualview-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 8px 12px;
+        border-bottom: 1px solid #d4e8f5;
+      }
+      .optview-dualview-row:last-child { border-bottom: none; }
+      .optview-dualview-override-row { background: #fff8e6; }
+      .optview-view-badge {
+        flex-shrink: 0;
+        font-size: 0.62rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 2px 6px;
+        border-radius: 3px;
+        white-space: nowrap;
+        margin-top: 2px;
+      }
+      .optview-view-classical {
+        background: #d4e8f5;
+        color: #1a5c8a;
+        border: 1px solid #aacfe5;
+      }
+      .optview-view-override {
+        background: #fff0b3;
+        color: #7a5e00;
+        border: 1px solid #e6c900;
+      }
+      .optview-dualview-text {
+        font-size: 0.78rem;
+        color: #333;
+        line-height: 1.45;
+      }
+
+      /* ── UI Clarity Sprint — Problem 3: CRA Rotation Objective Banner ────── */
+      .cra-rotation-objective-banner {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        border-radius: 7px;
+        margin-bottom: 14px;
+        overflow: hidden;
+        border: 1px solid #d8e8f4;
+      }
+      .cra-obj-left {
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 140px;
+        flex-shrink: 0;
+      }
+      .cra-obj-right {
+        padding: 10px 14px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 6px;
+        border-left: 1px solid rgba(0,0,0,0.08);
+        flex: 1;
+      }
+      .cra-obj-label {
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+        opacity: 0.7;
+        margin-bottom: 4px;
+      }
+      .cra-obj-value {
+        font-size: 0.95rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .cra-obj-desc { font-size: 0.78rem; line-height: 1.45; opacity: 0.9; }
+      .cra-obj-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+      .cra-obj-chip {
+        font-size: 0.67rem;
+        background: rgba(0,0,0,0.08);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-weight: 600;
+      }
+      /* Objective color variants */
+      .cra-obj-conviction  { background: #e8f5e9; color: #1b5e20; border-color: #a5d6a7; }
+      .cra-obj-allocation  { background: #e3f2fd; color: #0d47a1; border-color: #90caf9; }
+      .cra-obj-tax         { background: #fce4ec; color: #880e4f; border-color: #f48fb1; }
+      .cra-obj-oppcost     { background: #fff8e1; color: #7a5e00; border-color: #ffe082; }
+      .cra-obj-mixed       { background: #f3e5f5; color: #4a148c; border-color: #ce93d8; }
+
+      /* ── UI Clarity Sprint — Problem 4: DIL Price Context ────────────────── */
+      .dil-price-context {
+        margin-top: 8px;
+        padding: 8px 10px;
+        background: #f5f8fc;
+        border: 1px solid #d4e2ee;
+        border-radius: 5px;
+      }
+      .dil-price-ctx-title {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #1a5c8a;
+        margin-bottom: 6px;
+      }
+      .dil-price-ctx-note {
+        font-size: 0.62rem;
+        font-weight: 400;
+        color: #888;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+      .dil-price-ctx-grid {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+      }
+      .dil-price-ctx-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 44px;
+      }
+      .dil-pc-label {
+        font-size: 0.6rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #888;
+        letter-spacing: 0.08em;
+      }
+      .dil-pc-val {
+        font-size: 0.8rem;
+        font-weight: 700;
+        font-family: monospace;
+        color: #222;
+      }
+      .dil-earnings-note {
+        font-size: 0.7rem;
+        color: #555;
+        margin-top: 4px;
+      }
+
+      /* ── UI Clarity Sprint — Problem 5: Portfolio Construction Style Card ── */
+      .pcs-card {
+        background: linear-gradient(135deg, #f0f6fc 0%, #e8f0fb 100%);
+        border: 1px solid #c5d8ef;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin-bottom: 12px;
+      }
+      .pcs-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .pcs-title {
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #1a5c8a;
+      }
+      .pcs-style-badge {
+        font-size: 0.68rem;
+        font-weight: 700;
+        background: #1a5c8a;
+        color: #fff;
+        padding: 2px 8px;
+        border-radius: 3px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .pcs-metrics-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 10px;
+      }
+      .pcs-metric {
+        text-align: center;
+        flex: 1;
+        max-width: 140px;
+      }
+      .pcs-metric-val {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: #1a5c8a;
+        line-height: 1.1;
+      }
+      .pcs-metric-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #333;
+        margin-top: 2px;
+      }
+      .pcs-metric-sub {
+        font-size: 0.62rem;
+        color: #888;
+        margin-top: 1px;
+      }
+      .pcs-metric-divider {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #aaa;
+        flex-shrink: 0;
+      }
+      .pcs-interpretation {
+        font-size: 0.78rem;
+        color: #444;
+        line-height: 1.5;
+        border-top: 1px solid #c5d8ef;
+        padding-top: 8px;
+        margin-top: 2px;
+      }
+      .pcs-governance-note {
+        font-size: 0.62rem;
+        color: #aaa;
+        margin-top: 6px;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -2936,6 +3171,9 @@
 
         <!-- Run summary KPIs -->
         <div class="run-summary" id="runSummary"></div>
+
+        <!-- UI Clarity Sprint Problem 5: Portfolio Construction Style framing card -->
+        <div id="portfolioConstructionStyleContainer"></div>
 
         <!-- UX-PA-09: Portfolio Alignment Narrative (What matters right now) -->
         <div id="narrativeSummaryContainer"></div>
