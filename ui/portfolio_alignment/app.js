@@ -4375,6 +4375,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const ov  = overlayBySymbol[symUpper] || {};
     const ucf = ucfBySymbol[symUpper]     || {};
     const fid = fidBySymbol[symUpper]     || {};
+    const ac  = (renderReductionQueue._consBySymbol || {})[symUpper] || {};
 
     const composite    = parseFloat(ov.composite_score || fid.composite_score || 0);
     const essOv        = ov.ess_score_text || "";
@@ -4387,6 +4388,25 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const ucfRank      = ucf.ucf_rank   || "";
     const ucfScore     = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score) : null;
     const sigSummary   = ucf.signal_summary || s.evidence_summary || "";
+
+    // Analyst consensus (Yahoo supplemental)
+    const abr           = ac.abr           != null ? parseFloat(ac.abr).toFixed(2) : null;
+    const analystCount  = ac.analyst_count || null;
+    const priceTarget   = ac.price_target  != null ? parseFloat(ac.price_target).toFixed(2) : null;
+    const upsidePct     = ac.upside_pct    != null ? parseFloat(ac.upside_pct).toFixed(1) : null;
+    const consLabel     = ac.consensus_label || null;
+    const consStrength  = ac.consensus_strength || null;
+    const consRefresh   = ac.refresh_date   || null;
+
+    // Fidelity StarMine rating + consensus matrix alignment
+    const fidRating     = fid.fidelity_rating    || null;
+    const fidDirection  = fid.fidelity_direction || null;
+    const consMat       = fid.consensus_matrix   || {};
+    const consMatClass  = consMat.classification || null;  // FULL_ALIGNMENT_BULLISH / MAJOR_DIVERGENCE / PARTIAL_ALIGNMENT
+    const essDir        = consMat.ess_direction    || null;
+    const yahooDir      = consMat.yahoo_direction  || null;
+    const zacksDir      = consMat.zacks_direction  || null;
+    const sigCount      = consMat.signals_available || 0;
 
     const _valClass = (v, good, bad) => {
       if (!v) return "";
@@ -4432,12 +4452,30 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       <div class="rq-profile-grid">
         <div>
           <div class="rq-profile-section-title">Signal Intelligence</div>
-          ${profileItem("ESS Score", essOv || "—", _valClass(essOv, "BULLISH", "BEARISH"))}
+          ${profileItem("ESS (StarMine)", fidRating || essOv || "—", _valClass(fidRating || essOv, "BULLISH", "BEARISH"))}
           ${profileItem("Signal Direction", sigDir || "—", _valClass(sigDir, "BULLISH", "BEARISH"))}
           ${profileItem("Zacks Rating", zacks || "—", "")}
           ${profileItem("Danelfin Score", danelfin || "—", "")}
           ${profileItem("Composite Score", composite > 0 ? composite.toFixed(2) : "—", composite > 3 ? "val-bullish" : composite > 0 && composite < 2.5 ? "val-bearish" : "val-neutral")}
           ${replayPct != null ? profileItem("Replay Percentile", replayPct.toFixed(0) + "th", replayPct >= 50 ? "val-bullish" : "val-bearish") : ""}
+        </div>
+        <div>
+          <div class="rq-profile-section-title">Analyst Consensus &amp; Validation</div>
+          ${consLabel ? profileItem("Consensus", consLabel.replace(/_/g, " "), _valClass(consLabel, "BUY", "SELL")) : ""}
+          ${abr ? profileItem("ABR", abr + (analystCount ? " (" + analystCount + " analysts)" : ""), parseFloat(abr) <= 2 ? "val-bullish" : parseFloat(abr) >= 3.5 ? "val-bearish" : "val-neutral") : ""}
+          ${priceTarget ? profileItem("Price Target", "$" + priceTarget, "") : ""}
+          ${upsidePct != null ? profileItem("Upside vs Target", upsidePct + "%", parseFloat(upsidePct) > 15 ? "val-bullish" : parseFloat(upsidePct) < -5 ? "val-bearish" : "val-neutral") : ""}
+          ${consRefresh ? `<div style="font-size:0.65rem;color:var(--muted);margin-top:4px;">Consensus as of ${escHtml(consRefresh)}</div>` : ""}
+          ${consMatClass ? `
+          <div class="rq-profile-section-title" style="margin-top:10px;">Signal Agreement</div>
+          <div class="rq-profile-row-item">
+            <span class="rq-profile-lbl">Alignment</span>
+            <span class="rq-profile-val ${_valClass(consMatClass, 'BULLISH', 'DIVERGENCE')}" style="font-size:0.7rem">${escHtml(consMatClass.replace(/_/g,' '))}</span>
+          </div>
+          ${essDir   ? profileItem("ESS direction",   essDir,   _valClass(essDir,   "BULLISH", "BEARISH")) : ""}
+          ${yahooDir ? profileItem("Yahoo consensus", yahooDir, _valClass(yahooDir, "BULLISH", "BEARISH")) : ""}
+          ${zacksDir ? profileItem("Zacks direction", zacksDir, _valClass(zacksDir, "BULLISH", "BEARISH")) : ""}
+          ` : ""}
         </div>
         <div>
           <div class="rq-profile-section-title">Portfolio Context</div>
@@ -4449,13 +4487,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
           ${ucfLabel ? profileItem("UCF Label", ucfLabel, _valClass(ucfLabel, "CONVICTION", "TRIM_WATCH")) : ""}
           ${ucfScore != null ? profileItem("UCF Score", ucfScore.toFixed(1), ucfScore >= 60 ? "val-bullish" : ucfScore < 30 ? "val-bearish" : "val-neutral") : ""}
           ${ucfRank ? profileItem("UCF Rank", "#" + ucfRank + " of portfolio", "") : ""}
-        </div>
-        <div>
-          <div class="rq-profile-section-title">Actions</div>
           ${fviBadge ? `<div class="rq-profile-row-item"><span class="rq-profile-lbl">FVI Tier</span><span class="rq-profile-val">${fviBadge}</span></div>` : ""}
           ${profileItem("Policy State", blocked ? "🔒 DO_NOT_SELL" : deferred ? "⏸ SELL_LAST" : "Executable", blocked ? "val-bearish" : "")}
-          ${profileItem("Sizing", sizing, "")}
-          ${profileItem("Priority", pri, pri === "URGENT" ? "val-bearish" : pri === "HIGH" ? "val-bearish" : "val-neutral")}
           <div style="margin-top:8px;">${fidelityLink}</div>
         </div>
         <div class="rq-rationale" style="grid-column:1/-1;">
@@ -5499,6 +5532,8 @@ async function loadCRAProposal() {
     for (const ov of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
       if (ov && ov.symbol) _ovBySymArch[(ov.symbol || "").toUpperCase()] = ov;
     }
+    const _consBySymArch = (_lastAnalysisData && _lastAnalysisData.analyst_consensus_by_symbol) || {};
+    renderReductionQueue._consBySymbol = _consBySymArch;  // pass via function property (avoids signature change)
     renderReductionQueue(
       _craProposal.sources || [],
       _craProposal.total_capital_pool,
