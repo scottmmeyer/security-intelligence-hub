@@ -2912,6 +2912,153 @@
         margin-top: 6px;
         font-style: italic;
       }
+
+      /* ── MARKET-CONTEXT-01: Deployment Timing & Macro Event Awareness ─────── */
+      .mctx-card {
+        background: #f8f9fc;
+        border: 1px solid #d0d9e8;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+      }
+      .mctx-header {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .mctx-title {
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #1a5c8a;
+      }
+      .mctx-subtitle {
+        font-size: 0.65rem;
+        color: #888;
+      }
+      /* Timing Banner */
+      .mctx-timing-banner {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+      }
+      .mctx-posture-normal   { background: #e8f5e9; border: 1px solid #a5d6a7; }
+      .mctx-posture-moderate { background: #fff8e1; border: 1px solid #ffe082; }
+      .mctx-posture-dense    { background: #fff3e0; border: 1px solid #ffcc80; }
+      .mctx-posture-icon { font-size: 1.1rem; flex-shrink: 0; }
+      .mctx-posture-body { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+      .mctx-posture-label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #333;
+      }
+      .mctx-posture-msg { font-size: 0.76rem; color: #444; }
+      .mctx-posture-advisory {
+        font-size: 0.61rem;
+        color: #888;
+        font-style: italic;
+        white-space: nowrap;
+      }
+      /* Sections */
+      .mctx-sections { display: flex; flex-direction: column; gap: 4px; }
+      .mctx-section { border: 1px solid #dde6f0; border-radius: 5px; overflow: hidden; }
+      .mctx-section-toggle {
+        width: 100%;
+        text-align: left;
+        background: #eef3f9;
+        border: none;
+        padding: 6px 10px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #1a5c8a;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .mctx-section-toggle:hover { background: #dde8f5; }
+      .mctx-count-badge {
+        margin-left: auto;
+        font-size: 0.62rem;
+        background: #1a5c8a;
+        color: #fff;
+        padding: 1px 6px;
+        border-radius: 10px;
+        font-weight: 600;
+      }
+      .mctx-section-body {
+        display: none;
+        padding: 6px 8px;
+        background: #fff;
+      }
+      .mctx-section-body.mctx-open { display: block; }
+      /* Tables */
+      .mctx-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.74rem;
+      }
+      .mctx-table thead tr { background: #f0f4f9; }
+      .mctx-table th {
+        text-align: left;
+        padding: 4px 8px;
+        font-size: 0.63rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #555;
+        font-weight: 700;
+        border-bottom: 1px solid #dde6f0;
+      }
+      .mctx-table td { padding: 4px 8px; border-bottom: 1px solid #eef2f7; }
+      .mctx-table tr:last-child td { border-bottom: none; }
+      .mctx-td-event { color: #222; }
+      .mctx-td-sym   { font-family: monospace; font-size: 0.78rem; }
+      .mctx-td-date  { color: #555; font-size: 0.72rem; font-family: monospace; white-space: nowrap; }
+      .mctx-td-days  { text-align: right; white-space: nowrap; }
+      .mctx-empty { color: #aaa; font-style: italic; padding: 8px; }
+      /* Days badges */
+      .mctx-days-badge {
+        font-size: 0.67rem;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 3px;
+        display: inline-block;
+        white-space: nowrap;
+      }
+      .mctx-days-urgent  { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+      .mctx-days-near    { background: #fff8e1; color: #7a5e00; border: 1px solid #ffe082; }
+      .mctx-days-far     { background: #f0f4f9; color: #555;    border: 1px solid #c9d8eb; }
+      /* Context badges */
+      .mctx-ctx-badge {
+        font-size: 0.63rem;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+      }
+      .mctx-ctx-deploy  { background: #e3f2fd; color: #0d47a1; }
+      .mctx-ctx-reduce  { background: #fce4ec; color: #880e4f; }
+      .mctx-ctx-both    { background: #f3e5f5; color: #4a148c; }
+      .mctx-ctx-holding { background: #f1f8e9; color: #33691e; }
+      /* Governance footer */
+      .mctx-governance {
+        font-size: 0.61rem;
+        color: #aaa;
+        margin-top: 8px;
+        font-style: italic;
+        border-top: 1px solid #dde6f0;
+        padding-top: 6px;
+      }
     </style>
   </head>
   <body>
@@ -3174,6 +3321,9 @@
 
         <!-- UI Clarity Sprint Problem 5: Portfolio Construction Style framing card -->
         <div id="portfolioConstructionStyleContainer"></div>
+
+        <!-- MARKET-CONTEXT-01: Deployment Timing & Macro Event Awareness -->
+        <div id="marketContextContainer"></div>
 
         <!-- UX-PA-09: Portfolio Alignment Narrative (What matters right now) -->
         <div id="narrativeSummaryContainer"></div>

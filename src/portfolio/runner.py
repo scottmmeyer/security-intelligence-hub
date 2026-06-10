@@ -1175,6 +1175,15 @@ def run_analysis(
         ),
     }
 
+    # MARKET-CONTEXT-01 — Deployment timing & macro event awareness (display-only)
+    # Governance: additive display layer; no scoring, ranking, or recommendation impact.
+    result["market_context"] = _build_market_context_payload(
+        price_context_by_symbol=result.get("price_context_by_symbol", {}),
+        deployment_queue=result.get("deployment_queue", {}),
+        security_overlays=overlays,
+        investable_symbols=[h.symbol for h in investable],
+    )
+
     # ISSUE-12B — Persist dislocation detections for outcome tracking.
     # Governance: append-only, informational only. No scoring impact.
     _disloc_payload = result["dislocation_by_symbol"]
@@ -1307,6 +1316,165 @@ def _build_price_context_payload(symbols: list[str]) -> dict[str, dict]:
         }
     except Exception:
         return {}
+
+
+def _build_market_context_payload(
+    price_context_by_symbol: dict,
+    deployment_queue: dict,
+    security_overlays: list,
+    investable_symbols: list,
+) -> dict:
+    """MARKET-CONTEXT-01 — Deployment Timing & Macro Event Awareness (display-only).
+
+    Aggregates three display layers for operator timing awareness:
+      1. Macro events   — FOMC meetings, options expiry, index events (static 2026 calendar)
+      2. Portfolio events — upcoming earnings for holdings, DQ candidates, reduction candidates
+      3. Timing posture — EVENT_DENSE / MODERATE / NORMAL banner
+
+    Governance: additive display layer only. Never injected into CW-DAS, RPS, ESS,
+    DIL posture, PAP, CRA, or any scoring system. No recommendation influence.
+    """
+    import datetime as dt
+
+    today = dt.date.today()
+    MACRO_HORIZON_DAYS = 14
+    EARNINGS_HORIZON_DAYS = 30
+
+    # ── Static 2026 macro calendar ────────────────────────────────────────────
+    _MACRO_STATIC = [
+        # FOMC decision dates (pre-announced by Federal Reserve for full calendar year)
+        {"event": "FOMC Meeting",          "date": "2026-01-29", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-03-18", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-05-07", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-06-18", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-07-30", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-09-17", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-10-29", "category": "FED"},
+        {"event": "FOMC Meeting",          "date": "2026-12-10", "category": "FED"},
+        # Quarterly Triple Witching (3rd Friday of March/June/Sep/Dec)
+        {"event": "Triple Witching",       "date": "2026-03-20", "category": "OPTIONS"},
+        {"event": "Triple Witching",       "date": "2026-06-19", "category": "OPTIONS"},
+        {"event": "Triple Witching",       "date": "2026-09-18", "category": "OPTIONS"},
+        {"event": "Triple Witching",       "date": "2026-12-18", "category": "OPTIONS"},
+        # Russell Index Reconstitution (effective last Friday of June)
+        {"event": "Russell Reconstitution","date": "2026-06-26", "category": "INDEX"},
+    ]
+
+    macro_events: list[dict] = []
+    horizon = today + dt.timedelta(days=MACRO_HORIZON_DAYS)
+    for e in _MACRO_STATIC:
+        try:
+            edate = dt.date.fromisoformat(e["date"])
+            days_away = (edate - today).days
+            if 0 <= days_away <= MACRO_HORIZON_DAYS:
+                macro_events.append({
+                    "event":     e["event"],
+                    "date":      e["date"],
+                    "days_away": days_away,
+                    "category":  e["category"],
+                })
+        except Exception:
+            continue
+
+    # Monthly options expiry (3rd Friday of each month, deduped against triple witching)
+    def _third_friday(year: int, month: int):
+        import calendar as cal_mod
+        weeks = cal_mod.monthcalendar(year, month)
+        fridays = [w[4] for w in weeks if w[4] != 0]
+        return dt.date(year, month, fridays[2]) if len(fridays) >= 3 else None
+
+    existing_dates = {e["date"] for e in macro_events}
+    for offset in range(3):
+        m = today.month + offset
+        y = today.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        opex = _third_friday(y, m)
+        if opex and today <= opex <= horizon and opex.isoformat() not in existing_dates:
+            macro_events.append({
+                "event":     "Monthly Options Expiry",
+                "date":      opex.isoformat(),
+                "days_away": (opex - today).days,
+                "category":  "OPTIONS",
+            })
+            existing_dates.add(opex.isoformat())
+
+    macro_events.sort(key=lambda x: x["days_away"])
+
+    # ── Portfolio earnings events ─────────────────────────────────────────────
+    dq_syms   = {(e.get("symbol") or "").upper() for e in (deployment_queue.get("queue") or [])[:15]}
+    held_syms = {(s or "").upper() for s in (investable_symbols or [])}
+
+    red_syms: set = set()
+    try:
+        ranked = sorted(
+            [o for o in (security_overlays or []) if float(o.get("reduction_priority_score") or 0) > 0],
+            key=lambda o: -float(o.get("reduction_priority_score") or 0),
+        )
+        red_syms = {(o.get("symbol") or "").upper() for o in ranked[:15]}
+    except Exception:
+        pass
+
+    portfolio_events: list[dict] = []
+    seen: set = set()
+    for sym_upper, pc in (price_context_by_symbol or {}).items():
+        edate_str = pc.get("next_earnings_date")
+        if not edate_str:
+            continue
+        try:
+            edate = dt.date.fromisoformat(str(edate_str)[:10])
+        except Exception:
+            continue
+        days_away = (edate - today).days
+        if not (0 <= days_away <= EARNINGS_HORIZON_DAYS):
+            continue
+        if sym_upper in seen:
+            continue
+        seen.add(sym_upper)
+
+        if sym_upper in dq_syms and sym_upper in red_syms:
+            context = "DEPLOYMENT_AND_REDUCTION"
+        elif sym_upper in dq_syms:
+            context = "TOP_DEPLOYMENT_CANDIDATE"
+        elif sym_upper in red_syms:
+            context = "REDUCTION_CANDIDATE"
+        elif sym_upper in held_syms:
+            context = "CURRENT_HOLDING"
+        else:
+            continue  # exclude symbols outside our relevant universe
+
+        portfolio_events.append({
+            "symbol":    sym_upper,
+            "event":     "Earnings",
+            "date":      str(edate_str)[:10],
+            "days_away": days_away,
+            "context":   context,
+        })
+
+    portfolio_events.sort(key=lambda x: x["days_away"])
+    portfolio_events = portfolio_events[:20]
+
+    # ── Deployment timing posture ─────────────────────────────────────────────
+    events_7d   = sum(1 for e in macro_events    if e["days_away"] <= 7)
+    earnings_7d = sum(1 for e in portfolio_events if e["days_away"] <= 7)
+    total_7d    = events_7d + earnings_7d
+
+    if total_7d >= 4:
+        timing_posture = "EVENT_DENSE"
+    elif total_7d >= 2:
+        timing_posture = "MODERATE_ACTIVITY"
+    else:
+        timing_posture = "NORMAL"
+
+    return {
+        "as_of_date":       today.isoformat(),
+        "macro_events":     macro_events,
+        "portfolio_events": portfolio_events,
+        "market_events":    [],   # reserved: future IPO / geopolitical events
+        "timing_posture":   timing_posture,
+        "events_7d":        events_7d,
+        "earnings_7d":      earnings_7d,
+        "total_events_7d":  total_7d,
+    }
 
 
 def _build_consensus_payload() -> dict:
@@ -1570,6 +1738,13 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
     result["fmp_data_by_symbol"] = _build_fmp_payload(_held_syms)
     # DIL Phase 2 — recent price context (display-only; no scoring impact)
     result["price_context_by_symbol"] = _build_price_context_payload(_held_syms)
+    # MARKET-CONTEXT-01 — Deployment timing & macro event awareness (display-only)
+    result["market_context"] = _build_market_context_payload(
+        price_context_by_symbol=result.get("price_context_by_symbol", {}),
+        deployment_queue=result.get("deployment_queue", {}),
+        security_overlays=result.get("security_overlays", []),
+        investable_symbols=_held_syms,
+    )
 
     # dislocation_by_symbol (ISSUE-04D — informational, Classes A1/D1/B2)
     result["dislocation_by_symbol"] = _build_dislocation_payload(

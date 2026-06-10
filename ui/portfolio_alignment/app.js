@@ -1072,6 +1072,7 @@ function renderResults(data) {
   _lastAnalysisData = data;  // Phase E: make STI profiles available to card helpers
   renderKPIs(data);
   renderPortfolioConstructionStyle(data);   // UI Clarity Sprint — Problem 5
+  renderMarketContext(data);                // MARKET-CONTEXT-01
   renderNarrativeSummary(data);      // UX-PA-09
   renderMultiDimScores(data);
   renderMandatePanel(data);
@@ -1169,6 +1170,131 @@ function _kpiTypedRecommendations(recs) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 6.2.2 — Multi-Dimensional Scorecards
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKET-CONTEXT-01 — Deployment Timing & Macro Event Awareness
+// Presentation-only. No changes to scores, rankings, recommendations, or
+// any scoring system. Operator timing awareness only.
+// ─────────────────────────────────────────────────────────────────────────────
+function renderMarketContext(data) {
+  const el = document.getElementById("marketContextContainer");
+  if (!el) return;
+
+  const mc = data.market_context;
+  if (!mc) { el.innerHTML = ""; return; }
+
+  const posture     = mc.timing_posture  || "NORMAL";
+  const total7d     = mc.total_events_7d || 0;
+  const events7d    = mc.events_7d       || 0;
+  const earnings7d  = mc.earnings_7d     || 0;
+  const macroEvents = mc.macro_events    || [];
+  const portEvents  = mc.portfolio_events || [];
+
+  // ── Deployment Timing Banner ───────────────────────────────────────────────
+  const postureConfig = {
+    EVENT_DENSE:       { cls: "mctx-posture-dense",    icon: "⚡", label: "EVENT-DENSE PERIOD",
+      msg: `${total7d} major market events within the next 7 days. Operator may wish to consider staged deployment.` },
+    MODERATE_ACTIVITY: { cls: "mctx-posture-moderate", icon: "◈",  label: "MODERATE ACTIVITY",
+      msg: `${total7d} notable market events approaching in the next 7 days.` },
+    NORMAL:            { cls: "mctx-posture-normal",   icon: "◎",  label: "NORMAL ENVIRONMENT",
+      msg: total7d === 0
+        ? "No major market events scheduled in the next 7 days."
+        : `${total7d} event in the next 7 days — no unusual market density.` },
+  };
+  const pc = postureConfig[posture] || postureConfig.NORMAL;
+
+  const bannerHtml = `<div class="mctx-timing-banner ${escHtml(pc.cls)}">
+    <span class="mctx-posture-icon">${pc.icon}</span>
+    <div class="mctx-posture-body">
+      <span class="mctx-posture-label">${escHtml(pc.label)}</span>
+      <span class="mctx-posture-msg">${escHtml(pc.msg)}</span>
+    </div>
+    <span class="mctx-posture-advisory">Informational only — no scoring or recommendation effect.</span>
+  </div>`;
+
+  // ── Helper: days-away badge ────────────────────────────────────────────────
+  function _daysBadge(d) {
+    const cls = d <= 3 ? "mctx-days-urgent" : d <= 7 ? "mctx-days-near" : "mctx-days-far";
+    return `<span class="mctx-days-badge ${cls}">${d === 0 ? "TODAY" : d === 1 ? "Tomorrow" : `${d}d`}</span>`;
+  }
+
+  // ── Macro Events table ─────────────────────────────────────────────────────
+  const catIcons = { FED: "🏛", OPTIONS: "📋", INDEX: "📊" };
+  const macroRows = macroEvents.length
+    ? macroEvents.map(e => `<tr>
+        <td class="mctx-td-event">${catIcons[e.category] || "●"} ${escHtml(e.event)}</td>
+        <td class="mctx-td-date">${escHtml(e.date)}</td>
+        <td class="mctx-td-days">${_daysBadge(e.days_away)}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="3" class="mctx-empty">No macro events in the next 14 days.</td></tr>`;
+
+  // ── Portfolio Earnings table ───────────────────────────────────────────────
+  const contextLabels = {
+    TOP_DEPLOYMENT_CANDIDATE:   { cls: "mctx-ctx-deploy",  label: "Deploy Candidate" },
+    REDUCTION_CANDIDATE:        { cls: "mctx-ctx-reduce",  label: "Reduction Target" },
+    DEPLOYMENT_AND_REDUCTION:   { cls: "mctx-ctx-both",    label: "Deploy + Reduce" },
+    CURRENT_HOLDING:            { cls: "mctx-ctx-holding", label: "Holding" },
+  };
+  const portRows = portEvents.length
+    ? portEvents.map(e => {
+        const ctxCfg = contextLabels[e.context] || { cls: "", label: e.context };
+        return `<tr>
+          <td class="mctx-td-sym"><strong>${escHtml(e.symbol)}</strong></td>
+          <td class="mctx-td-ctx"><span class="mctx-ctx-badge ${ctxCfg.cls}">${escHtml(ctxCfg.label)}</span></td>
+          <td class="mctx-td-date">${escHtml(e.date)}</td>
+          <td class="mctx-td-days">${_daysBadge(e.days_away)}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="4" class="mctx-empty">No earnings in the next 30 days for tracked symbols.</td></tr>`;
+
+  // ── Collapsible sections ───────────────────────────────────────────────────
+  const macroId  = "mctx-macro-body";
+  const portId   = "mctx-port-body";
+
+  el.innerHTML = `<div class="mctx-card">
+    <div class="mctx-header">
+      <span class="mctx-title">Market Context</span>
+      <span class="mctx-subtitle">Deployment Timing Awareness — ${escHtml(mc.as_of_date || "—")}</span>
+    </div>
+    ${bannerHtml}
+    <div class="mctx-sections">
+      <div class="mctx-section">
+        <button class="mctx-section-toggle" onclick="(function(b){const d=document.getElementById('${macroId}');if(d){d.classList.toggle('mctx-open');b.textContent=d.classList.contains('mctx-open')?'▾ Macro Events':'▸ Macro Events';}}).call(this, this)">
+          ▸ Macro Events <span class="mctx-count-badge">${macroEvents.length} in 14d</span>
+        </button>
+        <div class="mctx-section-body" id="${macroId}">
+          <table class="mctx-table">
+            <thead><tr><th>Event</th><th>Date</th><th>Days Away</th></tr></thead>
+            <tbody>${macroRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="mctx-section">
+        <button class="mctx-section-toggle" onclick="(function(b){const d=document.getElementById('${portId}');if(d){d.classList.toggle('mctx-open');b.textContent=d.classList.contains('mctx-open')?'▾ Portfolio Earnings':'▸ Portfolio Earnings';}}).call(this, this)">
+          ▸ Portfolio Earnings <span class="mctx-count-badge">${portEvents.length} in 30d</span>
+        </button>
+        <div class="mctx-section-body" id="${portId}">
+          <table class="mctx-table">
+            <thead><tr><th>Symbol</th><th>Role</th><th>Date</th><th>Days Away</th></tr></thead>
+            <tbody>${portRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="mctx-governance">Market Context is informational only. Events do not influence scores, rankings, recommendations, CRA, PAP, or DIL posture.</div>
+  </div>`;
+
+  // Auto-expand macro events section if there are urgent events (≤3 days)
+  if (macroEvents.some(e => e.days_away <= 3)) {
+    const bd = document.getElementById(macroId);
+    if (bd) bd.classList.add("mctx-open");
+  }
+  // Auto-expand portfolio earnings if any within 7 days
+  if (portEvents.some(e => e.days_away <= 7)) {
+    const bd = document.getElementById(portId);
+    if (bd) bd.classList.add("mctx-open");
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UI Clarity Sprint — Problem 5: Portfolio Construction Style framing card
 // Presentation-only. No changes to scoring, recommendations, or mandate logic.
