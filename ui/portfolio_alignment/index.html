@@ -877,6 +877,60 @@
         box-shadow: 0 6px 18px rgba(20,20,20,0.05);
         border-top: 3px solid var(--accent);
       }
+
+      /* ── ARCH-02: Reduction Queue ────────────────────────────────────────── */
+      .rq-section { margin-top: 16px; }
+      .rq-panel {
+        background: var(--panel); border: 1px solid var(--border);
+        border-radius: 14px; padding: 20px;
+        box-shadow: 0 6px 18px rgba(20,20,20,0.05);
+        border-top: 3px solid var(--sev-high);
+      }
+      .rq-header {
+        display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+      }
+      .rq-title {
+        font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.12em; color: var(--sev-high); margin: 0; flex: 1;
+      }
+      .rq-pool-badge {
+        display: inline-block; padding: 2px 10px; border-radius: 20px;
+        font-size: 0.72rem; font-weight: 700; background: var(--sev-high); color: #fff;
+      }
+      .rq-advisory {
+        font-size: 0.7rem; color: var(--muted); font-style: italic;
+      }
+      .rq-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+      .rq-table th {
+        font-size: 0.67rem; color: var(--muted); text-transform: uppercase;
+        letter-spacing: 0.06em; padding: 4px 8px; border-bottom: 1px solid var(--border);
+        text-align: left; white-space: nowrap;
+      }
+      .rq-table td { padding: 7px 8px; border-bottom: 1px solid #f0ebe5; vertical-align: middle; }
+      .rq-table tr:last-child td { border-bottom: none; }
+      .rq-table tr.rq-row-blocked { opacity: 0.62; background: #fdf4f4; }
+      .rq-rank { font-size: 0.72rem; color: var(--muted); font-weight: 600; text-align: right; }
+      .rq-sym { font-weight: 700; font-size: 0.85rem; color: var(--text); }
+      .rq-cat {
+        font-size: 0.72rem; color: var(--muted); margin-top: 2px;
+      }
+      .rq-pri {
+        display: inline-block; padding: 2px 8px; border-radius: 10px;
+        font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+      }
+      .rq-pri-URGENT   { background: #f8d7da; color: #721c24; }
+      .rq-pri-HIGH     { background: #fff3cd; color: #856404; }
+      .rq-pri-MODERATE { background: #d1ecf1; color: #0c5460; }
+      .rq-pri-LOW      { background: #e2e3e5; color: #383d41; }
+      .rq-pri-DEFER    { background: #f5f5f5; color: #888;    }
+      .rq-proceeds { font-weight: 600; color: var(--text); white-space: nowrap; }
+      .rq-sizing   { font-size: 0.7rem; color: var(--muted); }
+      .rq-policy-blocked  { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:10px; display:inline-block; }
+      .rq-policy-deferred { background: #fff3e0; color: #e07300; border: 1px solid #ffe0b2; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:10px; display:inline-block; }
+      .rq-policy-review   { background: #fff8e1; color: #b07800; border: 1px solid #ffe082; font-size:0.68rem; font-weight:700; padding:2px 7px; border-radius:10px; display:inline-block; }
+      .rq-fvi { font-size: 0.68rem; font-weight: 600; padding: 1px 6px; border-radius: 8px; }
+      .rq-no-data { padding: 20px; text-align: center; color: var(--muted); font-size: 0.8rem; font-style: italic; }
+      .rq-loading { padding: 16px; color: var(--muted); font-size: 0.8rem; }
       .dq-section-header {
         display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
       }
@@ -2795,6 +2849,9 @@
 
         <!-- Capital Deployment Queue (Phase 7.5C) -->
         <div id="deploymentQueueContainer" class="dq-section"></div>
+
+        <!-- ARCH-02: Reduction Queue — sibling to Deployment Queue -->
+        <div id="reductionQueueContainer" class="rq-section"></div>
 
         <!-- Capital Deployment Plan (Phase 7.5D) — rendered on demand -->
         <div id="deploymentPlanContainer" class="dq-section" style="display:none"></div>

@@ -1076,6 +1076,7 @@ function renderResults(data) {
   renderMandatePanel(data);
   renderReconciliationPanel(data);   // UX-PA-02
   renderDeploymentQueue(data);
+  renderReductionQueuePlaceholder(); // ARCH-02: placeholder until CRA loads
   renderDislocationWatchlist(data);  // ISSUE-04C
   renderAllocationMap(data.alignment || []);
   renderConcentration(data.concentration || {});
@@ -3864,7 +3865,7 @@ function renderDeploymentQueue(data) {
     ${cashContextHtml}
     ${cashSummaryHtml}
     <div class="da-action-section">
-      <div class="da-action-section-header">Recommended Actions — Top 10</div>
+      <div class="da-action-section-header">Deployment Candidates — Top 10</div>
       ${actionCardsHtml}
     </div>
     ${tableHtml}
@@ -4247,6 +4248,139 @@ function _dqToggleBlocked() {
 // ─────────────────────────────────────────────────────────────────────────────
 // ISSUE-04C — Dislocation Watchlist Panel
 // Governance: display-only. Backend payload authoritative. No scoring influence.
+// ─────────────────────────────────────────────────────────────────────────────
+// ARCH-02 — Reduction Queue
+// Sibling to the Deployment Queue. Shows top 10 CRA capital sources ranked by
+// the existing CRA priority system (URGENT > HIGH > MODERATE > LOW > DEFER).
+// Data source: _craProposal.sources (loaded by loadCRAProposal).
+// No CW-DAS normalization. No cross-system score merging.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderReductionQueuePlaceholder() {
+  const el = document.getElementById("reductionQueueContainer");
+  if (!el) return;
+  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
+    <div class="rq-header">
+      <span class="rq-title">Reduction Queue — Top 10</span>
+      <span class="rq-advisory">Loading capital source data…</span>
+    </div>
+    <div class="rq-loading">Waiting for CRA capital sources…</div>
+  </div></div>`;
+}
+
+const _RQ_PRIORITY_ORDER = { URGENT: 0, HIGH: 1, MODERATE: 2, LOW: 3, DEFER: 4 };
+const _RQ_CATEGORY_LABELS = {
+  SIGNAL_DETERIORATION:   "Signal Deterioration",
+  STRATEGIC_EXIT:         "Strategic Exit",
+  OVERWEIGHT_REDUCTION:   "Overweight Reduction",
+  TAX_AWARE_EXIT:         "Tax-Aware Exit",
+  LOW_CONVICTION_REDUCTION: "Low Conviction",
+};
+
+function renderReductionQueue(sources, totalPool, fviData) {
+  const el = document.getElementById("reductionQueueContainer");
+  if (!el) return;
+
+  if (!sources || sources.length === 0) {
+    el.innerHTML = `<div class="rq-section"><div class="rq-panel">
+      <div class="rq-header">
+        <span class="rq-title">Reduction Queue — Top 10</span>
+      </div>
+      <div class="rq-no-data">No capital sources identified. Portfolio may be fully deployed or all candidates are below the minimum proceeds threshold.</div>
+    </div></div>`;
+    return;
+  }
+
+  // Sort: priority ascending (URGENT first), then proceeds descending
+  const sorted = [...sources].sort((a, b) => {
+    const pa = _RQ_PRIORITY_ORDER[a.priority] ?? 9;
+    const pb = _RQ_PRIORITY_ORDER[b.priority] ?? 9;
+    if (pa !== pb) return pa - pb;
+    return (b.estimated_proceeds || 0) - (a.estimated_proceeds || 0);
+  });
+
+  const top10 = sorted.slice(0, 10);
+
+  // Pool summary (exclude BLOCKED + DEFER from pool)
+  const poolSources = sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
+  const poolTotal = totalPool != null ? totalPool : poolSources.reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
+  const blockedCount = sources.filter(s => s.blocked_by_policy).length;
+  const suppressedCount = (sources._suppressed_count) || 0;
+
+  const rows = top10.map((s, idx) => {
+    const blocked = s.blocked_by_policy;
+    const deferred = s.policy_type === "SELL_LAST";
+    const reviewRequired = s.operator_review_required;
+    const rowClass = blocked ? " rq-row-blocked" : "";
+
+    // Priority badge
+    const pri = s.priority || "LOW";
+    const priBadge = `<span class="rq-pri rq-pri-${pri}">${escHtml(pri)}</span>`;
+
+    // Proceeds + sizing
+    const proceeds = s.estimated_proceeds || 0;
+    const sizing = s.sizing_pct != null ? Math.round(s.sizing_pct * 100) + "%" : "—";
+    const proceedsHtml = `<span class="rq-proceeds">${formatMV(proceeds)}</span><br><span class="rq-sizing">${sizing} of ${formatMV(s.current_value_usd || 0)}</span>`;
+
+    // Policy state badge
+    let policyBadge = "";
+    if (blocked) {
+      policyBadge = `<span class="rq-policy-blocked">🔒 Blocked</span>`;
+    } else if (deferred) {
+      policyBadge = `<span class="rq-policy-deferred">⏸ Sell Last</span>`;
+    } else if (reviewRequired) {
+      policyBadge = `<span class="rq-policy-review">⚠ Review</span>`;
+    }
+
+    // FVI tier (from fvi_data if available)
+    let fviBadge = "";
+    if (fviData) {
+      const fvi = fviData[s.symbol] || fviData[(s.symbol || "").toUpperCase()];
+      if (fvi && fvi.fvi_tier) {
+        const tier = fvi.fvi_tier;
+        fviBadge = `<span class="rq-fvi fvi-${tier}" title="Fund Vehicle Intelligence: ${tier}">${tier}</span>`;
+      }
+    }
+
+    const catLabel = _RQ_CATEGORY_LABELS[s.category] || escHtml(s.category || "—");
+    const essText = s.ess_score_text ? `<span class="ess-text ess-${(s.ess_score_text || '').toLowerCase().replace('_','-')}" style="font-size:0.68rem">${escHtml(s.ess_score_text)}</span>` : "";
+
+    return `<tr class="rq-row${rowClass}">
+      <td class="rq-rank">${idx + 1}</td>
+      <td>
+        <div class="rq-sym">${escHtml(s.symbol)}</div>
+        <div class="rq-cat">${catLabel} ${essText}</div>
+      </td>
+      <td>${priBadge}</td>
+      <td>${proceedsHtml}</td>
+      <td>${policyBadge || '<span style="color:var(--muted);font-size:0.72rem">—</span>'}${fviBadge ? '<br>' + fviBadge : ''}</td>
+    </tr>`;
+  }).join("");
+
+  const blockedNote = blockedCount > 0
+    ? `<span style="font-size:0.7rem;color:var(--muted);margin-left:8px">${blockedCount} blocked by policy</span>`
+    : "";
+
+  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
+    <div class="rq-header">
+      <span class="rq-title">Reduction Queue — Top 10</span>
+      <span class="rq-pool-badge">${formatMV(poolTotal)} est. pool</span>
+      ${blockedNote}
+      <span class="rq-advisory">Source capital — guidance only, not trade instructions</span>
+    </div>
+    <table class="rq-table">
+      <thead><tr>
+        <th style="width:28px">Rank</th>
+        <th>Symbol / Reason</th>
+        <th>Priority</th>
+        <th>Est. Proceeds</th>
+        <th>Policy / FVI</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div></div>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _disShowWatch = false;  // WATCH tier visibility toggle
@@ -5231,6 +5365,14 @@ async function loadCRAProposal() {
     _craProposal = await resp.json();
     _renderCRAProposal(_craProposal);
     _craEnableButtons(true);
+
+    // ARCH-02: Render Reduction Queue from CRA capital sources
+    const fviData = (_lastAnalysisData && _lastAnalysisData.fvi_data) || null;
+    renderReductionQueue(
+      _craProposal.sources || [],
+      _craProposal.total_capital_pool,
+      fviData
+    );
 
     // Check for stale draft with matching run_id for Include/Skip restore
     _craCheckDraft(_craProposal.run_id);
