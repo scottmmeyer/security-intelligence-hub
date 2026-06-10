@@ -3986,6 +3986,28 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
 
     const rankBadge = rec.rank <= 2 ? " da-card-top" : "";
 
+    // DIL Phase 1 — Deployment candidate intelligence panel
+    const _acBySymDQ   = (_lastAnalysisData && _lastAnalysisData.analyst_consensus_by_symbol) || {};
+    const _fssBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol)  || {};
+    const _ucfBySymDQ  = (_analysisResult   && _analysisResult.ucf_verdicts_by_symbol)        || {};
+    const _fmpBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol)           || {};
+    const _ovBySymDQ2  = {};
+    for (const ov2 of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
+      if (ov2 && ov2.symbol) _ovBySymDQ2[(ov2.symbol || "").toUpperCase()] = ov2;
+    }
+    const _dilDQ = computeDIL(
+      sym,
+      _acBySymDQ[sym.toUpperCase()] || {},
+      _fssBySymDQ[sym.toUpperCase()] || {},
+      _fmpBySymDQ[sym.toUpperCase()] || null,
+      _ucfBySymDQ[sym.toUpperCase()] || {},
+      _ovBySymDQ2[sym.toUpperCase()] || {},
+      { isReduction: false, isDeployment: true, category: cand.narrative_tier || "" }
+    );
+    const _dilDQId = `da-intel-${rec.rank}`;
+    const _dilBtnHtml = `<button class="da-intel-btn" onclick="(function(){const p=document.getElementById('${_dilDQId}');if(p){p.classList.toggle('dil-open');this.textContent=p.classList.contains('dil-open')?'▲ Intel':'⚡ Intel';}}).call(this)">⚡ Intel</button>
+      <div class="da-intel-panel" id="${_dilDQId}">${_dilHtml(_dilDQ)}</div>`;
+
     return `<div class="da-action-card${rankBadge}">
       <div class="da-card-header">
         <span class="da-card-action">BUY</span>
@@ -4003,6 +4025,7 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
       </div>
       <div class="da-card-mv">${curMV} → ${projMV}</div>
       <div class="da-card-reasons">${reasonsHtml}</div>
+      ${_dilBtnHtml}
     </div>`;
   }).join("");
 
@@ -4273,6 +4296,211 @@ function _dqToggleBlocked() {
 // No CW-DAS normalization. No cross-system score merging.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DIL Phase 1 — Decision Intelligence Layer
+// Interpretive posture engine. Display-only. No scoring or ranking influence.
+// Every output cites its signal source and date. Operator remains decision maker.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context) {
+  // context = { isReduction: bool, isDeployment: bool, category: string }
+  const today_str = new Date().toISOString().split("T")[0];
+
+  // Signal extraction
+  const fsObj     = fs  || {};
+  const ovObj     = ov  || {};
+  const acObj     = ac  || {};
+  const ucfObj    = ucf || {};
+  const fmpObj    = fmpEntry || {};
+
+  const essText   = fsObj.ess_text    || ovObj.ess_score_text || "";
+  const fidRating = fsObj.fidelity_rating || "";
+  const consMat   = fsObj.consensus_matrix || {};
+  const matrixClass = consMat.classification || "";
+
+  const abr        = acObj.abr != null ? parseFloat(acObj.abr) : null;
+  const analystCnt = acObj.analyst_count || 0;
+  const consLabel  = acObj.consensus_label || "";
+  const upsidePct  = acObj.upside_pct != null ? parseFloat(acObj.upside_pct) : null;
+  const consRefresh = acObj.refresh_date || null;
+
+  const zacks    = ovObj.zacks_rating  != null ? parseFloat(ovObj.zacks_rating)  : null;
+  const danelfin = ovObj.danelfin_score != null ? parseFloat(ovObj.danelfin_score) : null;
+  const composite = ovObj.composite_score != null ? parseFloat(ovObj.composite_score) : null;
+  const replayPct = ovObj.replay_percentile != null ? parseFloat(ovObj.replay_percentile) : null;
+
+  const ucfLabel = ucfObj.ucf_label || "";
+  const ucfScore = ucfObj.ucf_score != null ? parseFloat(ucfObj.ucf_score) : null;
+  const ucfSummary = ucfObj.signal_summary || "";
+
+  const category = context.category || "";
+
+  // FMP fundamentals
+  const epsSurprise = fmpObj.latest_eps_surprise_pct != null ? parseFloat(fmpObj.latest_eps_surprise_pct) : null;
+  const beatRate    = fmpObj.beat_rate_8q != null ? parseFloat(fmpObj.beat_rate_8q) : null;
+  const revGrowth   = fmpObj.revenue_growth_q1_yoy != null ? parseFloat(fmpObj.revenue_growth_q1_yoy) : null;
+  const revAccel    = fmpObj.revenue_acceleration != null ? parseFloat(fmpObj.revenue_acceleration) : null;
+  const fmpDate     = fmpObj.fmp_sourced_date || null;
+  const fmpCovered  = (fmpObj.fmp_coverage_status || "NO_DATA") !== "NO_DATA";
+
+  // Signal direction flags
+  const isESSBearish  = essText.includes("BEARISH") || fidRating === "SELL" || fidRating === "STRONG_SELL";
+  const isESSBullish  = essText.includes("BULLISH") || fidRating === "STRONG_BUY" || fidRating === "BUY";
+  const isStreetBullish = abr !== null && abr <= 2.5 && consLabel.includes("BUY");
+  const isStreetBearish = (abr !== null && abr >= 3.5) || consLabel.includes("SELL");
+  const isETFNoSignal   = !essText && !composite && category === "LOW_CONVICTION_REDUCTION";
+
+  // Signal alignment
+  let alignment = matrixClass;
+  if (!alignment) {
+    if (isESSBearish && isStreetBullish)  alignment = "MAJOR_DIVERGENCE";
+    else if (isESSBullish && !isStreetBearish) alignment = "FULL_ALIGNMENT_BULLISH";
+    else if (isESSBearish && !isStreetBullish) alignment = "FULL_ALIGNMENT_BEARISH";
+    else alignment = "PARTIAL_ALIGNMENT";
+  }
+
+  // Earnings context classification (FMP)
+  let earningsCtx = "EARNINGS_CONTEXT_UNKNOWN";
+  if (fmpCovered && beatRate !== null && epsSurprise !== null) {
+    if (beatRate < 0.5 && revGrowth !== null && revGrowth < 0) earningsCtx = "FUNDAMENTAL_DETERIORATION";
+    else if (beatRate > 0.70 && epsSurprise < -20)             earningsCtx = "SINGLE_QUARTER_MISS";
+    else if (beatRate > 0.75 && revGrowth !== null && revGrowth > 0.1) earningsCtx = "STRONG_FUNDAMENTAL";
+    else                                                        earningsCtx = "IN_LINE_FUNDAMENTAL";
+  }
+
+  // Stale data check
+  const isConvictionProtected = ucfLabel === "CORE_CONVICTION_LEADER" || ucfLabel === "HIGH_CONVICTION_ANCHOR";
+
+  // ── Posture determination ────────────────────────────────────────────────
+  let posture, postureClass, rationale, keyPoints = [], evidence = [];
+
+  if (context.isReduction) {
+    // --- PASSIVE REDUCTION (ETF / no ESS signal)
+    if (isETFNoSignal) {
+      posture = "PASSIVE REDUCTION"; postureClass = "dil-passive";
+      rationale = `${escHtml(sym)} is held as a passive allocation vehicle. No individual ESS signal data exists. Reduction frees capital for higher-conviction direct holdings under the Concentrated Alpha mandate.`;
+      keyPoints = ["No individual ESS coverage — ETF or passive fund", "Reduction is portfolio construction, not signal-driven", "FVI tier reflects vehicle quality (independent of conviction)"];
+    }
+    // --- UCF CONVICTION ANCHOR — floor at INVESTIGATE
+    else if (isConvictionProtected && isESSBearish) {
+      posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
+      rationale = `${escHtml(sym)} carries a UCF conviction classification of ${escHtml(ucfLabel)}. Despite the bearish ESS, reducing a conviction anchor requires a higher evidence standard. Investigate before proceeding.`;
+      keyPoints = [`UCF ${escHtml(ucfLabel)} — high strategic portfolio importance`, "Bearish ESS alone insufficient for conviction-anchor reduction", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
+    }
+    // --- FULL ALIGNMENT BEARISH + FUNDAMENTAL DETERIORATION
+    else if ((alignment.includes("FULL_ALIGNMENT_BEARISH") || (!isStreetBullish && isESSBearish)) && earningsCtx === "FUNDAMENTAL_DETERIORATION") {
+      posture = "HIGH CONFIDENCE REDUCTION"; postureClass = "dil-high-confidence-red";
+      rationale = `${escHtml(sym)}: All signals agree — ESS bearish, analyst consensus bearish, and FMP fundamentals show persistent earnings weakness with declining revenue. Multi-source confirmed reduction signal.`;
+      keyPoints = ["Full signal alignment: ESS + analysts + FMP all confirm", beatRate !== null ? `Beat rate 8Q: ${(beatRate*100).toFixed(0)}% (weak earnings track record)` : "", revGrowth !== null ? `Revenue growth: ${(revGrowth*100).toFixed(1)}% YoY` : "", "Multiple independent sources confirm deterioration"].filter(Boolean);
+    }
+    // --- SINGLE QUARTER MISS (PRIM pattern)
+    else if (earningsCtx === "SINGLE_QUARTER_MISS" && isESSBearish && isStreetBullish) {
+      posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
+      const beatStr = beatRate !== null ? `${(beatRate*100).toFixed(0)}%` : "—";
+      const missStr = epsSurprise !== null ? `${Math.abs(epsSurprise).toFixed(1)}%` : "—";
+      const revStr  = revGrowth  !== null ? `${(revGrowth*100).toFixed(1)}%` : "—";
+      rationale = `${escHtml(sym)}'s bearish ESS conflicts with street consensus (${escHtml(consLabel)}, ${analystCnt} analysts). Historical beat rate is ${beatStr} over 8 quarters, but the most recent quarter missed by ${missStr}. Revenue remains positive (+${revStr} YoY). This pattern suggests a single-quarter operational miss, not a fundamental deterioration. Analyst targets may be pre-revision.`;
+      keyPoints = [`ESS BEARISH — likely momentum from the EPS miss`, `Street: ${escHtml(consLabel)} (${analystCnt} analysts${upsidePct !== null ? ", " + upsidePct.toFixed(1) + "% upside" : ""})`, `Beat rate 8Q: ${beatStr} — historically strong executor`, `EPS miss: −${missStr} (one-quarter outlier)`, `Revenue growth: +${revStr} YoY — business still growing`, "Recommended: wait 3–5 days for post-earnings analyst revisions"];
+    }
+    // --- MAJOR DIVERGENCE + STRONG FUNDAMENTAL
+    else if (alignment === "MAJOR_DIVERGENCE" && earningsCtx === "STRONG_FUNDAMENTAL") {
+      posture = "CONFLICTING EVIDENCE"; postureClass = "dil-conflict";
+      rationale = `${escHtml(sym)} shows major signal divergence. ESS is bearish while fundamentals are strong and analysts are bullish. The ESS may be capturing short-term momentum rather than fundamental weakness. Operator judgment required — do not act mechanically.`;
+      keyPoints = ["⚠ MAJOR DIVERGENCE: ESS bearish vs. Street bullish", beatRate !== null ? `FMP: beat rate ${(beatRate*100).toFixed(0)}% (strong)` : "", revGrowth !== null ? `Revenue growth: +${(revGrowth*100).toFixed(1)}%` : "", "ESS is momentum-based; may not reflect forward fundamentals", "Consider: is the price move temporary or thesis-breaking?"].filter(Boolean);
+    }
+    // --- ACTIONABLE (bearish + some corroboration)
+    else if (isESSBearish) {
+      const corroborated = zacks !== null && zacks >= 3.5 || danelfin !== null && danelfin <= 3;
+      if (corroborated || alignment.includes("FULL_ALIGNMENT_BEARISH")) {
+        posture = "ACTIONABLE"; postureClass = "dil-actionable";
+        rationale = `${escHtml(sym)}: Bearish ESS corroborated by at least one additional signal (Zacks/Danelfin). Reduction signal has multi-source support. ${earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? "Earnings context: " + earningsCtx.replace(/_/g," ") + "." : ""}`;
+        keyPoints = [`ESS: ${escHtml(essText || fidRating || "BEARISH")}`, zacks !== null ? `Zacks: ${zacks.toFixed(1)} (corroborates)` : "", composite !== null ? `Composite: ${composite.toFixed(2)}` : ""].filter(Boolean);
+      } else {
+        posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
+        rationale = `${escHtml(sym)}: Bearish ESS signal is not strongly corroborated by other sources. ${isStreetBullish ? "Street analysts are bullish — divergence detected." : ""} Investigate before acting.`;
+        keyPoints = ["ESS BEARISH — single-source signal", isStreetBullish ? `Street: ${escHtml(consLabel)} (${analystCnt} analysts) — disagrees with ESS` : "", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
+      }
+    }
+    // --- DEFAULT MONITOR
+    else {
+      posture = "MONITOR"; postureClass = "dil-monitor";
+      rationale = `${escHtml(sym)}: Reduction is driven by ${escHtml(category.replace(/_/g," "))} rather than signal deterioration. Signal picture does not provide strong independent confirmation.`;
+      keyPoints = [`Category: ${escHtml(category.replace(/_/g," "))}`, isESSBullish ? "Note: ESS is bullish — this is an allocation-driven reduction, not signal-driven" : ""].filter(Boolean);
+    }
+  }
+
+  // ── DEPLOYMENT posture ──────────────────────────────────────────────────
+  else if (context.isDeployment) {
+    if (alignment === "FULL_ALIGNMENT_BULLISH" && (earningsCtx === "STRONG_FUNDAMENTAL" || earningsCtx === "IN_LINE_FUNDAMENTAL")) {
+      posture = "HIGH CONFIDENCE BUY"; postureClass = "dil-high-confidence-buy";
+      rationale = `${escHtml(sym)}: All signals aligned bullish — ESS, analyst consensus, and FMP fundamentals all support this deployment candidate.`;
+      keyPoints = ["Full signal alignment: ESS + Street + FMP all bullish", beatRate !== null ? `Beat rate 8Q: ${(beatRate*100).toFixed(0)}%` : "", revGrowth !== null ? `Revenue growth: +${(revGrowth*100).toFixed(1)}% YoY` : "", ucfLabel ? `UCF: ${escHtml(ucfLabel)}` : ""].filter(Boolean);
+    } else if (isESSBullish && alignment !== "MAJOR_DIVERGENCE") {
+      posture = "ACTIONABLE"; postureClass = "dil-actionable";
+      rationale = `${escHtml(sym)}: Bullish ESS signal with ${alignment === "FULL_ALIGNMENT_BULLISH" ? "full" : "partial"} signal agreement. CW-DAS conviction ranking supported by signal evidence.`;
+      keyPoints = [`ESS: ${escHtml(essText || fidRating || "BULLISH")}`, isStreetBullish ? `Street: ${escHtml(consLabel)} (${analystCnt} analysts)` : "Street consensus: neutral/mixed", replayPct !== null && replayPct > 50 ? `Replay: ${replayPct.toFixed(0)}th percentile` : "", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
+    } else if (alignment === "MAJOR_DIVERGENCE") {
+      posture = "CONFLICTING EVIDENCE"; postureClass = "dil-conflict";
+      rationale = `${escHtml(sym)}: CW-DAS model is bullish based on conviction tier and replay, but external signals diverge. Verify before deploying.`;
+      keyPoints = ["⚠ Signal divergence detected", "CW-DAS conviction supported; external signals mixed"];
+    } else {
+      posture = "ACTIONABLE"; postureClass = "dil-actionable";
+      rationale = `${escHtml(sym)}: CW-DAS deployment candidate. Conviction tier and replay support the recommendation.`;
+      keyPoints = [ucfLabel ? `UCF: ${escHtml(ucfLabel)}` : "", replayPct !== null ? `Replay: ${replayPct.toFixed(0)}th pct` : ""].filter(Boolean);
+    }
+  }
+
+  // ── Evidence list (always cited with source + date) ──────────────────────
+  if (essText || fidRating)
+    evidence.push(`${escHtml(fidRating || essText || "—")} [Fidelity StarMine, ${today_str}]`);
+  if (zacks != null)
+    evidence.push(`Zacks: ${zacks.toFixed(1)} [Zacks, ${today_str}]`);
+  if (abr != null)
+    evidence.push(`ABR: ${abr.toFixed(2)} (${escHtml(consLabel)}, ${analystCnt} analysts) [Yahoo, ${escHtml(consRefresh || "—")}]`);
+  if (epsSurprise != null)
+    evidence.push(`EPS surprise: ${epsSurprise.toFixed(1)}% [FMP, ${escHtml(fmpDate || "—")}]`);
+  if (beatRate != null)
+    evidence.push(`Beat rate 8Q: ${(beatRate*100).toFixed(0)}% [FMP, ${escHtml(fmpDate || "—")}]`);
+  if (revGrowth != null)
+    evidence.push(`Revenue growth Q1 YoY: ${(revGrowth*100).toFixed(1)}% [FMP, ${escHtml(fmpDate || "—")}]`);
+  if (matrixClass)
+    evidence.push(`Signal alignment: ${escHtml(matrixClass.replace(/_/g," "))} [Computed, ${today_str}]`);
+  if (ucfLabel)
+    evidence.push(`UCF: ${escHtml(ucfLabel)} [Computed, PAR time]`);
+
+  return { posture, postureClass, rationale, keyPoints: keyPoints.filter(Boolean), evidence };
+}
+
+function _dilHtml(dilResult) {
+  if (!dilResult || !dilResult.posture) return "";
+  const { posture, postureClass, rationale, keyPoints, evidence } = dilResult;
+
+  const kpHtml = keyPoints.length > 0
+    ? `<ul class="dil-key-points">${keyPoints.map(p => `<li>${p}</li>`).join("")}</ul>`
+    : "";
+
+  const evHtml = evidence.length > 0
+    ? `<div class="dil-evidence">
+        <div class="dil-evidence-title">Signal Evidence</div>
+        <ul>${evidence.map(e => {
+          const parts = e.match(/^(.*)\s\[([^,\]]+),\s*([^\]]+)\]$/);
+          return parts
+            ? `<li>${escHtml(parts[1])} <span class="dil-src">[${escHtml(parts[2])}, ${escHtml(parts[3])}]</span></li>`
+            : `<li>${e}</li>`;
+        }).join("")}</ul>
+      </div>`
+    : "";
+
+  return `<div class="dil-section">
+    <div class="dil-section-title">⚡ Decision Intelligence</div>
+    <div class="dil-posture ${escHtml(postureClass)}">${escHtml(posture)}</div>
+    <div class="dil-rationale-text">${rationale}</div>
+    ${kpHtml}
+    ${evHtml}
+    <div class="dil-advisory">Advisory only — all postures are interpretive. Operator remains the decision maker.</div>
+  </div>`;
+}
+
 function renderReductionQueuePlaceholder() {
   const el = document.getElementById("reductionQueueContainer");
   if (!el) return;
@@ -4496,6 +4724,19 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
         </div>
       </div>`;
 
+    // ── DIL Phase 1: compute and inject decision intelligence panel ──────────
+    const _fmpBySymDIL = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol) || {};
+    const _dilResult = computeDIL(
+      sym,
+      (renderReductionQueue._consBySymbol || {})[symUpper] || {},
+      fidBySymbol[symUpper] || {},
+      _fmpBySymDIL[symUpper] || null,
+      ucfBySymbol[symUpper] || {},
+      overlayBySymbol[symUpper] || {},
+      { isReduction: true, isDeployment: false, category: s.category || "" }
+    );
+    const dilPanelHtml = _dilHtml(_dilResult);
+
     const mainRow = `<tr class="rq-row${rowClass}">
       <td class="rq-rank">${idx + 1}</td>
       <td>
@@ -4510,7 +4751,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
 
     const profileRow = `<tr class="rq-profile-row" id="${profileId}">
       <td></td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}</td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}${dilPanelHtml}</td>
     </tr>`;
 
     return mainRow + profileRow;

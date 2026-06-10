@@ -976,6 +976,63 @@
         padding: 2px 9px; border-radius: 8px; background: white;
       }
       .rq-fidelity-link:hover { background: var(--accent-2); color: white; }
+
+      /* ── DIL Phase 1: Decision Intelligence Layer ─────────────────────── */
+      .dil-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+      .dil-section-title {
+        font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em;
+        color: var(--primary); font-weight: 700; margin-bottom: 8px;
+      }
+      .dil-posture {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 12px; border-radius: 12px;
+        font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em;
+        margin-bottom: 8px;
+      }
+      .dil-high-confidence-red  { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .dil-high-confidence-buy  { background: #e6f7ee; color: #1a7c4f; border: 1px solid #a3e3bd; }
+      .dil-actionable    { background: #fff3e0; color: #e07300; border: 1px solid #ffe0b2; }
+      .dil-investigate   { background: #fff8e1; color: #b07800; border: 1px solid #ffe082; }
+      .dil-conflict      { background: #fff3e0; color: #c05000; border: 1px solid #ffcc80; }
+      .dil-monitor       { background: #f5f5f5; color: #666;    border: 1px solid #ddd; }
+      .dil-wait          { background: #f5f5f5; color: #666;    border: 1px solid #ddd; }
+      .dil-passive       { background: #e8f4fd; color: #1565c0; border: 1px solid #90caf9; }
+      .dil-rationale-text {
+        font-size: 0.78rem; color: var(--text); line-height: 1.45; margin-bottom: 8px;
+      }
+      .dil-key-points {
+        margin: 6px 0; padding: 0; list-style: none;
+      }
+      .dil-key-points li {
+        font-size: 0.74rem; color: var(--text); padding: 2px 0;
+        padding-left: 14px; position: relative; border-bottom: 1px solid #f0ebe5;
+      }
+      .dil-key-points li:last-child { border-bottom: none; }
+      .dil-key-points li::before { content: "•"; position: absolute; left: 0; color: var(--accent-2); }
+      .dil-evidence {
+        margin-top: 8px; padding: 6px 10px; background: #faf8f5;
+        border: 1px solid var(--border); border-left: 3px solid var(--muted);
+        border-radius: 4px;
+      }
+      .dil-evidence-title { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+      .dil-evidence li {
+        font-size: 0.7rem; color: var(--muted); padding: 1px 0; list-style: none;
+      }
+      .dil-evidence li span.dil-src { color: var(--accent-2); font-style: italic; }
+      .dil-advisory { font-size: 0.65rem; color: var(--muted); font-style: italic; margin-top: 6px; }
+      /* DIL on DQ cards */
+      .da-intel-btn {
+        font-size: 0.67rem; color: var(--accent-2); cursor: pointer; background: none;
+        border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px;
+        margin-top: 4px; display: inline-block; white-space: nowrap; width: 100%;
+      }
+      .da-intel-btn:hover { background: var(--accent-2); color: #fff; }
+      .da-intel-panel {
+        display: none; margin-top: 8px; padding: 8px 10px;
+        background: #f8f5f1; border: 1px solid var(--border); border-radius: 8px;
+        font-size: 0.76rem;
+      }
+      .da-intel-panel.dil-open { display: block; }
       .dq-section-header {
         display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
       }

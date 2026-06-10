@@ -1164,6 +1164,9 @@ def run_analysis(
         # Phase 7.5N — Signal Source Metadata (additive; display-only)
         # Governance: refresh dates for Zacks/Danelfin freshness display. No scoring impact.
         "signal_source_metadata": _build_signal_source_metadata(),
+        # DIL Phase 1 — FMP fundamental context for Decision Intelligence Layer (display-only)
+        # Governance: read-only display fields. Never fed back into any scoring system.
+        "fmp_data_by_symbol": _build_fmp_payload([h.symbol for h in investable]),
         # ISSUE-04D — pass analyst consensus for Class B2
         "dislocation_by_symbol": _build_dislocation_payload(
             overlays, ac_by_sym=_build_consensus_payload()
@@ -1206,6 +1209,35 @@ def _build_fvi_payload(symbols: list[str]) -> dict[str, dict]:
     try:
         registry = load_fvi_registry()
         return build_fvi_data_for_holdings(symbols, registry)
+    except Exception:
+        return {}
+
+
+def _build_fmp_payload(symbols: list[str]) -> dict[str, dict]:
+    """Load FMP enriched universe fields for DIL Phase 1 (display-only).
+
+    Exposes fundamental context fields (EPS surprise, beat rate, revenue
+    growth) for the Decision Intelligence Layer. These are read-only display
+    fields — they are never injected back into CW-DAS, RPS, or any scoring
+    system. The FMP fundamental_modifier is already baked into CW-DAS scores;
+    this payload is for operator-facing interpretation only.
+    """
+    _DISPLAY_FIELDS = frozenset({
+        "latest_eps_surprise_pct", "beat_rate_8q", "beats_last_8q",
+        "q1_surprise_pct", "q2_surprise_pct", "q3_surprise_pct", "q4_surprise_pct",
+        "revenue_growth_q1_yoy", "eps_growth_q1_yoy", "revenue_acceleration",
+        "fmp_coverage_status", "fmp_sourced_date",
+        "buy_count", "hold_count", "sell_count", "net_buy_score",
+        "ev_ebitda_ttm", "fcf_yield_ttm", "roe_ttm", "roic_ttm",
+    })
+    try:
+        from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
+        fmp = load_fmp_enriched_universe()
+        return {
+            sym.upper(): {k: v for k, v in (fmp.get(sym.upper()) or {}).items() if k in _DISPLAY_FIELDS}
+            for sym in symbols
+            if fmp.get(sym.upper())
+        }
     except Exception:
         return {}
 
@@ -1465,6 +1497,10 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
 
     # signal_source_metadata (Phase 7.5N — display-only refresh dates)
     result["signal_source_metadata"] = _build_signal_source_metadata()
+
+    # DIL Phase 1 — FMP fundamental context (display-only; no scoring impact)
+    _held_syms = [row.get("symbol", "") for row in holdings_for_drilldown if row.get("symbol")]
+    result["fmp_data_by_symbol"] = _build_fmp_payload(_held_syms)
 
     # dislocation_by_symbol (ISSUE-04D — informational, Classes A1/D1/B2)
     result["dislocation_by_symbol"] = _build_dislocation_payload(
