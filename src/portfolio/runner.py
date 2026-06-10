@@ -67,6 +67,21 @@ _ZACKS_LATEST       = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.
 _DANELFIN_LATEST    = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
 _OPERATOR_STATE     = str(_REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json")
 
+# ZACKS-SOURCE-02: symbol-level Zacks sourced_date lookup (display-only; no scoring impact)
+def _load_zacks_latest_by_symbol() -> dict:
+    try:
+        rows = {}
+        with open(_ZACKS_LATEST, newline="") as f:
+            for row in csv.DictReader(f):
+                sym = (row.get("symbol") or "").strip().upper()
+                if sym:
+                    rows[sym] = row
+        return rows
+    except Exception:
+        return {}
+
+_ZACKS_LATEST_BY_SYMBOL: dict = _load_zacks_latest_by_symbol()
+
 # PRA-IMPL-03 — recommendation_type sets for typed lane counting
 _CONVICTION_ANCHOR_TYPES: frozenset[str] = frozenset({
     "STRATEGIC_RETAIN_SIGNAL",
@@ -1532,6 +1547,9 @@ def _build_fidelity_payload() -> dict:
         consensus_label = ac.consensus_label if ac else "NO_CONSENSUS"
         zacks_score = zacks_map.get(sym)
         matrix = compute_consensus_matrix(fs.ess_text, consensus_label, zacks_score)
+        # ZACKS-SOURCE-02: include symbol-level Zacks sourced_date for DIL provenance
+        zacks_row = _ZACKS_LATEST_BY_SYMBOL.get(sym.upper()) if _ZACKS_LATEST_BY_SYMBOL else None
+        zacks_symbol_date = zacks_row.get("sourced_date") if zacks_row else None
         result[sym] = {
             "symbol": fs.symbol,
             "ess_text": fs.ess_text,
@@ -1541,6 +1559,8 @@ def _build_fidelity_payload() -> dict:
             "refresh_date": fs.refresh_date,
             "coverage_domain": fs.coverage_domain,
             "consensus_matrix": matrix,
+            "zacks_sourced_date": zacks_symbol_date,   # symbol-level, not universe-level
+            "zacks_source_type": "DIRECT_ZACKS" if zacks_symbol_date else "NO_DATA",
         }
     return result
 

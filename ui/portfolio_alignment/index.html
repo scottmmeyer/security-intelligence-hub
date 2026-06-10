@@ -3059,6 +3059,104 @@
         border-top: 1px solid #dde6f0;
         padding-top: 6px;
       }
+
+      /* ── THESIS-EXPLAIN-01: Investment Thesis Panel ─────────────────────── */
+      .thesis-panel {
+        margin-top: 10px;
+        background: #f5f9f2;
+        border: 1px solid #b8ddb0;
+        border-radius: 6px;
+        padding: 10px 12px;
+      }
+      .thesis-header {
+        font-size: 0.68rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #2d6a1e;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .thesis-governance {
+        font-size: 0.58rem;
+        color: #aaa;
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: 0;
+        font-style: italic;
+      }
+      .thesis-context { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+      .thesis-context-chip {
+        font-size: 0.63rem;
+        background: #e8f5e2;
+        color: #2d6a1e;
+        padding: 1px 6px;
+        border-radius: 3px;
+        border: 1px solid #b8ddb0;
+      }
+      .thesis-context-industry { background: #e3f0fb; color: #1a5c8a; border-color: #a8cfec; }
+      .thesis-section { margin-bottom: 6px; }
+      .thesis-section-label {
+        font-size: 0.64rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #555;
+        margin-bottom: 3px;
+      }
+      .thesis-list {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 0.74rem;
+        color: #333;
+        line-height: 1.5;
+      }
+      .thesis-positive li::marker { color: #2d6a1e; }
+      .thesis-risks   li::marker { color: #c62828; }
+      .thesis-risks { color: #555; }
+
+      /* ── UI-CONSISTENCY-07: Fidelity Rating badge in DQ card ─────────────── */
+      .dq-fid-rating-badge {
+        font-size: 0.58rem;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 3px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border: 1px solid transparent;
+      }
+      .dq-fid-rating-badge.fid-strong_buy  { background: #e8f5e9; color: #1b5e20; border-color: #a5d6a7; }
+      .dq-fid-rating-badge.fid-buy         { background: #f1f8e9; color: #33691e; border-color: #c5e1a5; }
+      .dq-fid-rating-badge.fid-neutral     { background: #f5f5f5; color: #555;    border-color: #e0e0e0; }
+      .dq-fid-rating-badge.fid-sell        { background: #fce4ec; color: #880e4f; border-color: #f48fb1; }
+      .dq-fid-rating-badge.fid-strong_sell { background: #ffebee; color: #c62828; border-color: #ef9a9a; }
+
+      /* ── ANALYST-ACCURACY-01: Accuracy context row in DIL ─────────────────── */
+      .dil-accuracy-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+        padding: 5px 8px;
+        background: #f8f9fc;
+        border: 1px solid #dde6f0;
+        border-radius: 4px;
+        font-size: 0.68rem;
+      }
+      .dil-accuracy-label { color: #555; font-weight: 600; white-space: nowrap; }
+      .dil-accuracy-chip {
+        background: #e8f0fb;
+        color: #1a5c8a;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 0.67rem;
+        border: 1px solid #c5d8ef;
+        white-space: nowrap;
+      }
+      .dil-accuracy-note { color: #aaa; font-style: italic; font-size: 0.61rem; }
     </style>
   </head>
   <body>

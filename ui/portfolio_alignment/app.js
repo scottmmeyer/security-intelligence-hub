@@ -4220,8 +4220,24 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
       _pcBySymDQ[sym.toUpperCase()] || null
     );
     const _dilDQId = `da-intel-${rec.rank}`;
+
+    // THESIS-EXPLAIN-01: build investment thesis panel for DQ candidate
+    const _thesisDQ = _buildInvestmentThesis(
+      sym,
+      _acBySymDQ[sym.toUpperCase()] || {},
+      _fssBySymDQ[sym.toUpperCase()] || {},
+      _fmpBySymDQ[sym.toUpperCase()] || null,
+      _ovBySymDQ2[sym.toUpperCase()] || {},
+      _ucfBySymDQ[sym.toUpperCase()] || {},
+      _pcBySymDQ[sym.toUpperCase()] || null
+    );
+    // UI-CONSISTENCY-07: Fidelity rating for DQ (parity with RQ)
+    const _dqFidFs = _fssBySymDQ[sym.toUpperCase()] || {};
+    const _dqFidRatingHtml = _dqFidFs.fidelity_rating
+      ? `<span class="dq-fid-rating-badge fid-${(_dqFidFs.fidelity_rating || "").toLowerCase().replace(/[^a-z]/g,"_")}">${escHtml(_dqFidFs.fidelity_rating.replace(/_/g," "))}</span>`
+      : "";
     const _dilBtnHtml = `<button class="da-intel-btn" onclick="(function(){const p=document.getElementById('${_dilDQId}');if(p){p.classList.toggle('dil-open');this.textContent=p.classList.contains('dil-open')?'▲ Intel':'⚡ Intel';}}).call(this)">⚡ Intel</button>
-      <div class="da-intel-panel" id="${_dilDQId}">${_dilHtml(_dilDQ)}</div>`;
+      <div class="da-intel-panel" id="${_dilDQId}">${_dilHtml(_dilDQ)}${_thesisHtml(_thesisDQ)}</div>`;
 
     return `<div class="da-action-card${rankBadge}">
       <div class="da-card-header">
@@ -4230,6 +4246,7 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
         <span class="da-card-badges">
           <span class="dq-tier dq-tier-${tierShort}">${tierShort}</span>
           <span class="da-dp-tier">${dpTierLabel}</span>
+          ${_dqFidRatingHtml}
         </span>
       </div>
       <div class="da-card-amount">+${formatMV(addAmt)}</div>
@@ -4669,8 +4686,13 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
   // ── Evidence list (always cited with source + date) ──────────────────────
   if (essText || fidRating)
     evidence.push(`${escHtml(fidRating || essText || "—")} [Fidelity StarMine, ${today_str}]`);
-  if (zacks != null)
-    evidence.push(`Zacks: ${zacks.toFixed(1)} [Zacks, ${today_str}]`);
+  if (zacks != null) {
+    // ZACKS-SOURCE-02: use symbol-level sourced_date if available (not universe-level)
+    const zacksSymDate = fsObj.zacks_sourced_date || today_str;
+    const zacksSrcType = fsObj.zacks_source_type || "DIRECT_ZACKS";
+    const zacksSrcLabel = zacksSrcType === "DIRECT_ZACKS" ? "Zacks Direct" : "Zacks";
+    evidence.push(`Zacks: ${zacks.toFixed(1)} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`);
+  }
   if (abr != null)
     evidence.push(`ABR: ${abr.toFixed(2)} (${escHtml(consLabel)}, ${analystCnt} analysts) [Yahoo, ${escHtml(consRefresh || "—")}]`);
   if (epsSurprise != null)
@@ -4700,6 +4722,137 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
   }
 
   return { posture, postureClass, rationale, keyPoints: keyPoints.filter(Boolean), evidence, priceContextDisplay };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THESIS-EXPLAIN-01 — Investment Thesis Layer ("Why It Is Working")
+// Display-only. Synthesizes from existing signal data. No scoring influence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Static analyst accuracy benchmarks (published industry figures, display-only)
+// ANALYST-ACCURACY-01 governance: informational context only, no weighting change.
+const _ANALYST_ACCURACY = {
+  "StarMine / ESS": 87,
+  "Danelfin AI":    82,
+  "Zacks":          63,
+  "Jefferson Research": 64,
+  "McLean Capital": 71,
+};
+
+function _buildInvestmentThesis(sym, ac, fs, fmpEntry, ov, ucf, priceCtx) {
+  // Synthesize a "Why It Is Working" thesis from existing signal data.
+  // Governance: presentation-only. Never influences scores, ranks, or recs.
+  const acObj  = ac  || {};
+  const fsObj  = fs  || {};
+  const fmpObj = fmpEntry || {};
+  const ovObj  = ov  || {};
+  const ucfObj = ucf || {};
+  const pcObj  = priceCtx || {};
+
+  const meta = _securityMetadata[sym.toUpperCase()] || {};
+  const sector   = meta.sector   || ovObj.sector   || "—";
+  const industry = meta.industry || ovObj.industry || "—";
+
+  const essText     = fsObj.ess_text    || ovObj.ess_score_text || "";
+  const fidRating   = fsObj.fidelity_rating || "";
+  const zacks       = ovObj.zacks_rating != null ? parseFloat(ovObj.zacks_rating) : null;
+  const danelfin    = ovObj.danelfin_score != null ? parseFloat(ovObj.danelfin_score) : null;
+  const composite   = ovObj.composite_score != null ? parseFloat(ovObj.composite_score) : null;
+  const abr         = acObj.abr != null ? parseFloat(acObj.abr) : null;
+  const upsidePct   = acObj.upside_pct != null ? parseFloat(acObj.upside_pct) : null;
+  const consLabel   = acObj.consensus_label || "";
+  const analystCnt  = acObj.analyst_count || 0;
+  const beatRate    = fmpObj.beat_rate_8q != null ? parseFloat(fmpObj.beat_rate_8q) : null;
+  const revGrowth   = fmpObj.revenue_growth_q1_yoy != null ? parseFloat(fmpObj.revenue_growth_q1_yoy) : null;
+  const epsSurprise = fmpObj.latest_eps_surprise_pct != null ? parseFloat(fmpObj.latest_eps_surprise_pct) : null;
+  const revAccel    = fmpObj.revenue_acceleration != null ? parseFloat(fmpObj.revenue_acceleration) : null;
+  const ucfLabel    = ucfObj.ucf_label || "";
+
+  // ── Why It Is Working (positive conviction drivers) ──────────────────────
+  const whyWorking = [];
+  const isESSBullish  = essText.includes("BULLISH");
+  const isZacksBullish = zacks !== null && zacks <= 2;
+  const isDanelfinStrong = danelfin !== null && danelfin >= 4.0;
+  const isStreetBullish = abr !== null && abr <= 2.0 && consLabel.includes("BUY");
+  const hasUpside = upsidePct !== null && upsidePct >= 10;
+  const hasBeatMomentum = beatRate !== null && beatRate >= 0.70;
+  const hasRevGrowth = revGrowth !== null && revGrowth > 0.05;
+  const hasRevAccel = revAccel !== null && revAccel > 0;
+  const hasEarningsMomentum = epsSurprise !== null && epsSurprise > 0;
+  const isCCL = ucfLabel === "CORE_CONVICTION_LEADER";
+  const isHCA = ucfLabel === "HIGH_CONVICTION_ANCHOR";
+  const recentReturn5d  = pcObj.return_5d  != null ? parseFloat(pcObj.return_5d) : null;
+  const pct52w = pcObj.pct_52w_range != null ? parseFloat(pcObj.pct_52w_range) : null;
+
+  if (isESSBullish) whyWorking.push("Bullish signal momentum (ESS)");
+  if (isZacksBullish) whyWorking.push(`Strong Zacks rank (${zacks !== null ? zacks.toFixed(0) : "—"})`);
+  if (isDanelfinStrong) whyWorking.push(`Danelfin AI positive (${danelfin !== null ? danelfin.toFixed(1) : "—"}/5)`);
+  if (isStreetBullish && analystCnt > 0) whyWorking.push(`Street consensus: ${escHtml(consLabel)} (${analystCnt} analysts)`);
+  if (hasUpside) whyWorking.push(`Price target upside: +${upsidePct.toFixed(1)}%`);
+  if (hasBeatMomentum) whyWorking.push(`Strong earnings track record: ${(beatRate * 100).toFixed(0)}% beat rate`);
+  if (hasRevGrowth) whyWorking.push(`Revenue growth: +${(revGrowth * 100).toFixed(1)}% YoY`);
+  if (hasRevAccel) whyWorking.push("Revenue acceleration detected");
+  if (hasEarningsMomentum && epsSurprise > 5) whyWorking.push(`EPS surprise: +${epsSurprise.toFixed(1)}%`);
+  if (isCCL) whyWorking.push("Portfolio conviction anchor: CORE CONVICTION LEADER");
+  else if (isHCA) whyWorking.push("Portfolio conviction anchor: HIGH CONVICTION ANCHOR");
+  if (recentReturn5d !== null && recentReturn5d > 2) whyWorking.push(`Recent price momentum: +${recentReturn5d.toFixed(1)}% (5d)`);
+  if (pct52w !== null && pct52w >= 70) whyWorking.push(`Near 52-week high (${pct52w.toFixed(0)}th percentile)`);
+
+  // ── Key Risks ─────────────────────────────────────────────────────────────
+  const keyRisks = [];
+  const isESSBearish = essText.includes("BEARISH");
+  const weakBeatRate = beatRate !== null && beatRate < 0.50;
+  const negRevGrowth = revGrowth !== null && revGrowth < 0;
+  const isStreetBearish = abr !== null && abr >= 3.5;
+  const negEPS = epsSurprise !== null && epsSurprise < -10;
+  const near52wLow = pct52w !== null && pct52w <= 25;
+
+  if (isESSBearish) keyRisks.push("Signal deterioration detected (ESS bearish)");
+  if (weakBeatRate) keyRisks.push(`Weak earnings execution: ${(beatRate * 100).toFixed(0)}% beat rate`);
+  if (negRevGrowth) keyRisks.push(`Revenue contraction: ${(revGrowth * 100).toFixed(1)}% YoY`);
+  if (isStreetBearish) keyRisks.push(`Analyst consensus cautious: ABR ${abr.toFixed(2)}`);
+  if (negEPS) keyRisks.push(`EPS miss: ${epsSurprise.toFixed(1)}%`);
+  if (near52wLow) keyRisks.push(`Price near 52-week low (${pct52w.toFixed(0)}th percentile)`);
+
+  if (!whyWorking.length && !keyRisks.length) return null;  // No thesis to show
+
+  return { whyWorking, keyRisks, sector, industry };
+}
+
+function _thesisHtml(thesis) {
+  if (!thesis) return "";
+  const { whyWorking, keyRisks, sector, industry } = thesis;
+
+  const hasWhy = whyWorking.length > 0;
+  const hasRisks = keyRisks.length > 0;
+
+  const whyHtml = hasWhy
+    ? `<div class="thesis-section">
+        <div class="thesis-section-label">Why It Is Working</div>
+        <ul class="thesis-list thesis-positive">${whyWorking.slice(0, 5).map(w => `<li>${escHtml(w)}</li>`).join("")}</ul>
+      </div>`
+    : "";
+
+  const risksHtml = hasRisks
+    ? `<div class="thesis-section">
+        <div class="thesis-section-label">Key Risks</div>
+        <ul class="thesis-list thesis-risks">${keyRisks.slice(0, 4).map(r => `<li>${escHtml(r)}</li>`).join("")}</ul>
+      </div>`
+    : "";
+
+  const contextHtml = (sector !== "—" || industry !== "—")
+    ? `<div class="thesis-context">
+        ${sector !== "—" ? `<span class="thesis-context-chip">${escHtml(sector)}</span>` : ""}
+        ${industry !== "—" ? `<span class="thesis-context-chip thesis-context-industry">${escHtml(industry)}</span>` : ""}
+      </div>`
+    : "";
+
+  return `<div class="thesis-panel">
+    <div class="thesis-header">Investment Thesis <span class="thesis-governance">display-only</span></div>
+    ${contextHtml}
+    ${whyHtml}
+    ${risksHtml}
+  </div>`;
 }
 
 function _dilHtml(dilResult) {
@@ -4735,12 +4888,35 @@ function _dilHtml(dilResult) {
       </div>`
     : "";
 
+  // ANALYST-ACCURACY-01: show analyst accuracy context alongside opinion (display-only)
+  const accuracyItems = [];
+  if (evidence.some(e => e.includes("ESS") || e.includes("StarMine"))) {
+    const acc = _ANALYST_ACCURACY["StarMine / ESS"];
+    if (acc) accuracyItems.push({ name: "StarMine / ESS", accuracy: acc });
+  }
+  if (evidence.some(e => e.includes("Zacks"))) {
+    const acc = _ANALYST_ACCURACY["Zacks"];
+    if (acc) accuracyItems.push({ name: "Zacks", accuracy: acc });
+  }
+  if (evidence.some(e => e.includes("Danelfin") || e.includes("AI Score"))) {
+    const acc = _ANALYST_ACCURACY["Danelfin AI"];
+    if (acc) accuracyItems.push({ name: "Danelfin AI", accuracy: acc });
+  }
+  const accuracyHtml = accuracyItems.length
+    ? `<div class="dil-accuracy-row">
+        <span class="dil-accuracy-label">Source Accuracy (historical):</span>
+        ${accuracyItems.map(a => `<span class="dil-accuracy-chip">${escHtml(a.name)}: <strong>${a.accuracy}%</strong></span>`).join("")}
+        <span class="dil-accuracy-note">Display-only. No weighting change.</span>
+      </div>`
+    : "";
+
   return `<div class="dil-section">
     <div class="dil-section-title">⚡ Decision Intelligence</div>
     <div class="dil-posture ${escHtml(postureClass)}">${escHtml(posture)}</div>
     <div class="dil-rationale-text">${rationale}</div>
     ${kpHtml}
     ${evHtml}
+    ${accuracyHtml}
     ${pcHtml}
     <div class="dil-advisory">Advisory only — all postures are interpretive. Operator remains the decision maker.</div>
   </div>`;
@@ -4984,6 +5160,18 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     );
     const dilPanelHtml = _dilHtml(_dilResult);
 
+    // THESIS-EXPLAIN-01: investment thesis for reduction candidates
+    const _rqThesis = _buildInvestmentThesis(
+      sym,
+      (renderReductionQueue._consBySymbol || {})[symUpper] || {},
+      fidBySymbol[symUpper] || {},
+      (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol || {})[symUpper] || null,
+      overlayBySymbol[symUpper] || {},
+      ucfBySymbol[symUpper] || {},
+      (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol || {})[symUpper] || null
+    );
+    const rqThesisPanelHtml = _thesisHtml(_rqThesis);
+
     const mainRow = `<tr class="rq-row${rowClass}">
       <td class="rq-rank">${idx + 1}</td>
       <td>
@@ -4998,7 +5186,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
 
     const profileRow = `<tr class="rq-profile-row" id="${profileId}">
       <td></td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}${dilPanelHtml}</td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
     </tr>`;
 
     return mainRow + profileRow;
