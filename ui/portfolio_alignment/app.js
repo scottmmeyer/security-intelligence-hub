@@ -4294,9 +4294,14 @@ const _RQ_CATEGORY_LABELS = {
   LOW_CONVICTION_REDUCTION: "Low Conviction",
 };
 
-function renderReductionQueue(sources, totalPool, fviData) {
+function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfBySymbol, fidBySymbol) {
   const el = document.getElementById("reductionQueueContainer");
   if (!el) return;
+
+  // Normalise lookup maps (may be null/undefined from caller)
+  overlayBySymbol = overlayBySymbol || {};
+  ucfBySymbol     = ucfBySymbol     || {};
+  fidBySymbol     = fidBySymbol     || {};
 
   if (!sources || sources.length === 0) {
     el.innerHTML = `<div class="rq-section"><div class="rq-panel">
@@ -4322,7 +4327,6 @@ function renderReductionQueue(sources, totalPool, fviData) {
   const poolSources = sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
   const poolTotal = totalPool != null ? totalPool : poolSources.reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
   const blockedCount = sources.filter(s => s.blocked_by_policy).length;
-  const suppressedCount = (sources._suppressed_count) || 0;
 
   const rows = top10.map((s, idx) => {
     const blocked = s.blocked_by_policy;
@@ -4349,7 +4353,7 @@ function renderReductionQueue(sources, totalPool, fviData) {
       policyBadge = `<span class="rq-policy-review">⚠ Review</span>`;
     }
 
-    // FVI tier (from fvi_data if available)
+    // FVI tier
     let fviBadge = "";
     if (fviData) {
       const fvi = fviData[s.symbol] || fviData[(s.symbol || "").toUpperCase()];
@@ -4362,16 +4366,121 @@ function renderReductionQueue(sources, totalPool, fviData) {
     const catLabel = _RQ_CATEGORY_LABELS[s.category] || escHtml(s.category || "—");
     const essText = s.ess_score_text ? `<span class="ess-text ess-${(s.ess_score_text || '').toLowerCase().replace('_','-')}" style="font-size:0.68rem">${escHtml(s.ess_score_text)}</span>` : "";
 
-    return `<tr class="rq-row${rowClass}">
+    // ── ARCH-05: Intelligence Profile ──────────────────────────────────────
+    const profileId = `rq-profile-${idx}`;
+    const sym = s.symbol || "";
+    const symUpper = sym.toUpperCase();
+
+    // Overlay signals (security_overlays)
+    const ov  = overlayBySymbol[symUpper] || {};
+    const ucf = ucfBySymbol[symUpper]     || {};
+    const fid = fidBySymbol[symUpper]     || {};
+
+    const composite    = parseFloat(ov.composite_score || fid.composite_score || 0);
+    const essOv        = ov.ess_score_text || "";
+    const sigDir       = ov.signal_direction || "";
+    const zacks        = ov.zacks_rating  || fid.zacks_rating  || "";
+    const danelfin     = ov.danelfin_score || fid.danelfin_score || "";
+    const replayPct    = ov.replay_percentile  != null ? parseFloat(ov.replay_percentile) : null;
+    const portPct      = parseFloat(ov.percent_of_portfolio || s.current_value_usd / 4650 || 0);
+    const ucfLabel     = ucf.ucf_label  || "";
+    const ucfRank      = ucf.ucf_rank   || "";
+    const ucfScore     = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score) : null;
+    const sigSummary   = ucf.signal_summary || s.evidence_summary || "";
+
+    const _valClass = (v, good, bad) => {
+      if (!v) return "";
+      const u = String(v).toUpperCase();
+      if (u.includes(good)) return "val-bullish";
+      if (u.includes(bad)) return "val-bearish";
+      return "val-neutral";
+    };
+
+    const profileItem = (lbl, val, cls) =>
+      val !== null && val !== undefined && String(val).trim() !== ""
+        ? `<div class="rq-profile-row-item"><span class="rq-profile-lbl">${lbl}</span><span class="rq-profile-val ${cls || ''}">${escHtml(String(val))}</span></div>`
+        : "";
+
+    // Suggested reduction weight
+    const currentMV  = s.current_value_usd || 0;
+    const proceedsEst = proceeds;
+    const suggestedMV = Math.max(0, currentMV - proceedsEst);
+    const totalPortMV = (_lastAnalysisData && _lastAnalysisData.total_market_value) || 0;
+    const suggestedPct = totalPortMV > 0 ? (suggestedMV / totalPortMV * 100).toFixed(2) + "%" : "—";
+
+    // Human rationale: use evidence_summary from CRA source if available, otherwise build one
+    let rationale = "";
+    if (sigSummary) {
+      rationale = sigSummary;
+    } else if (s.category === "LOW_CONVICTION_REDUCTION") {
+      rationale = `${escHtml(sym)} is held as a passive allocation vehicle with no individual ESS signal data. Under the Concentrated Alpha mandate, this position represents an opportunity cost — capital that could fund a higher-conviction direct holding.`;
+    } else if (s.category === "OVERWEIGHT_REDUCTION") {
+      rationale = `${escHtml(sym)} is in an allocation node that is overweight vs. the mandate target. Partial reduction brings the portfolio back toward strategic alignment.`;
+    } else if (s.category === "TAX_AWARE_EXIT") {
+      rationale = `${escHtml(sym)} has an unrealized loss position. Tax-aware exit may improve after-tax returns.`;
+    } else if (s.category === "SIGNAL_DETERIORATION") {
+      rationale = `${escHtml(sym)} shows deteriorating signal quality (${escHtml(essOv || 'BEARISH')}). ESS and conviction scores have weakened. Priority reduction candidate.`;
+    } else {
+      rationale = s.evidence_summary ? escHtml(s.evidence_summary) : `${escHtml(sym)}: ${catLabel}`;
+    }
+
+    // Fidelity deep-link
+    const fidelityUrl = `https://digital.fidelity.com/prgw/digital/research/quote/dashboard/ratings-sentiment?symbol=${encodeURIComponent(sym)}`;
+    const fidelityLink = `<a class="rq-fidelity-link" href="${fidelityUrl}" target="_blank" rel="noopener noreferrer">&#128279; Fidelity Ratings</a>`;
+
+    const profileHtml = `
+      <div class="rq-profile-grid">
+        <div>
+          <div class="rq-profile-section-title">Signal Intelligence</div>
+          ${profileItem("ESS Score", essOv || "—", _valClass(essOv, "BULLISH", "BEARISH"))}
+          ${profileItem("Signal Direction", sigDir || "—", _valClass(sigDir, "BULLISH", "BEARISH"))}
+          ${profileItem("Zacks Rating", zacks || "—", "")}
+          ${profileItem("Danelfin Score", danelfin || "—", "")}
+          ${profileItem("Composite Score", composite > 0 ? composite.toFixed(2) : "—", composite > 3 ? "val-bullish" : composite > 0 && composite < 2.5 ? "val-bearish" : "val-neutral")}
+          ${replayPct != null ? profileItem("Replay Percentile", replayPct.toFixed(0) + "th", replayPct >= 50 ? "val-bullish" : "val-bearish") : ""}
+        </div>
+        <div>
+          <div class="rq-profile-section-title">Portfolio Context</div>
+          ${profileItem("Current Weight", portPct.toFixed(2) + "%", "")}
+          ${profileItem("Current Value", formatMV(currentMV), "")}
+          ${profileItem("Est. Proceeds", formatMV(proceedsEst), "")}
+          ${profileItem("Suggested Weight", suggestedPct, "")}
+          ${profileItem("Reduction Category", catLabel, "")}
+          ${ucfLabel ? profileItem("UCF Label", ucfLabel, _valClass(ucfLabel, "CONVICTION", "TRIM_WATCH")) : ""}
+          ${ucfScore != null ? profileItem("UCF Score", ucfScore.toFixed(1), ucfScore >= 60 ? "val-bullish" : ucfScore < 30 ? "val-bearish" : "val-neutral") : ""}
+          ${ucfRank ? profileItem("UCF Rank", "#" + ucfRank + " of portfolio", "") : ""}
+        </div>
+        <div>
+          <div class="rq-profile-section-title">Actions</div>
+          ${fviBadge ? `<div class="rq-profile-row-item"><span class="rq-profile-lbl">FVI Tier</span><span class="rq-profile-val">${fviBadge}</span></div>` : ""}
+          ${profileItem("Policy State", blocked ? "🔒 DO_NOT_SELL" : deferred ? "⏸ SELL_LAST" : "Executable", blocked ? "val-bearish" : "")}
+          ${profileItem("Sizing", sizing, "")}
+          ${profileItem("Priority", pri, pri === "URGENT" ? "val-bearish" : pri === "HIGH" ? "val-bearish" : "val-neutral")}
+          <div style="margin-top:8px;">${fidelityLink}</div>
+        </div>
+        <div class="rq-rationale" style="grid-column:1/-1;">
+          <strong>Reduction Rationale:</strong> ${rationale}
+        </div>
+      </div>`;
+
+    const mainRow = `<tr class="rq-row${rowClass}">
       <td class="rq-rank">${idx + 1}</td>
       <td>
-        <div class="rq-sym">${escHtml(s.symbol)}</div>
+        <div class="rq-sym">${escHtml(sym)}</div>
         <div class="rq-cat">${catLabel} ${essText}</div>
+        <button class="rq-expand-btn" onclick="(function(){const p=document.getElementById('${profileId}');if(p){p.classList.toggle('rq-open');this.textContent=p.classList.contains('rq-open')?'▲ Less':'▼ Profile';}}).call(this)">▼ Profile</button>
       </td>
       <td>${priBadge}</td>
       <td>${proceedsHtml}</td>
       <td>${policyBadge || '<span style="color:var(--muted);font-size:0.72rem">—</span>'}${fviBadge ? '<br>' + fviBadge : ''}</td>
     </tr>`;
+
+    const profileRow = `<tr class="rq-profile-row" id="${profileId}">
+      <td></td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}</td>
+    </tr>`;
+
+    return mainRow + profileRow;
   }).join("");
 
   const blockedNote = blockedCount > 0
@@ -5384,11 +5493,19 @@ async function loadCRAProposal() {
     _craEnableButtons(true);
 
     // ARCH-02: Render Reduction Queue from CRA capital sources
-    const fviData = (_lastAnalysisData && _lastAnalysisData.fvi_data) || null;
+    // ARCH-05: Pass signal intelligence data for per-candidate profiles
+    const fviData      = (_lastAnalysisData && _lastAnalysisData.fvi_data) || null;
+    const _ovBySymArch = {};
+    for (const ov of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
+      if (ov && ov.symbol) _ovBySymArch[(ov.symbol || "").toUpperCase()] = ov;
+    }
     renderReductionQueue(
       _craProposal.sources || [],
       _craProposal.total_capital_pool,
-      fviData
+      fviData,
+      _ovBySymArch,
+      (_lastAnalysisData && _lastAnalysisData.ucf_verdicts_by_symbol) || {},
+      (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol) || {}
     );
 
     // Check for stale draft with matching run_id for Include/Skip restore

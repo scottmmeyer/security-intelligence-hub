@@ -933,6 +933,49 @@
       .rq-fvi { font-size: 0.68rem; font-weight: 600; padding: 1px 6px; border-radius: 8px; }
       .rq-no-data { padding: 20px; text-align: center; color: var(--muted); font-size: 0.8rem; font-style: italic; }
       .rq-loading { padding: 16px; color: var(--muted); font-size: 0.8rem; }
+
+      /* ARCH-05: Reduction Candidate Intelligence Profile */
+      .rq-expand-btn {
+        font-size: 0.68rem; color: var(--accent-2); cursor: pointer; background: none;
+        border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px;
+        margin-top: 3px; display: inline-block; white-space: nowrap;
+      }
+      .rq-expand-btn:hover { background: var(--accent-2); color: #fff; }
+      .rq-profile-row { display: none; }
+      .rq-profile-row.rq-open { display: table-row; }
+      .rq-profile-cell {
+        padding: 10px 12px; background: #f8f5f1; border-bottom: 2px solid var(--border);
+      }
+      .rq-profile-grid {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+        font-size: 0.76rem;
+      }
+      @media (max-width: 700px) { .rq-profile-grid { grid-template-columns: 1fr; } }
+      .rq-profile-section-title {
+        font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--muted); font-weight: 700; margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 3px;
+      }
+      .rq-profile-row-item {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 2px 0; border-bottom: 1px solid #ede9e2;
+      }
+      .rq-profile-row-item:last-child { border-bottom: none; }
+      .rq-profile-lbl { color: var(--muted); font-size: 0.72rem; }
+      .rq-profile-val { font-weight: 600; font-size: 0.76rem; color: var(--text); text-align: right; }
+      .rq-profile-val.val-bearish { color: var(--sev-high); }
+      .rq-profile-val.val-bullish { color: var(--green); }
+      .rq-profile-val.val-neutral { color: var(--muted); }
+      .rq-rationale {
+        margin-top: 8px; padding: 7px 10px; background: white; border: 1px solid var(--border);
+        border-radius: 8px; font-size: 0.76rem; color: var(--text); line-height: 1.4;
+        grid-column: 1 / -1;
+      }
+      .rq-fidelity-link {
+        display: inline-block; margin-top: 8px; font-size: 0.72rem;
+        color: var(--accent-2); text-decoration: none; border: 1px solid var(--border);
+        padding: 2px 9px; border-radius: 8px; background: white;
+      }
+      .rq-fidelity-link:hover { background: var(--accent-2); color: white; }
       .dq-section-header {
         display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
       }
