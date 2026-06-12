@@ -386,8 +386,13 @@ def build_smart_refresh_list(
     universe_csv: Path | str = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv",
     zacks_cache_csv: Path | str = _DEFAULT_OUTPUT_DIR / "latest_zacks.csv",
     bullish_ess_texts: frozenset[str] | None = None,
+    forced_symbols: set[str] | None = None,
 ) -> list[str]:
     """Return the prioritized list of symbols to fetch in a smart-refresh run.
+
+    Priority 0 (mandatory): symbols in *forced_symbols* (e.g. current portfolio
+    holdings).  These are always included regardless of ESS category or cache
+    status to guarantee held positions never run on stale Zacks data.
 
     Priority 1 (always fetch): symbols whose ``starmine_ess_text`` is in
     *bullish_ess_texts* (default: BULLISH and VERY_BULLISH).  These are the
@@ -398,7 +403,8 @@ def build_smart_refresh_list(
     All other symbols can use the ESS ``ess_zacks_rating`` pass-through as a
     cheap proxy fallback and are excluded from the fetch list.
 
-    Returns a deduplicated, ordered list: bullish symbols first, then uncached.
+    Returns a deduplicated, ordered list: forced symbols first, then bullish,
+    then uncached.
     """
     if bullish_ess_texts is None:
         bullish_ess_texts = _BULLISH_ESS_TEXTS
@@ -416,9 +422,18 @@ def build_smart_refresh_list(
     if not universe_path.exists():
         return []
 
+    forced_list: list[str] = []
     bullish_list: list[str] = []
     uncached_list: list[str] = []
     seen: set[str] = set()
+
+    # Priority 0: forced symbols (portfolio holdings guarantee)
+    if forced_symbols:
+        for sym in sorted(forced_symbols):
+            sym = str(sym).strip().upper()
+            if sym and sym not in seen:
+                forced_list.append(sym)
+                seen.add(sym)
 
     with universe_path.open("r", encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
@@ -432,7 +447,7 @@ def build_smart_refresh_list(
             elif sym not in cached_symbols:
                 uncached_list.append(sym)
 
-    return bullish_list + uncached_list
+    return forced_list + bullish_list + uncached_list
 
 
 if __name__ == "__main__":

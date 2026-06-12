@@ -1,0 +1,99 @@
+symbol,is_portfolio_holding,ess_category,in_zacks_cache,in_smart_refresh_list,staleness_risk,notes
+AEIS,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+AGEN,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+ALNT,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+AMG,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+AMZN,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+ANGO,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+ANIP,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+ARW,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+ASML,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+ATLC,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+AVGO,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+AVT,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+AZZ,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+BND,True,NOT_IN_UNIVERSE,False,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+BNDX,True,NOT_IN_UNIVERSE,False,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+BSVN,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+CAH,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+CBOE,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+CIEN,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+CMCO,True,BEARISH,True,False,HIGH,Held BEARISH position; Zacks stale; potential reduction candidate
+CRS,True,VERY_BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+CVE,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+DELL,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+DODFX,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+DVN,True,BEARISH,True,False,HIGH,Held BEARISH position; Zacks stale; potential reduction candidate
+FBTC,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+FCPGX,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+FETH,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+FHI,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+FIS,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+FMCSX,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+FSLR,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+FSOL,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+FXAIX,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+GFF,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+GTX,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+HALO,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+HCI,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+IVZ,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+JBL,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+KGC,True,BEARISH,True,False,HIGH,Held BEARISH position; Zacks stale; potential reduction candidate
+LMAT,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+LRCX,True,VERY_BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+M26CNT069,True,NOT_IN_UNIVERSE,False,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+MCB,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+MKSI,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+MSFT,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+MTZ,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+MU,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+NUE,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+NVDA,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+NVS,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+PCB,True,VERY_BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+PLTR,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+PRG,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+PRIM,True,BEARISH,True,False,HIGH,Held BEARISH position; Zacks stale; potential reduction candidate
+PSX,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+SANM,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+SBS,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+SIMO,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+SMR,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+SNX,True,VERY_BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+SPAXX,True,NOT_IN_UNIVERSE,False,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+STLD,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+STNG,True,NO_ESS,True,False,MEDIUM - only signal source,No ESS; Zacks is sole signal; stale = no conviction data
+TSLA,True,VERY_BEARISH,True,False,CRITICAL,Held VERY_BEARISH position; Zacks stale; reduction candidate
+TSM,True,VERY_BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+TTNDY,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+UHS,True,BULLISH,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+UTHR,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+VB,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+VO,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+VOO,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+VRT,True,NO_ESS,True,True,LOW - refreshed daily,In smart refresh list (BULLISH/VERY_BULLISH or uncached)
+VWO,True,NOT_IN_UNIVERSE,False,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+XRP,True,NOT_IN_UNIVERSE,True,False,N/A - non-equity,ETF/fund/crypto/cash; Zacks not applicable
+XYZ,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+YELP,True,NEUTRAL,True,False,MEDIUM,Held NEUTRAL position; Zacks stale
+A,False,VERY_BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AAL,False,VERY_BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AAON,False,NO_ESS,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AAP,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AAPL,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ABBV,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ABCB,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ABG,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ACDC,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ACH,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ACNB,False,VERY_BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ACT,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ADBE,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ADI,False,NO_ESS,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ADP,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ADT,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+ADUS,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AES,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AGO,False,BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)
+AGX,False,VERY_BULLISH,True,True,LOW - refreshed daily,Non-holding in smart list (sample)

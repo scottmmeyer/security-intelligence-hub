@@ -48,6 +48,7 @@ _DANELFIN_DIR = _REPO_ROOT / "data" / "signals" / "danelfin"
 _YAHOO_DIR = _REPO_ROOT / "data" / "signals" / "yahoo"
 _FMP_DIR = _REPO_ROOT / "data" / "signals" / "fmp"
 _BASE_UNIVERSE = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
+_PAR_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
 
 _ALL_PROVIDERS = ("zacks", "danelfin", "yahoo", "fmp")
 
@@ -135,6 +136,37 @@ def _smart_universe_symbols(universe_csv: Path = _BASE_UNIVERSE) -> list[str]:
     return symbols
 
 
+def _load_portfolio_equity_holdings() -> set[str]:
+    """Return equity holding symbols from the most recent date-stamped PAR run.
+
+    Loads the latest PAR-YYYYMMDD-* holdings.csv and returns the set of symbols
+    whose ``asset_class`` is ``EQUITIES``.  These are passed to
+    ``build_smart_refresh_list()`` as ``forced_symbols`` to guarantee that all
+    currently held equity positions receive a Zacks refresh regardless of ESS
+    category or cache status.
+    """
+    if not _PAR_ROOT.exists():
+        return set()
+    date_pars = sorted(
+        [d for d in _PAR_ROOT.iterdir() if d.name.startswith("PAR-2")],
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if not date_pars:
+        return set()
+    holdings_path = date_pars[0] / "holdings.csv"
+    if not holdings_path.exists():
+        return set()
+    syms: set[str] = set()
+    with holdings_path.open(encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sym = (row.get("symbol") or "").strip().upper()
+            asset = (row.get("asset_class") or "").strip().upper()
+            if sym and asset == "EQUITIES":
+                syms.add(sym)
+    return syms
+
+
 # ---------------------------------------------------------------------------
 # Per-provider refresh
 # ---------------------------------------------------------------------------
@@ -148,9 +180,13 @@ def _refresh_zacks(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
         return False
 
     # Zacks always uses smart-refresh (bullish first + uncached); full universe is never needed.
+    # Portfolio equity holdings are force-included regardless of ESS/cache status to guarantee
+    # all held positions receive a daily Zacks update (ZACKS-REFRESH-UNIVERSE-01 fix).
+    forced = _load_portfolio_equity_holdings()
     symbols = build_smart_refresh_list(
         universe_csv=_BASE_UNIVERSE,
         zacks_cache_csv=latest,
+        forced_symbols=forced or None,
     )
     if not symbols:
         if verbose:
@@ -158,7 +194,11 @@ def _refresh_zacks(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
         return False
 
     if verbose:
-        print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols.")
+        if forced:
+            print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols "
+                  f"({len(forced)} forced portfolio holdings + smart refresh).")
+        else:
+            print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols.")
     if not dry_run:
         fetch_zacks_scores_for_symbols(symbols, output_dir=_ZACKS_DIR, verbose=verbose)
     return True
