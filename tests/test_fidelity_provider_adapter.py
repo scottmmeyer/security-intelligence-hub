@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 from datetime import date
 from pathlib import Path
@@ -289,3 +290,147 @@ def test_ess_stage_blocks_when_intake_has_no_eligible_files(tmp_path: Path, monk
     assert output.validation_summary["operator_guidance"].startswith(
         "No eligible ESS intake files were discovered"
     )
+
+
+def test_ess_stage_present_holding_generates_no_coverage_gap_warning(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    analysis_run = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260514-TEST0001"
+    analysis_run.mkdir(parents=True, exist_ok=True)
+    with (analysis_run / "holdings.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["symbol", "asset_class", "description", "percent_of_portfolio"])
+        writer.writeheader()
+        writer.writerow({"symbol": "ABNB", "asset_class": "EQUITIES", "description": "Airbnb", "percent_of_portfolio": "4.0"})
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-ESSOK", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "COMPLETE"
+    assert output.validation_summary["ess_coverage_gap_count"] == "0"
+    payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
+    assert payload["warning_count"] == 0
+
+
+def test_ess_stage_absent_holding_generates_coverage_gap_warning(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    current_root = tmp_path / "data" / "current"
+    current_root.mkdir(parents=True, exist_ok=True)
+    with (current_root / "signal_snapshot.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "snapshot_date", "created_at_utc", "run_id", "provider", "source_file", "symbol",
+                "coverage_domain", "signal_coverage_status", "starmine_ess_text", "starmine_ess_numeric",
+                "starmine_ess_numeric_estimated", "starmine_ess_source_type",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow({
+            "snapshot_date": "2026-05-10", "created_at_utc": "2026-05-10T12:00:00+00:00",
+            "run_id": "OLDRUN", "provider": "FIDELITY", "source_file": "old.csv", "symbol": "TSLA",
+            "coverage_domain": "STARMINE_COVERED", "signal_coverage_status": "COVERED",
+            "starmine_ess_text": "BEARISH", "starmine_ess_numeric": "2.0",
+            "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": "TEXT_MAPPED",
+        })
+
+    analysis_run = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260514-TEST0002"
+    analysis_run.mkdir(parents=True, exist_ok=True)
+    with (analysis_run / "holdings.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["symbol", "asset_class", "description", "percent_of_portfolio"])
+        writer.writeheader()
+        writer.writerow({"symbol": "TSLA", "asset_class": "EQUITIES", "description": "Tesla", "percent_of_portfolio": "5.0"})
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-ESSMISS", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "COMPLETE"
+    assert output.validation_summary["ess_coverage_gap_count"] == "1"
+    assert any("ESS Coverage Warning" in warning for warning in output.warnings)
+    payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
+    assert payload["warning_count"] == 1
+    assert payload["gaps"][0]["symbol"] == "TSLA"
+    assert payload["gaps"][0]["current_ess_posture"] == "BEARISH"
+    assert payload["gaps"][0]["days_stale"] == 3
+
+
+def test_ess_stage_multiple_absent_holdings_grouped_warning(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    current_root = tmp_path / "data" / "current"
+    current_root.mkdir(parents=True, exist_ok=True)
+    with (current_root / "signal_snapshot.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "snapshot_date", "created_at_utc", "run_id", "provider", "source_file", "symbol",
+                "coverage_domain", "signal_coverage_status", "starmine_ess_text", "starmine_ess_numeric",
+                "starmine_ess_numeric_estimated", "starmine_ess_source_type",
+            ],
+        )
+        writer.writeheader()
+        for sym, posture in [("TSLA", "BEARISH"), ("STNG", "NEUTRAL")]:
+            writer.writerow({
+                "snapshot_date": "2026-05-10", "created_at_utc": "2026-05-10T12:00:00+00:00",
+                "run_id": "OLDRUN", "provider": "FIDELITY", "source_file": "old.csv", "symbol": sym,
+                "coverage_domain": "STARMINE_COVERED", "signal_coverage_status": "COVERED",
+                "starmine_ess_text": posture, "starmine_ess_numeric": "2.0",
+                "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": "TEXT_MAPPED",
+            })
+
+    analysis_run = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260514-TEST0003"
+    analysis_run.mkdir(parents=True, exist_ok=True)
+    with (analysis_run / "holdings.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["symbol", "asset_class", "description", "percent_of_portfolio"])
+        writer.writeheader()
+        writer.writerow({"symbol": "TSLA", "asset_class": "EQUITIES", "description": "Tesla", "percent_of_portfolio": "5.0"})
+        writer.writerow({"symbol": "STNG", "asset_class": "EQUITIES", "description": "Scorpio Tankers", "percent_of_portfolio": "3.0"})
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-ESSMULTI", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "COMPLETE"
+    assert output.validation_summary["ess_coverage_gap_count"] == "2"
+    assert output.validation_summary["ess_coverage_gap_examples"] == "TSLA|STNG"
+    payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
+    assert payload["warning_count"] == 2
+    assert payload["example_symbols"] == ["TSLA", "STNG"]

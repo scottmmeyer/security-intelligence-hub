@@ -2476,6 +2476,7 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
   const yahooFreshDate = (ac && ac.refresh_date) || "";
   const zacksFreshDate = meta.zacks_refresh_date || "";
   const danFreshDate   = meta.danelfin_refresh_date || "";
+  const essGapWarning  = meta.ess_coverage_warning || null;
 
   const freshnessData = [
     { name: "ESS",      date: essFreshDate,   source: "Fidelity / StarMine" },
@@ -2493,6 +2494,16 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
       <td style="padding:4px 8px">${_freshnessChip(status)}</td>
     </tr>`;
   }).join("");
+
+  const essCoverageHtml = (essGapWarning && Number(essGapWarning.warning_count || 0) > 0)
+    ? `<div class="sa-ess-override" style="margin-top:8px;border-color:#c0392b;background:#fff5f5;">
+        ⚠ <strong>ESS Coverage Warning:</strong>
+        ${Number(essGapWarning.warning_count || 0)} holdings absent from latest ESS file.
+        ${Array.isArray(essGapWarning.example_symbols) && essGapWarning.example_symbols.length
+          ? `Examples: ${escHtml(essGapWarning.example_symbols.join(", "))}`
+          : ""}
+      </div>`
+    : "";
 
   // ── Yahoo target divergence flag ──────────────────────────────────────────
   const yahooFlag = (ac && ac.abr != null && ac.upside_pct != null &&
@@ -2547,6 +2558,7 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
         </tr></thead>
         <tbody>${freshnessRows}</tbody>
       </table>
+      ${essCoverageHtml}
     </div>` : ""}
     ${yahooFlag}
   </div>`;

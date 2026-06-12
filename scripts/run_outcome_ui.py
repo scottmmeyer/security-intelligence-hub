@@ -35,6 +35,8 @@ _SIGNAL_FILES = {
     "danelfin": _REPO_ROOT / "data/signals/danelfin/latest_danelfin.csv",
     "yahoo":    _REPO_ROOT / "data/signals/yahoo/latest_yahoo_supplemental.csv",
 }
+_ESS_SIGNAL_SNAPSHOT = _REPO_ROOT / "data/current/signal_snapshot.csv"
+_ESS_COVERAGE_WARNING = _REPO_ROOT / "data/current/ess_coverage_warning.json"
 
 # Background refresh process handle (module-level so Handler instances share it)
 _refresh_proc: subprocess.Popen | None = None
@@ -65,6 +67,31 @@ def _sourced_date(csv_path: Path) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _latest_snapshot_date(csv_path: Path) -> str | None:
+    """Return the maximum snapshot_date value found in csv_path, or None."""
+    if not csv_path.exists():
+        return None
+    try:
+        latest: str | None = None
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                val = str(row.get("snapshot_date", "")).strip()
+                if val and (latest is None or val > latest):
+                    latest = val
+        return latest
+    except Exception:
+        return None
+
+
+def _load_ess_coverage_warning() -> dict:
+    if not _ESS_COVERAGE_WARNING.exists():
+        return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "UNKNOWN"}
+    try:
+        return json.loads(_ESS_COVERAGE_WARNING.read_text(encoding="utf-8"))
+    except Exception:
+        return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
 
 
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
@@ -285,6 +312,27 @@ def _signal_status() -> dict:
             entry["badge_state"] = "STALE"
 
         result[name] = entry
+
+    ess_sd = _latest_snapshot_date(_ESS_SIGNAL_SNAPSHOT)
+    ess_gap = _load_ess_coverage_warning()
+    ess_count = int(ess_gap.get("warning_count") or 0)
+    ess_entry: dict = {
+        "sourced_date": ess_sd,
+        "stale": ess_sd != today,
+        "exists": _ESS_SIGNAL_SNAPSHOT.exists(),
+        "coverage_warning_count": ess_count,
+        "coverage_warning_examples": list(ess_gap.get("example_symbols") or []),
+        "coverage_warning_message": str(ess_gap.get("summary_message") or ""),
+    }
+    if ess_sd == today and ess_count > 0:
+        ess_entry["badge_state"] = "FRESH_PARTIAL"
+    elif ess_sd == today:
+        ess_entry["badge_state"] = "FRESH"
+    elif ess_sd:
+        ess_entry["badge_state"] = "STALE"
+    else:
+        ess_entry["badge_state"] = "UNKNOWN"
+    result["ess"] = ess_entry
     return result
 
 

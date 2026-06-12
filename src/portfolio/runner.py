@@ -43,6 +43,7 @@ from .models import PortfolioAnalysisRun
 from .reconciliation import run_reconciliation
 from .deployment_queue import build_deployment_queue, compute_deployable_cash, CW_DAS_VERSION, apply_policy_to_queue as _apply_policy_to_queue
 from .deployment_planner import build_deployment_plan, PLANNER_VERSION
+from .ess_coverage import load_ess_coverage_warning
 from .unified_conviction import build_ucf_verdicts, UCF_VERSION
 from .operator_policy import (
     OperatorPolicyRegistry,
@@ -63,6 +64,7 @@ _TARGETS_CSV = str(_REPO_ROOT / "data" / "current" / "strategic_allocation_targe
 _OVERLAYS_CSV = str(_REPO_ROOT / "data" / "current" / "tactical_overlays.csv")
 _YAHOO_SUPPLEMENTAL = _REPO_ROOT / "data" / "signals" / "yahoo" / "latest_yahoo_supplemental.csv"
 _SIGNAL_SNAPSHOT    = _REPO_ROOT / "data" / "current" / "signal_snapshot.csv"
+_ESS_COVERAGE_WARNING = _REPO_ROOT / "data" / "current" / "ess_coverage_warning.json"
 _ZACKS_LATEST       = _REPO_ROOT / "data" / "signals" / "zacks" / "latest_zacks.csv"
 _DANELFIN_LATEST    = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
 _OPERATOR_STATE     = str(_REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json")
@@ -1604,8 +1606,10 @@ def _build_signal_source_metadata() -> dict:
             return ""
 
     return {
+        "ess_refresh_date": _latest_date(_SIGNAL_SNAPSHOT, "snapshot_date"),
         "zacks_refresh_date": _latest_date(_ZACKS_LATEST, "sourced_date"),
         "danelfin_refresh_date": _latest_date(_DANELFIN_LATEST, "sourced_date"),
+        "ess_coverage_warning": load_ess_coverage_warning(_ESS_COVERAGE_WARNING),
     }
 
 

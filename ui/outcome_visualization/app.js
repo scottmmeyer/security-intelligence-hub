@@ -1435,7 +1435,7 @@ function loadSignalStatus() {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
         if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
-        if (msg) { msg.style.display = ""; msg.textContent = "Refresh in progress (smart mode \u2014 bullish symbols only). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background."; }
+        if (msg) { msg.style.display = ""; msg.textContent = "Refresh in progress (smart mode \u2014 mandatory holdings included). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background."; }
         _startRefreshPoll();
       }
     })
@@ -1448,8 +1448,8 @@ function loadSignalStatus() {
 function _renderSignalPills(data) {
   const el = document.getElementById("signalStatusPills");
   if (!el) return;
-  const providers = ["zacks", "danelfin", "yahoo"];
-  const labels    = { zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  const providers = ["ess", "zacks", "danelfin", "yahoo"];
+  const labels    = { ess: "ESS", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
   el.innerHTML = providers.filter(k => k in data).map(key => {
     const info    = data[key];
     const label   = labels[key];
@@ -1504,7 +1504,13 @@ function _renderSignalPills(data) {
       degradedHtml = `<span class="pill-degraded-advisory">0% today: ${fields}</span>`;
     }
 
-    const extraLines = [coverageHtml, degradedHtml].filter(Boolean).join(" ");
+    let warningHtml = "";
+    if (info.coverage_warning_count > 0) {
+      const examples = (info.coverage_warning_examples || []).join(", ");
+      warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} holdings absent${examples ? ` · ${examples}` : ""}</span>`;
+    }
+
+    const extraLines = [coverageHtml, degradedHtml, warningHtml].filter(Boolean).join(" ");
 
     return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
@@ -1541,7 +1547,7 @@ function triggerSignalRefresh() {
       }
       btn.disabled = true;
       btn.textContent = "Refreshing\u2026";
-      msg.textContent = "Refresh started (smart mode \u2014 bullish symbols only). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background, you can continue using the UI.";
+      msg.textContent = "Refresh started (smart mode \u2014 mandatory holdings included). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background, you can continue using the UI.";
       _startRefreshPoll();
     })
     .catch(() => {
