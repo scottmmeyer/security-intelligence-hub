@@ -1,0 +1,79 @@
+symbol,asset_class,is_equity_holding,ess_category,in_universe,zacks_in_refresh_list,zacks_in_cache,danelfin_in_smart_refresh,danelfin_in_cache,yahoo_in_smart_refresh,yahoo_in_cache,fmp_in_cache,zacks_gap_pre_fix,danelfin_smart_gap,yahoo_smart_gap,highest_risk_provider,staleness_risk_summary
+AEIS,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+AGEN,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+ALNT,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+AMG,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+AMZN,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+ANGO,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+ANIP,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+ARW,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+ASML,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+ATLC,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+AVGO,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+AVT,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+AZZ,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+BND,FIXED_INCOME,False,N/A,False,False,False,False,False,False,False,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+BNDX,FIXED_INCOME,False,N/A,False,False,False,False,False,False,False,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+BSVN,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+CAH,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+CBOE,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+CIEN,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+CMCO,EQUITIES,True,BEARISH,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+CRS,EQUITIES,True,VERY_BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+CVE,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+DELL,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+DODFX,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+DVN,EQUITIES,True,BEARISH,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+FBTC,DIGITAL,False,N/A,False,False,True,False,True,False,True,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+FCPGX,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+FETH,DIGITAL,False,N/A,False,False,True,False,True,False,True,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+FHI,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+FIS,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+FMCSX,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+FSLR,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+FSOL,DIGITAL,False,N/A,False,False,True,False,True,False,True,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+FXAIX,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+GFF,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+GTX,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+HALO,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+HCI,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+IVZ,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+JBL,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+KGC,EQUITIES,True,BEARISH,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+LMAT,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+LRCX,EQUITIES,True,VERY_BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+M26CNT069,EQUITIES,True,NO_ESS,False,True,False,False,False,False,False,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+MCB,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,True,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+MKSI,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+MSFT,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+MTZ,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+MU,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+NUE,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+NVDA,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+NVS,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+PCB,EQUITIES,True,VERY_BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+PLTR,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+PRG,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+PRIM,EQUITIES,True,BEARISH,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+PSX,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+SANM,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+SBS,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,True,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+SIMO,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+SMR,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,True,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+SNX,EQUITIES,True,VERY_BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+SPAXX,CASH,False,N/A,False,False,False,False,False,False,False,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+STLD,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+STNG,EQUITIES,True,NO_ESS,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+TSLA,EQUITIES,True,VERY_BEARISH,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+TSM,EQUITIES,True,VERY_BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+TTNDY,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+UHS,EQUITIES,True,BULLISH,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+UTHR,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+VB,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+VO,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+VOO,EQUITIES,True,NO_ESS,False,True,True,False,True,False,True,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+VRT,EQUITIES,True,NO_ESS,True,True,True,True,True,True,True,True,False,False,False,NONE,OK - all providers covered
+VWO,EQUITIES,True,NO_ESS,False,True,False,False,False,False,False,False,False,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+XRP,DIGITAL,False,N/A,False,False,True,False,True,False,True,False,False,False,False,N/A,Non-equity; Danelfin/Zacks/Yahoo N/A
+XYZ,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
+YELP,EQUITIES,True,NEUTRAL,True,True,True,False,True,False,True,True,True,True,True,Danelfin+Yahoo,Danelfin+Yahoo stale via UI smart-refresh path
