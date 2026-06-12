@@ -167,6 +167,34 @@ def _load_portfolio_equity_holdings() -> set[str]:
     return syms
 
 
+def _merge_forced_symbols(
+    base_symbols: Sequence[str],
+    forced_symbols: set[str] | None = None,
+) -> list[str]:
+    """Return a deduplicated list with forced symbols prepended.
+
+    This preserves smart-refresh efficiency for non-held symbols while ensuring
+    current equity holdings are always refreshed regardless of ESS posture.
+    """
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    if forced_symbols:
+        for sym in sorted(forced_symbols):
+            norm = str(sym).strip().upper()
+            if norm and norm not in seen:
+                merged.append(norm)
+                seen.add(norm)
+
+    for sym in base_symbols:
+        norm = str(sym).strip().upper()
+        if norm and norm not in seen:
+            merged.append(norm)
+            seen.add(norm)
+
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Per-provider refresh
 # ---------------------------------------------------------------------------
@@ -204,7 +232,13 @@ def _refresh_zacks(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
     return True
 
 
-def _refresh_danelfin(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool:
+def _refresh_danelfin(
+    *,
+    dry_run: bool,
+    verbose: bool,
+    smart: bool = False,
+    forced_symbols: set[str] | None = None,
+) -> bool:
     """Fetch fresh Danelfin scores.  Returns True when a fetch was triggered."""
     latest = _DANELFIN_DIR / "latest_danelfin.csv"
     if not _is_stale(latest):
@@ -212,7 +246,9 @@ def _refresh_danelfin(*, dry_run: bool, verbose: bool, smart: bool = False) -> b
             print(f"[refresh_signals] Danelfin: up-to-date ({_latest_sourced_date(latest)}), skipping.")
         return False
 
-    symbols = _smart_universe_symbols() if smart else _all_universe_symbols()
+    forced = forced_symbols if forced_symbols is not None else _load_portfolio_equity_holdings()
+    base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
+    symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
     if not symbols:
         if verbose:
             print("[refresh_signals] Danelfin: stale but no symbols found in universe, skipping.")
@@ -220,13 +256,25 @@ def _refresh_danelfin(*, dry_run: bool, verbose: bool, smart: bool = False) -> b
 
     mode_label = "smart (bullish only)" if smart else "full universe"
     if verbose:
-        print(f"[refresh_signals] Danelfin: stale — fetching {len(symbols)} symbols ({mode_label}).")
+        if smart and forced:
+            print(
+                f"[refresh_signals] Danelfin: stale — fetching {len(symbols)} symbols "
+                f"({len(forced)} forced portfolio holdings + {mode_label})."
+            )
+        else:
+            print(f"[refresh_signals] Danelfin: stale — fetching {len(symbols)} symbols ({mode_label}).")
     if not dry_run:
         fetch_danelfin_scores_for_symbols(symbols, output_dir=_DANELFIN_DIR, verbose=verbose)
     return True
 
 
-def _refresh_yahoo(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool:
+def _refresh_yahoo(
+    *,
+    dry_run: bool,
+    verbose: bool,
+    smart: bool = False,
+    forced_symbols: set[str] | None = None,
+) -> bool:
     """Fetch fresh Yahoo supplemental signals.  Returns True when a fetch was triggered."""
     latest = _YAHOO_DIR / "latest_yahoo_supplemental.csv"
     if not _is_stale(latest):
@@ -234,7 +282,9 @@ def _refresh_yahoo(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
             print(f"[refresh_signals] Yahoo: up-to-date ({_latest_sourced_date(latest)}), skipping.")
         return False
 
-    symbols = _smart_universe_symbols() if smart else _all_universe_symbols()
+    forced = forced_symbols if forced_symbols is not None else _load_portfolio_equity_holdings()
+    base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
+    symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
     if not symbols:
         if verbose:
             print("[refresh_signals] Yahoo: stale but no symbols found in universe, skipping.")
@@ -242,7 +292,13 @@ def _refresh_yahoo(*, dry_run: bool, verbose: bool, smart: bool = False) -> bool
 
     mode_label = "smart (bullish only)" if smart else "full universe"
     if verbose:
-        print(f"[refresh_signals] Yahoo: stale — fetching {len(symbols)} symbols ({mode_label}).")
+        if smart and forced:
+            print(
+                f"[refresh_signals] Yahoo: stale — fetching {len(symbols)} symbols "
+                f"({len(forced)} forced portfolio holdings + {mode_label})."
+            )
+        else:
+            print(f"[refresh_signals] Yahoo: stale — fetching {len(symbols)} symbols ({mode_label}).")
     if not dry_run:
         fetch_yahoo_supplemental_for_symbols(symbols, output_dir=_YAHOO_DIR, verbose=verbose)
     return True
