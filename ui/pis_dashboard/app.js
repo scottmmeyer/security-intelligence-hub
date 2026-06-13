@@ -140,6 +140,17 @@ const sectionStates = {};
 const subsystemStates = {};
 let dashboardStartedAt = 0;
 let bannerHideTimerId = null;
+const executiveState = {
+  snapshots: [],
+  timeline: [],
+  latest: {},
+  governanceLatest: { snapshots: [], status_counts: {} },
+  governanceSummary: { total_snapshots: 0, status_counts: {} },
+  canonicalLatest: { latest: {} },
+  canonicalSummary: { selected_dates: 0, unselected_dates: 0, selected_status_counts: {} },
+  latestChanges: { summary: null, new_positions: [], exited_positions: [], increased_positions: [], reduced_positions: [] },
+  lineageLatest: { summary: null, matches: [], unmatched: [], source_breakdown: [] },
+};
 
 function asCurrency(value) {
   const num = Number(value || 0);
@@ -158,6 +169,12 @@ function asSignedCurrency(value) {
 function asInt(value) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? Math.round(num).toLocaleString("en-US") : "0";
+}
+
+function asPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${num.toFixed(2)}%`;
 }
 
 function elapsedSeconds() {
@@ -276,6 +293,13 @@ function renderDashboardStatusPanel() {
   const node = document.getElementById("dashboardStatusPanel");
   if (!node) return;
 
+  const statuses = Object.values(subsystemStates);
+  const anyFailed = statuses.some((status) => status === STATUS_FAILED);
+  const anySlow = statuses.some((status) => status === STATUS_SLOW);
+  const allLoaded = statuses.length > 0 && statuses.every((status) => status === STATUS_LOADED);
+  const overallLabel = anyFailed || anySlow ? "⚠ Degraded" : allLoaded ? "✓ Healthy" : "⟳ Loading";
+  const overallClass = anyFailed || anySlow ? "section-badge-slow" : allLoaded ? "section-badge-loaded" : "section-badge-loading";
+
   const rows = Object.entries(SUBSYSTEM_DEFINITIONS).map(([key, config]) => {
     const status = subsystemStates[key] || STATUS_LOADING;
     return `
@@ -289,12 +313,152 @@ function renderDashboardStatusPanel() {
   node.innerHTML = `
     <div class="dashboard-status-header">
       <div>
-        <h2>Dashboard Status</h2>
+        <h2>System Status</h2>
         <p class="subtitle">Current subsystem visibility across dashboard sections.</p>
+        <div class="health-overall"><span class="section-badge ${overallClass}">${overallLabel}</span></div>
       </div>
     </div>
     <ul class="dashboard-status-list">${rows}</ul>
   `;
+}
+
+function extractReasonTokens(raw) {
+  const text = String(raw || "").toUpperCase();
+  const tokens = text.match(/[A-Z_]{3,}/g) || [];
+  return tokens.filter((token) => token !== "TRUE" && token !== "FALSE" && token !== "NONE");
+}
+
+function topReasonForStatus(status) {
+  const counts = {};
+  (executiveState.governanceLatest.snapshots || []).forEach((row) => {
+    if (String(row.governance_status || "").toUpperCase() !== status) return;
+    extractReasonTokens(row.reasons).forEach((token) => {
+      counts[token] = (counts[token] || 0) + 1;
+    });
+  });
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return sorted.length ? sorted[0][0] : "-";
+}
+
+function renderExecutiveKpiHeader() {
+  const node = document.getElementById("executiveKpiHeader");
+  if (!node) return;
+
+  const statusCounts = executiveState.governanceSummary.status_counts || {};
+  const latestChange = Number(executiveState.latestChanges.summary && executiveState.latestChanges.summary.portfolio_value_change);
+  const latestValue = Number(executiveState.latest.total_value);
+  const lineageMatches = Array.isArray(executiveState.lineageLatest.matches) ? executiveState.lineageLatest.matches.length : 0;
+
+  const items = [
+    ["Snapshots", asInt(executiveState.snapshots.length)],
+    ["Canonical Days", asInt(executiveState.canonicalSummary.selected_dates)],
+    ["PASS", asInt(statusCounts.PASS)],
+    ["WARNING", asInt(statusCounts.WARNING)],
+    ["REJECT", asInt(statusCounts.REJECT)],
+    ["Latest Portfolio Value", Number.isFinite(latestValue) ? asCurrency(latestValue) : "-"],
+    ["Latest Change", Number.isFinite(latestChange) ? asSignedCurrency(latestChange) : "-"],
+    ["Lineage Matches", asInt(lineageMatches)],
+  ];
+
+  node.innerHTML = items
+    .map(([label, value]) => `
+      <div class="executive-kpi">
+        <div class="executive-kpi-label">${label}</div>
+        <div class="executive-kpi-value">${value}</div>
+      </div>
+    `)
+    .join("");
+}
+
+function renderGovernanceSummaryCard() {
+  const node = document.getElementById("governanceSummaryCard");
+  if (!node) return;
+  const statusCounts = executiveState.governanceSummary.status_counts || {};
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>PASS</span><strong>${asInt(statusCounts.PASS)}</strong></li>
+      <li class="metric-item"><span>WARNING</span><strong>${asInt(statusCounts.WARNING)}</strong></li>
+      <li class="metric-item"><span>REJECT</span><strong>${asInt(statusCounts.REJECT)}</strong></li>
+      <li class="metric-item"><span>Top rejection reason</span><strong>${topReasonForStatus("REJECT")}</strong></li>
+      <li class="metric-item"><span>Top warning reason</span><strong>${topReasonForStatus("WARNING")}</strong></li>
+    </ul>
+  `;
+}
+
+function renderCanonicalSelectionCard() {
+  const node = document.getElementById("canonicalSelectionCard");
+  if (!node) return;
+  const statusCounts = executiveState.governanceSummary.status_counts || {};
+  const latest = (executiveState.canonicalLatest && executiveState.canonicalLatest.latest) || {};
+  const policy = String(latest.selection_reason || "Latest-ingested PASS candidate").replace("Selected ", "").replace(".", "");
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Selected Dates</span><strong>${asInt(executiveState.canonicalSummary.selected_dates)}</strong></li>
+      <li class="metric-item"><span>Selection Policy</span><strong>${policy || "Latest-ingested PASS candidate"}</strong></li>
+      <li class="metric-item"><span>Rejected Snapshots Excluded</span><strong>${asInt(statusCounts.REJECT)}</strong></li>
+      <li class="metric-item"><span>Warning Snapshots Ignored</span><strong>${asInt(statusCounts.WARNING)}</strong></li>
+    </ul>
+  `;
+}
+
+function renderPortfolioTrendCard() {
+  const node = document.getElementById("portfolioTrendCard");
+  if (!node) return;
+  const timeline = executiveState.timeline || [];
+  const latest = Number(timeline[0] && timeline[0].portfolio_value);
+  const prior = Number(timeline[1] && timeline[1].portfolio_value);
+  const change = Number.isFinite(latest) && Number.isFinite(prior) ? latest - prior : Number.NaN;
+  const changePct = Number.isFinite(change) && prior !== 0 ? (change / prior) * 100 : Number.NaN;
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Latest Value</span><strong>${Number.isFinite(latest) ? asCurrency(latest) : "-"}</strong></li>
+      <li class="metric-item"><span>Prior Value</span><strong>${Number.isFinite(prior) ? asCurrency(prior) : "-"}</strong></li>
+      <li class="metric-item"><span>Change</span><strong>${Number.isFinite(change) ? asSignedCurrency(change) : "-"}</strong></li>
+      <li class="metric-item"><span>Change %</span><strong>${Number.isFinite(changePct) ? asPercent(changePct) : "-"}</strong></li>
+    </ul>
+  `;
+}
+
+function renderChangeDetectionSummaryCard() {
+  const node = document.getElementById("changeDetectionSummaryCard");
+  if (!node) return;
+  const summary = executiveState.latestChanges.summary || {};
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>New Positions</span><strong>${asInt(summary.new_holdings_count)}</strong></li>
+      <li class="metric-item"><span>Exited Positions</span><strong>${asInt(summary.exited_holdings_count)}</strong></li>
+      <li class="metric-item"><span>Increased Positions</span><strong>${asInt(summary.increased_holdings_count)}</strong></li>
+      <li class="metric-item"><span>Reduced Positions</span><strong>${asInt(summary.reduced_holdings_count)}</strong></li>
+    </ul>
+  `;
+}
+
+function renderLineageSummaryCard() {
+  const node = document.getElementById("lineageSummaryCard");
+  if (!node) return;
+  const summary = executiveState.lineageLatest.summary || {};
+  const total = Number(summary.total_changes || 0);
+  const unmatched = Number(summary.unmatched || 0);
+  const matched = Number.isFinite(total) ? Math.max(total - unmatched, 0) : 0;
+  const rate = total > 0 ? (matched / total) * 100 : Number.NaN;
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Matched High</span><strong>${asInt(summary.matched_high)}</strong></li>
+      <li class="metric-item"><span>Matched Medium</span><strong>${asInt(summary.matched_medium)}</strong></li>
+      <li class="metric-item"><span>Matched Low</span><strong>${asInt(summary.matched_low)}</strong></li>
+      <li class="metric-item"><span>Unmatched</span><strong>${asInt(summary.unmatched)}</strong></li>
+      <li class="metric-item"><span>Match Rate %</span><strong>${Number.isFinite(rate) ? asPercent(rate) : "-"}</strong></li>
+    </ul>
+  `;
+}
+
+function renderExecutiveCards() {
+  renderExecutiveKpiHeader();
+  renderGovernanceSummaryCard();
+  renderCanonicalSelectionCard();
+  renderPortfolioTrendCard();
+  renderChangeDetectionSummaryCard();
+  renderLineageSummaryCard();
 }
 
 function updateSubsystemStatuses() {
@@ -714,6 +878,9 @@ function initializeDashboardShell() {
   });
   updateSubsystemStatuses();
   updateDashboardBanner();
+  ["executiveKpiHeader", "governanceSummaryCard", "canonicalSelectionCard", "portfolioTrendCard", "changeDetectionSummaryCard", "lineageSummaryCard"].forEach((id) => {
+    renderLoading(id, "Loading executive summary...");
+  });
 }
 
 function initialize() {
@@ -721,6 +888,8 @@ function initialize() {
 
   runSectionTask("inventory", () => requestJson("/api/pis/snapshots"), (snapshotsPayload) => {
     const snapshots = Array.isArray(snapshotsPayload.snapshots) ? snapshotsPayload.snapshots : [];
+    executiveState.snapshots = snapshots;
+    renderExecutiveCards();
     if (!snapshots.length) {
       renderEmpty("snapshotInventory", "No snapshot inventory found yet.");
       return;
@@ -730,6 +899,8 @@ function initialize() {
 
   runSectionTask("timeline", () => requestJson("/api/pis/summary"), (summary) => {
     const timeline = Array.isArray(summary.timeline) ? summary.timeline : [];
+    executiveState.timeline = timeline;
+    renderExecutiveCards();
     if (!timeline.length) {
       renderEmpty("valueTimeline", "No timeline available yet.");
       return;
@@ -738,6 +909,8 @@ function initialize() {
   });
 
   runSectionTask("latest", () => requestJson("/api/pis/latest"), (latest) => {
+    executiveState.latest = latest || {};
+    renderExecutiveCards();
     renderLatest(latest || {});
   });
 
@@ -753,6 +926,9 @@ function initialize() {
     requestJson("/api/pis/governance-summary"),
     requestJson("/api/pis/governance/latest"),
   ]), ([governanceSummary, governanceLatest]) => {
+    executiveState.governanceSummary = governanceSummary || { total_snapshots: 0, status_counts: {} };
+    executiveState.governanceLatest = governanceLatest || { snapshots: [], status_counts: {} };
+    renderExecutiveCards();
     renderGovernanceSummary(governanceSummary || {}, governanceLatest || {});
     renderGovernanceTable(governanceLatest || {});
   });
@@ -762,11 +938,16 @@ function initialize() {
     requestJson("/api/pis/canonical/latest"),
     requestJson("/api/pis/canonical/history"),
   ]), ([canonicalSummary, canonicalLatest, canonicalHistory]) => {
+    executiveState.canonicalSummary = canonicalSummary || { selected_dates: 0, unselected_dates: 0, selected_status_counts: {} };
+    executiveState.canonicalLatest = canonicalLatest || { latest: {} };
+    renderExecutiveCards();
     renderCanonicalSummary(canonicalSummary || {}, canonicalLatest || {});
     renderCanonicalTable(canonicalHistory || {});
   });
 
   runSectionTask("latestChanges", () => requestJson("/api/pis/changes/latest"), (latestChanges) => {
+    executiveState.latestChanges = latestChanges || { summary: null, new_positions: [], exited_positions: [], increased_positions: [], reduced_positions: [] };
+    renderExecutiveCards();
     renderLatestChanges((latestChanges && latestChanges.summary) || null);
   });
 
@@ -781,10 +962,14 @@ function initialize() {
   });
 
   runSectionTask("lineageMatches", () => requestJson("/api/pis/lineage/latest"), (lineageLatest) => {
+    executiveState.lineageLatest = lineageLatest || { summary: null, matches: [], unmatched: [], source_breakdown: [] };
+    renderExecutiveCards();
     renderLineageMatches(lineageLatest || {});
   });
 
   runSectionTask("lineageUnmatched", () => requestJson("/api/pis/lineage/latest"), (lineageLatest) => {
+    executiveState.lineageLatest = lineageLatest || { summary: null, matches: [], unmatched: [], source_breakdown: [] };
+    renderExecutiveCards();
     renderLineageUnmatched(lineageLatest || {});
   });
 
@@ -792,10 +977,14 @@ function initialize() {
     requestJson("/api/pis/lineage/latest"),
     requestJson("/api/pis/lineage-summary"),
   ]), ([lineageLatest, lineageSummary]) => {
+    executiveState.lineageLatest = lineageLatest || { summary: null, matches: [], unmatched: [], source_breakdown: [] };
+    renderExecutiveCards();
     renderLineageSummary(lineageLatest || {}, lineageSummary || {});
   });
 
   runSectionTask("lineageSourceBreakdown", () => requestJson("/api/pis/lineage/latest"), (lineageLatest) => {
+    executiveState.lineageLatest = lineageLatest || { summary: null, matches: [], unmatched: [], source_breakdown: [] };
+    renderExecutiveCards();
     renderLineageSourceBreakdown(lineageLatest || {});
   });
 }

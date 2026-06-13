@@ -281,3 +281,38 @@ def test_lineage_loading_slow_and_failure_contract_present() -> None:
     assert 'requestJson("/api/pis/lineage/latest")' in pis_app
     assert 'requestJson("/api/pis/lineage-summary")' in pis_app
     assert 'statuses.filter((status) => status === STATUS_LOADED || status === STATUS_FAILED).length' in pis_app
+
+
+def test_executive_dashboard_contract_present() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    pis_html = (root / "ui" / "pis_dashboard" / "index.html").read_text(encoding="utf-8")
+    pis_app = (root / "ui" / "pis_dashboard" / "app.js").read_text(encoding="utf-8")
+
+    assert "Executive KPI Header" in pis_html
+    assert "executiveKpiHeader" in pis_html
+    assert "Executive Summary Cards" in pis_html
+    assert "governanceSummaryCard" in pis_html
+    assert "canonicalSelectionCard" in pis_html
+    assert "portfolioTrendCard" in pis_html
+    assert "changeDetectionSummaryCard" in pis_html
+    assert "lineageSummaryCard" in pis_html
+
+    assert "System Status" in pis_app
+    assert "overallLabel" in pis_app
+    assert "renderExecutiveKpiHeader" in pis_app
+    assert "renderExecutiveCards" in pis_app
+    assert "topReasonForStatus" in pis_app
+
+
+def test_detail_sections_collapsible_contract_present() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    pis_html = (root / "ui" / "pis_dashboard" / "index.html").read_text(encoding="utf-8")
+
+    assert "Show Snapshot Inventory Table" in pis_html
+    assert "Show Governance Table" in pis_html
+    assert "Show Canonical Table" in pis_html
+    assert "Show Change Summary Table" in pis_html
+    assert "Show Lineage Table" in pis_html
+    assert "detail-toggle" in pis_html

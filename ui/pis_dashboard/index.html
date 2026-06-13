@@ -122,6 +122,12 @@
       }
       .dashboard-status-panel { margin-top: 14px; }
       .dashboard-status-header h2 { margin: 0; }
+      .health-overall {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+      }
       .dashboard-status-list {
         list-style: none;
         padding: 0;
@@ -169,6 +175,74 @@
       .status-message-slow { background: #fff8ee; }
       .status-message-failed { background: #fff1f1; }
       .status-note { margin-top: 6px; font-size: 0.82rem; color: var(--muted); }
+      .executive-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .executive-kpi {
+        border: 1px solid #e3d9cb;
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+      .executive-kpi-label {
+        font-size: 0.72rem;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .executive-kpi-value {
+        margin-top: 4px;
+        font-size: 1.1rem;
+        font-weight: 700;
+      }
+      .summary-card-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .summary-card {
+        border: 1px solid #e3d9cb;
+        border-radius: 12px;
+        padding: 12px;
+        background: #fff;
+      }
+      .summary-card h3 {
+        margin: 0 0 8px;
+        font-size: 0.88rem;
+        letter-spacing: 0.02em;
+      }
+      .metric-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .metric-item {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 5px 0;
+        border-bottom: 1px solid #eee4d4;
+        font-size: 0.88rem;
+      }
+      .metric-item:last-child { border-bottom: none; }
+      .metric-item strong { font-size: 0.95rem; }
+      .detail-toggle {
+        margin-top: 10px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }
+      .detail-toggle > summary {
+        cursor: pointer;
+        color: var(--accent);
+        font-size: 0.86rem;
+        font-weight: 600;
+      }
+      .detail-toggle[open] > summary { margin-bottom: 8px; }
       @keyframes spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
@@ -180,6 +254,8 @@
         .grid { grid-template-columns: 1fr; }
         .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .dashboard-status-list { grid-template-columns: 1fr; }
+        .executive-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .summary-card-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -205,10 +281,44 @@
       </section>
       <section id="dashboardStatusPanel" class="panel dashboard-status-panel"></section>
 
+      <section class="panel full" data-section-key="executiveKpis">
+        <h2>Executive KPI Header</h2>
+        <div id="executiveKpiHeader" class="executive-kpi-grid"></div>
+      </section>
+
+      <section class="panel full" data-section-key="executiveCards">
+        <h2>Executive Summary Cards</h2>
+        <div class="summary-card-grid">
+          <article class="summary-card">
+            <h3>Governance Summary</h3>
+            <div id="governanceSummaryCard"></div>
+          </article>
+          <article class="summary-card">
+            <h3>Canonical Selection Summary</h3>
+            <div id="canonicalSelectionCard"></div>
+          </article>
+          <article class="summary-card">
+            <h3>Portfolio Trend</h3>
+            <div id="portfolioTrendCard"></div>
+          </article>
+          <article class="summary-card">
+            <h3>Latest Change Detection</h3>
+            <div id="changeDetectionSummaryCard"></div>
+          </article>
+          <article class="summary-card full">
+            <h3>Lineage Summary</h3>
+            <div id="lineageSummaryCard"></div>
+          </article>
+        </div>
+      </section>
+
       <div class="grid">
         <section class="panel full" data-section-key="inventory">
           <h2>Section 1: Snapshot Inventory</h2>
-          <div id="snapshotInventory" class="table-wrap"></div>
+          <details class="detail-toggle">
+            <summary>Show Snapshot Inventory Table</summary>
+            <div id="snapshotInventory" class="table-wrap"></div>
+          </details>
         </section>
 
         <section class="panel full" data-section-key="timeline">
@@ -235,13 +345,19 @@
         <section class="panel full" data-section-key="governance">
           <h2>Section 6: Snapshot Governance</h2>
           <div id="governanceSummary"></div>
-          <div id="governanceTable" class="table-wrap" style="margin-top: 10px;"></div>
+          <details class="detail-toggle">
+            <summary>Show Governance Table</summary>
+            <div id="governanceTable" class="table-wrap" style="margin-top: 10px;"></div>
+          </details>
         </section>
 
         <section class="panel full" data-section-key="canonical">
           <h2>Section 7: Canonical Daily Portfolio State</h2>
           <div id="canonicalSummary"></div>
-          <div id="canonicalTable" class="table-wrap" style="margin-top: 10px;"></div>
+          <details class="detail-toggle">
+            <summary>Show Canonical Table</summary>
+            <div id="canonicalTable" class="table-wrap" style="margin-top: 10px;"></div>
+          </details>
         </section>
 
         <section class="panel full" data-section-key="latestChanges">
@@ -272,12 +388,18 @@
         <section class="panel full" data-section-key="changeSummary">
           <h2>Change Detection Section 6: Change Summary</h2>
           <div id="changeSummaryText"></div>
-          <div id="changeSummaryTable" class="table-wrap" style="margin-top: 10px;"></div>
+          <details class="detail-toggle">
+            <summary>Show Change Summary Table</summary>
+            <div id="changeSummaryTable" class="table-wrap" style="margin-top: 10px;"></div>
+          </details>
         </section>
 
         <section class="panel full" data-section-key="lineageMatches">
           <h2>Lineage Section 1: Latest Recommendation Matches</h2>
-          <div id="lineageLatestMatches" class="table-wrap"></div>
+          <details class="detail-toggle">
+            <summary>Show Lineage Table</summary>
+            <div id="lineageLatestMatches" class="table-wrap"></div>
+          </details>
         </section>
 
         <section class="panel" data-section-key="lineageUnmatched">
