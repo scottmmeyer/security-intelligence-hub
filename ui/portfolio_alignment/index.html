@@ -178,6 +178,28 @@
       .rec-title { font-weight: 700; font-size: 0.95rem; margin: 0 0 6px; }
       .rec-rationale { font-size: 0.87rem; color: var(--muted); margin: 0 0 8px; }
       .rec-evidence { font-size: 0.8rem; color: #888; font-style: italic; }
+      .rec-explanation-block {
+        margin-top: 10px; border: 1px solid var(--border); border-radius: 10px;
+        padding: 8px 10px; background: #fcfaf6;
+      }
+      .rec-explanation-block > summary {
+        cursor: pointer; color: var(--accent); font-size: 0.82rem; font-weight: 700;
+      }
+      .rec-explanation-grid {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px;
+      }
+      @media (max-width: 720px) { .rec-explanation-grid { grid-template-columns: 1fr; } }
+      .explain-section {
+        border: 1px solid #eee4d4; border-radius: 8px; padding: 8px 10px; background: #fff;
+      }
+      .explain-label {
+        font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px;
+      }
+      .explain-primary { font-size: 0.84rem; color: var(--text); line-height: 1.5; }
+      .explain-list { margin: 0; padding-left: 18px; font-size: 0.8rem; color: var(--muted); }
+      .explain-list li { margin: 4px 0; }
+      .explain-empty { font-size: 0.8rem; color: var(--muted); font-style: italic; }
+      .explain-version { margin-top: 10px; font-size: 0.72rem; color: var(--muted); }
       .rec-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
       .rec-type-badge {
         font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -3266,6 +3288,8 @@
           Advisory intelligence only — not trade execution
         </p>
         <nav class="page-nav">
+          <a href="/ui/portfolio_alignment/"      class="nav-link nav-link-active">Security Intelligence Hub</a>
+          <a href="/ui/pis_dashboard/"            class="nav-link">Portfolio Intelligence System (Beta)</a>
           <a href="/ui/outcome_visualization/"    class="nav-link">Outcome Visualization</a>
           <a href="/ui/allocation_intelligence/"  class="nav-link">Allocation Intelligence</a>
           <a href="/ui/portfolio_alignment/"      class="nav-link nav-link-active">Portfolio Alignment</a>

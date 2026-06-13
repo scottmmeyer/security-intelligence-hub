@@ -68,3 +68,26 @@ def test_portfolio_alignment_ui_shows_exposure_split() -> None:
     assert "ETF-derived" in app_js
     assert "Effective" in app_js
     assert "Hyper Mega exposure:" in app_js
+
+
+def test_explainability_routes_and_ui_contract_present() -> None:
+    root = Path(__file__).resolve().parents[1]
+    server_py = (root / "scripts" / "run_outcome_ui.py").read_text(encoding="utf-8")
+    app_js = (root / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+    index_html = (root / "ui" / "portfolio_alignment" / "index.html").read_text(encoding="utf-8")
+
+    assert "/api/explanations/latest" in server_py
+    assert "/api/explanations/summary" in server_py
+    assert "/api/explanations/" in server_py
+    assert "explanations_by_recommendation" in server_py
+
+    assert "Recommendation Explanation" in app_js
+    assert "Primary Reason" in app_js
+    assert "Supporting Factors" in app_js
+    assert "Policy Drivers" in app_js
+    assert "Signal Drivers" in app_js
+    assert "Funding Drivers" in app_js
+    assert "Explanation Version" in app_js
+
+    assert "rec-explanation-block" in index_html
+    assert "explain-label" in index_html

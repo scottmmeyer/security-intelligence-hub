@@ -103,6 +103,35 @@ def _load_ess_coverage_warning() -> dict:
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
 
 
+def _attach_explanations(result: dict) -> dict:
+    if not isinstance(result, dict):
+        return result
+    run_id = str(result.get("run_id", "")).strip()
+    if not run_id:
+        return result
+    try:
+        import sys as _sys
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from src.sih.allocation_explainability import (
+            explanations_for_run,
+            refresh_allocation_explanations,
+        )
+
+        refresh_allocation_explanations(
+            analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+            output_root=_REPO_ROOT / "data" / "history" / "explanations",
+        )
+        result["explanations_by_recommendation"] = explanations_for_run(
+            run_id,
+            analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+            output_root=_REPO_ROOT / "data" / "history" / "explanations",
+        )
+    except Exception:
+        result["explanations_by_recommendation"] = {}
+    return result
+
+
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
     """Persist freshly-fetched scores into the signal files and analytical_universe.csv.
 
@@ -641,6 +670,116 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(pis_lineage_summary(repo_root=_REPO_ROOT))
             except Exception as exc:
                 self._json_response({"summary": [], "error": str(exc)}, 200)
+        elif path == "/api/pis/attribution/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.performance_attribution import pis_attribution_latest
+
+                self._json_response(pis_attribution_latest(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "summary": None,
+                        "records": [],
+                        "top_winning_recommendations": [],
+                        "top_losing_recommendations": [],
+                        "source_performance": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/attribution/history":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.performance_attribution import pis_attribution_history
+
+                self._json_response(pis_attribution_history(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"summary": [], "error": str(exc)}, 200)
+        elif path == "/api/pis/attribution-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.performance_attribution import pis_attribution_summary
+
+                self._json_response(pis_attribution_summary(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "summary": {
+                            "snapshot_count": 0,
+                            "matched_recommendations": 0,
+                            "winner_count": 0,
+                            "neutral_count": 0,
+                            "loser_count": 0,
+                            "total_directional_attribution": 0.0,
+                            "average_directional_return_pct": 0.0,
+                        },
+                        "top_winning_recommendations": [],
+                        "top_losing_recommendations": [],
+                        "source_performance": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/explanations/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.allocation_explainability import explanations_latest, refresh_allocation_explanations
+
+                refresh_allocation_explanations(
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                )
+                self._json_response(explanations_latest(
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                ))
+            except Exception as exc:
+                self._json_response({"analysis_run_id": "", "snapshot_date": "", "explanations": [], "summary": None, "error": str(exc)}, 200)
+        elif path == "/api/explanations/summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.allocation_explainability import explanation_summary, refresh_allocation_explanations
+
+                refresh_allocation_explanations(
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                )
+                self._json_response(explanation_summary(
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                ))
+            except Exception as exc:
+                self._json_response({"history": [], "source_summary": {}, "error": str(exc)}, 200)
+        elif path.startswith("/api/explanations/"):
+            recommendation_id = path[len("/api/explanations/"):].strip()
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.allocation_explainability import explanation_for_recommendation, refresh_allocation_explanations
+
+                refresh_allocation_explanations(
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                )
+                self._json_response(explanation_for_recommendation(
+                    recommendation_id,
+                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
+                ))
+            except Exception as exc:
+                self._json_response({"explanation": None, "error": str(exc)}, 200)
         elif path.startswith("/api/pis/lineage/"):
             snapshot_id = path[len("/api/pis/lineage/"):].strip()
             try:
@@ -727,7 +866,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 if result is None:
                     self._json_response({"error": "run not found"}, 404)
                 else:
-                    self._json_response(result)
+                    self._json_response(_attach_explanations(result))
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
         elif path == "/api/operator/tax-state":
@@ -1169,7 +1308,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     _sys.path.insert(0, str(_REPO_ROOT))
                 from src.portfolio.runner import run_analysis
                 result = run_analysis(portfolio_csv, source_filename, snapshot_date, mandate_type)
-                self._json_response(result)
+                self._json_response(_attach_explanations(result))
             except Exception as exc:
                 self._json_response({"status": "REJECTED", "error": str(exc)}, 422)
         elif path == "/api/portfolio/deployment-plan":

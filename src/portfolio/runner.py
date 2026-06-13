@@ -99,6 +99,49 @@ _EXPLAINABILITY_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _register_pis_snapshot_best_effort(
+    *,
+    snapshot: PortfolioSnapshot,
+    raw_holdings: list[PortfolioHolding],
+) -> tuple[dict[str, object], list[str]]:
+    """Register a PIS snapshot without ever blocking SIH analysis."""
+
+    pis_registration: dict[str, object] = {
+        "status": "SKIPPED",
+        "registered": False,
+        "duplicate": False,
+        "snapshot_id": snapshot.portfolio_snapshot_id,
+        "position_count": 0,
+    }
+    pis_warnings: list[str] = []
+    if str(snapshot.ingestion_status).upper() == "REJECTED":
+        return pis_registration, pis_warnings
+
+    try:
+        from src.pis.service import register_portfolio_snapshot_from_sih
+
+        pis_result = register_portfolio_snapshot_from_sih(
+            snapshot=snapshot,
+            holdings=raw_holdings,
+        )
+        pis_registration = dataclasses.asdict(pis_result)
+        pis_registration["status"] = "REGISTERED" if pis_result.registered else "DUPLICATE" if pis_result.duplicate else "SKIPPED"
+        if pis_result.warning:
+            pis_warnings.append(f"PIS_SNAPSHOT_REGISTRATION_WARNING: {pis_result.warning}")
+    except Exception as exc:
+        pis_registration = {
+            "status": "FAILED",
+            "registered": False,
+            "duplicate": False,
+            "snapshot_id": snapshot.portfolio_snapshot_id,
+            "position_count": 0,
+            "error": str(exc),
+        }
+        pis_warnings.append(f"PIS_SNAPSHOT_REGISTRATION_FAILED: {exc}")
+
+    return pis_registration, pis_warnings
+
+
 def _compute_typed_rec_counts(recs: list[dict]) -> dict[str, int]:
     """Return additive typed lane counts for run_metadata (PRA-IMPL-03).
 
@@ -622,6 +665,11 @@ def run_analysis(
             "source_filename": source_filename,
         }
 
+    pis_registration, pis_warnings = _register_pis_snapshot_best_effort(
+        snapshot=snapshot,
+        raw_holdings=raw_holdings,
+    )
+
     run_id = _run_id(snapshot_date)
 
     # ── Phase D — Enrich holdings ─────────────────────────────────────────────
@@ -1020,6 +1068,9 @@ def run_analysis(
     with open(out_dir / "ucf_verdicts.json", "w") as fh:
         json.dump(ucf_payload, fh, indent=2, default=str)
 
+    with open(out_dir / "analyst_consensus.json", "w") as fh:
+        json.dump(_build_consensus_payload(), fh, indent=2, default=str)
+
     # ── Phase 6.4 — Reconciliation ────────────────────────────────────────────
     reconciliation = run_reconciliation(
         holdings=investable,
@@ -1056,7 +1107,7 @@ def run_analysis(
         concentration_tier=concentration.concentration_tier,
         overall_alignment_score=overall_score,
         status="COMPLETE",
-        warnings=tuple(list(snapshot.normalization_warnings) + operational_warnings),
+        warnings=tuple(list(snapshot.normalization_warnings) + pis_warnings + operational_warnings),
         created_at_utc=now_utc,
     )
     with open(out_dir / "run_metadata.json", "w") as fh:
@@ -1108,7 +1159,8 @@ def run_analysis(
         "holding_count": snapshot.holding_count,
         "total_market_value": snapshot.total_market_value,
         "source_format": snapshot.source_format,
-        "warnings": list(snapshot.normalization_warnings),
+        "warnings": list(snapshot.normalization_warnings) + pis_warnings + operational_warnings,
+        "pis_snapshot_registration": pis_registration,
         "concentration_tier": concentration.concentration_tier,
         "overall_alignment_score": overall_score,
         "recommendation_count": len(recs),

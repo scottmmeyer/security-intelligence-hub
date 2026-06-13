@@ -17,6 +17,13 @@
 let _fileContent = null;
 let _fileName    = null;
 let _analysisResult = null;
+let _pisStatus = {
+  snapshot_count: 0,
+  latest_snapshot_id: "",
+  latest_snapshot_date: "",
+  account_count: 0,
+  position_count: 0,
+};
 
 // Phase 23.0A — tax operator state
 let _taxState = {
@@ -94,6 +101,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Phase 23.2 — load persisted operator policies
   loadOperatorPolicies();
+
+  // PIS Phase 1 — lightweight beta visibility
+  loadPISStatus();
 
   // Tax input live-compute
   ["taxNetRealizedYTD","taxPotentialLosses","taxCarryforward"].forEach(id => {
@@ -202,6 +212,7 @@ async function runAnalysis() {
     );
 
     renderResults(data);
+    loadPISStatus();
   } catch (err) {
     setLoading(false);
     showStatus("error", `Network error: ${err.message}`);
@@ -1101,6 +1112,10 @@ function renderKPIs(data) {
   const score = data.overall_alignment_score;
   const scoreLabel = score >= 0.85 ? "Strong" : score >= 0.65 ? "Moderate" : "Needs attention";
   const concTier = data.concentration_tier || "UNKNOWN";
+  const pisLabel = _pisStatus.snapshot_count > 0 ? `${_pisStatus.snapshot_count} snapshots` : "No snapshots yet";
+  const pisSub = _pisStatus.snapshot_count > 0
+    ? `Latest ${_pisStatus.latest_snapshot_date || "—"} · Accounts ${_pisStatus.account_count || 0} · Positions ${_pisStatus.position_count || 0}`
+    : "Snapshot history will populate after the first accepted portfolio upload.";
 
   el.innerHTML = `
     ${kpiCard((data.holding_count || 0).toString(), "Holdings")}
@@ -1109,7 +1124,21 @@ function renderKPIs(data) {
     ${_kpiTypedRecommendations(data.recommendations || [])}
     ${kpiCard(concTier, "Concentration", "", `tier-${concTier}`)}
     ${kpiCard(data.source_format || "—", "Format")}
+    ${kpiCard(pisLabel, "Portfolio Intelligence (Beta)", pisSub, "pis-beta-card")}
   `;
+}
+
+async function loadPISStatus() {
+  try {
+    const resp = await fetch("/api/pis/status");
+    const data = await resp.json();
+    if (resp.ok && data && typeof data === "object") {
+      _pisStatus = { ..._pisStatus, ...data };
+      if (_analysisResult) {
+        renderKPIs(_analysisResult);
+      }
+    }
+  } catch (_) { /* best-effort */ }
 }
 
 function kpiCard(value, label, sub = "", extraClass = "") {
@@ -2665,6 +2694,67 @@ function toggleRpsExplain(explainId) {
   if (el) el.classList.toggle("open");
 }
 
+function _formatExplanationDriverList(items, formatter) {
+  if (!Array.isArray(items) || !items.length) return `<div class="explain-empty">None available.</div>`;
+  return `<ul class="explain-list">${items.map((item) => `<li>${formatter(item)}</li>`).join("")}</ul>`;
+}
+
+function _buildExplanationBlock(rec) {
+  const explanationMap = (_analysisResult && _analysisResult.explanations_by_recommendation) || {};
+  const explanation = explanationMap[rec.recommendation_id];
+  if (!explanation) return "";
+
+  const supporting = _formatExplanationDriverList(explanation.supporting_reasons || [], (item) => escHtml(String(item || "")));
+  const policy = _formatExplanationDriverList(explanation.policy_drivers || [], (item) => {
+    const symbol = item.symbol ? `${escHtml(item.symbol)}: ` : "";
+    const value = item.value || item.source_type || item.driver_type || "";
+    return `${symbol}${escHtml(String(value))}`;
+  });
+  const signals = _formatExplanationDriverList(explanation.signal_drivers || [], (item) => {
+    const symbol = item.symbol ? `${escHtml(item.symbol)} ` : "";
+    const field = item.field ? `${escHtml(item.field)}=` : "";
+    return `${escHtml(item.source || "Signal")}: ${symbol}${field}${escHtml(String(item.value ?? ""))}`;
+  });
+  const funding = _formatExplanationDriverList(explanation.funding_drivers || [], (item) => {
+    const syms = Array.isArray(item.symbols) && item.symbols.length ? ` (${item.symbols.map((s) => escHtml(s)).join(", ")})` : "";
+    const pct = item.available_pct != null ? ` ~${Number(item.available_pct).toFixed(1)}%` : "";
+    return `${escHtml(String(item.source_type || item.driver_type || ""))}${syms}${pct}`;
+  });
+  const philosophies = _formatExplanationDriverList(explanation.philosophy_drivers || [], (item) => `${escHtml(String(item.philosophy || ""))} (${escHtml(String(item.score || 0))})`);
+
+  return `
+    <details class="rec-explanation-block">
+      <summary>Recommendation Explanation</summary>
+      <div class="rec-explanation-grid">
+        <div class="explain-section">
+          <div class="explain-label">Primary Reason</div>
+          <div class="explain-primary">${escHtml(explanation.primary_reason || "")}</div>
+        </div>
+        <div class="explain-section">
+          <div class="explain-label">Supporting Factors</div>
+          ${supporting}
+        </div>
+        <div class="explain-section">
+          <div class="explain-label">Policy Drivers</div>
+          ${policy}
+        </div>
+        <div class="explain-section">
+          <div class="explain-label">Signal Drivers</div>
+          ${signals}
+        </div>
+        <div class="explain-section">
+          <div class="explain-label">Funding Drivers</div>
+          ${funding}
+        </div>
+        <div class="explain-section">
+          <div class="explain-label">Applied Philosophy</div>
+          ${philosophies}
+        </div>
+      </div>
+      <div class="explain-version">Explanation Version: ${escHtml(explanation.explanation_version || "1")}</div>
+    </details>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Recommendations
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2810,6 +2900,7 @@ function renderRecommendations(recs) {
       ? `<button class="drill-toggle" id="drill-toggle-${r.recommendation_id}"
            onclick="toggleDrilldown('${r.recommendation_id}')">▼ View ${holdingCount} Holdings</button>`
       : "";
+        const explanationHtml = _buildExplanationBlock(r);
 
     const recType = r.recommendation_type || "";
     const isPhaseE = _PHASE_E_TYPES.has(recType);
@@ -2854,6 +2945,7 @@ function renderRecommendations(recs) {
         ? `<div class="cash-context-block"><div class="cash-context-label">Cash Mandate Context</div>${escHtml(r.cash_mandate_context)}</div>`
         : ""}
       ${phaseEHtml}
+      ${explanationHtml}
       ${traceHtml}
       ${optimizerBadgesHtml}
       ${optimizerViewHtml}
