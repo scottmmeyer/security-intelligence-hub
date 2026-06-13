@@ -6,7 +6,7 @@ Static files are served from the repository root.
 API endpoints:
   GET  /api/signal-status          → JSON: last sourced_date and staleness per provider
   POST /api/signal-refresh         → launch scripts/refresh_signals.py as background process
-  GET  /api/signal-refresh/status  → JSON: {"running": true/false}
+    GET  /api/signal-refresh/status  → JSON: running + exit_code + last_report
   POST /api/portfolio/analyze      → ingest + enrich + align portfolio CSV; returns full analysis
   GET  /api/portfolio/runs         → list all completed portfolio analysis runs
   GET  /api/portfolio/runs/{id}    → load a specific analysis run by run_id
@@ -37,15 +37,24 @@ _SIGNAL_FILES = {
 }
 _ESS_SIGNAL_SNAPSHOT = _REPO_ROOT / "data/current/signal_snapshot.csv"
 _ESS_COVERAGE_WARNING = _REPO_ROOT / "data/current/ess_coverage_warning.json"
+_REFRESH_REPORT_PATH = _REPO_ROOT / "data" / "current" / "last_signal_refresh_report.json"
 
 # Background refresh process handle (module-level so Handler instances share it)
 _refresh_proc: subprocess.Popen | None = None
+_refresh_last_report: dict | None = None
+_refresh_last_exit_code: int | None = None
 
 # On-demand score fetch jobs keyed by symbol (uppercase)
 _fetch_jobs: dict[str, dict] = {}
 _fetch_lock = threading.Lock()
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
+
+
+class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """Threaded HTTP server so slow requests do not block unrelated endpoints."""
+
+    daemon_threads = True
 
 
 def _sourced_date(csv_path: Path) -> str | None:
@@ -313,6 +322,47 @@ def _signal_status() -> dict:
 
         result[name] = entry
 
+    try:
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from src.portfolio.holdings_coverage import summarize_holdings_coverage
+
+        holdings_providers: dict[str, dict] = {}
+        holdings_run_id: str | None = None
+        holdings_baseline = 0
+        for provider_name in ("zacks", "danelfin", "yahoo"):
+            summary = summarize_holdings_coverage(
+                provider=provider_name,
+                latest_csv=_SIGNAL_FILES[provider_name],
+                analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                base_universe_csv=_REPO_ROOT / "data" / "current" / "base_equity_universe.csv",
+                threshold_days=2,
+            )
+            holdings_run_id = holdings_run_id or str(summary.get("run_id") or "") or None
+            holdings_baseline = max(holdings_baseline, int(summary.get("active_holdings_baseline") or 0))
+            holdings_providers[provider_name] = summary
+            if provider_name in result:
+                result[provider_name]["holdings_status"] = summary.get("status")
+                result[provider_name]["holdings_applicable"] = summary.get("applicable_holdings")
+                result[provider_name]["holdings_covered_today"] = summary.get("covered_today")
+                result[provider_name]["holdings_stale"] = summary.get("stale")
+                result[provider_name]["holdings_missing"] = summary.get("missing")
+                result[provider_name]["holdings_failed"] = summary.get("failed")
+
+        result["portfolio_holdings_coverage"] = {
+            "run_id": holdings_run_id,
+            "active_holdings_baseline": holdings_baseline,
+            "threshold_days": 2,
+            "providers": holdings_providers,
+        }
+    except Exception:
+        result["portfolio_holdings_coverage"] = {
+            "run_id": None,
+            "active_holdings_baseline": 0,
+            "threshold_days": 2,
+            "providers": {},
+        }
+
     ess_sd = _latest_snapshot_date(_ESS_SIGNAL_SNAPSHOT)
     ess_gap = _load_ess_coverage_warning()
     ess_count = int(ess_gap.get("warning_count") or 0)
@@ -347,9 +397,298 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             data = _signal_status()
             data["_running"] = running
             self._json_response(data)
+        elif path == "/api/pis/summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.storage import pis_dashboard_summary, pis_value_timeline
+
+                payload = pis_dashboard_summary(repo_root=_REPO_ROOT)
+                payload["timeline"] = pis_value_timeline()
+                self._json_response(payload)
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "health": {
+                            "first_snapshot_date": "",
+                            "latest_snapshot_date": "",
+                            "snapshot_count": 0,
+                            "missing_days": 0,
+                            "duplicate_uploads_prevented": 0,
+                        },
+                        "lineage": {
+                            "total_sih_analyses_captured": 0,
+                            "latest_par": "",
+                            "latest_mandate": "",
+                            "latest_upload_date": "",
+                        },
+                        "timeline": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/snapshots":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.storage import pis_snapshot_inventory
+
+                self._json_response({"snapshots": pis_snapshot_inventory()})
+            except Exception as exc:
+                self._json_response({"snapshots": [], "error": str(exc)}, 200)
+        elif path == "/api/pis/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.storage import pis_latest_snapshot_summary
+
+                self._json_response(pis_latest_snapshot_summary(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "snapshot_date": "",
+                        "total_value": 0.0,
+                        "cash": 0.0,
+                        "position_count": 0,
+                        "largest_holdings": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/health":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.storage import pis_snapshot_history_health
+
+                self._json_response(pis_snapshot_history_health())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "first_snapshot_date": "",
+                        "latest_snapshot_date": "",
+                        "snapshot_count": 0,
+                        "missing_days": 0,
+                        "duplicate_uploads_prevented": 0,
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/governance/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.governance import pis_governance_latest
+
+                self._json_response(pis_governance_latest())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "generated_at_utc": "",
+                        "latest_snapshot_date": "",
+                        "status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
+                        "snapshots": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/governance-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.governance import pis_governance_summary
+
+                self._json_response(pis_governance_summary())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "generated_at_utc": "",
+                        "total_snapshots": 0,
+                        "status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
+                        "daily": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/canonical/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.canonical_daily import pis_canonical_latest
+
+                self._json_response(pis_canonical_latest())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "generated_at_utc": "",
+                        "latest": {
+                            "snapshot_date": "",
+                            "canonical_snapshot_id": "",
+                            "governance_status": "",
+                            "selection_policy": "",
+                            "selection_reason": "",
+                            "source_file": "",
+                            "portfolio_value": 0.0,
+                            "cash": 0.0,
+                            "position_count": 0,
+                        },
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/canonical/history":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.canonical_daily import pis_canonical_history
+
+                self._json_response(pis_canonical_history())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "generated_at_utc": "",
+                        "history": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/canonical-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.canonical_daily import pis_canonical_summary
+
+                self._json_response(pis_canonical_summary())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "generated_at_utc": "",
+                        "total_dates": 0,
+                        "selected_dates": 0,
+                        "unselected_dates": 0,
+                        "selected_status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/status":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.storage import summarize_portfolio_history
+
+                self._json_response(summarize_portfolio_history())
+            except Exception as exc:
+                self._json_response({"error": str(exc), "snapshot_count": 0, "position_count": 0, "account_count": 0}, 200)
+        elif path == "/api/pis/changes/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.change_detection import pis_changes_latest
+
+                self._json_response(pis_changes_latest(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "summary": None,
+                        "new_positions": [],
+                        "exited_positions": [],
+                        "increased_positions": [],
+                        "reduced_positions": [],
+                        "unchanged_positions": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/change-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.change_detection import pis_change_summary
+
+                self._json_response(pis_change_summary(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"summary": [], "error": str(exc)}, 200)
+        elif path == "/api/pis/lineage/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.recommendation_lineage import pis_lineage_latest
+
+                self._json_response(pis_lineage_latest(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"summary": None, "matches": [], "unmatched": [], "source_breakdown": [], "error": str(exc)}, 200)
+        elif path == "/api/pis/lineage-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.recommendation_lineage import pis_lineage_summary
+
+                self._json_response(pis_lineage_summary(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"summary": [], "error": str(exc)}, 200)
+        elif path.startswith("/api/pis/lineage/"):
+            snapshot_id = path[len("/api/pis/lineage/"):].strip()
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.recommendation_lineage import pis_lineage_for_snapshot
+
+                self._json_response(pis_lineage_for_snapshot(snapshot_id, repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"summary": None, "matches": [], "unmatched": [], "source_breakdown": [], "error": str(exc)}, 200)
+        elif path.startswith("/api/pis/changes/"):
+            snapshot_id = path[len("/api/pis/changes/"):].strip()
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.change_detection import pis_changes_for_snapshot
+
+                self._json_response(pis_changes_for_snapshot(snapshot_id, repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "summary": None,
+                        "new_positions": [],
+                        "exited_positions": [],
+                        "increased_positions": [],
+                        "reduced_positions": [],
+                        "unchanged_positions": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
         elif path == "/api/signal-refresh/status":
             running = _refresh_proc is not None and _refresh_proc.poll() is None
-            self._json_response({"running": running})
+            global _refresh_last_report, _refresh_last_exit_code
+            if _refresh_proc is not None and not running:
+                _refresh_last_exit_code = _refresh_proc.poll()
+                if _refresh_last_report is None and _REFRESH_REPORT_PATH.exists():
+                    try:
+                        _refresh_last_report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
+                    except Exception:
+                        _refresh_last_report = None
+            self._json_response({
+                "running": running,
+                "exit_code": _refresh_last_exit_code,
+                "last_report": _refresh_last_report,
+            })
         elif path == "/api/score-fetch/status":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -768,8 +1107,22 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             if _refresh_proc is not None and _refresh_proc.poll() is None:
                 self._json_response({"started": False, "reason": "already running"})
                 return
+            global _refresh_last_report, _refresh_last_exit_code
+            _refresh_last_report = None
+            _refresh_last_exit_code = None
+            try:
+                if _REFRESH_REPORT_PATH.exists():
+                    _REFRESH_REPORT_PATH.unlink()
+            except Exception:
+                pass
             _refresh_proc = subprocess.Popen(
-                [sys.executable, str(_REPO_ROOT / "scripts/refresh_signals.py"), "--smart"],
+                [
+                    sys.executable,
+                    str(_REPO_ROOT / "scripts/refresh_signals.py"),
+                    "--smart",
+                    "--report-path",
+                    str(_REFRESH_REPORT_PATH),
+                ],
                 cwd=str(_REPO_ROOT),
                 env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
             )
@@ -1049,12 +1402,21 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def _json_response(self, data: dict, status: int = 200) -> None:
-        body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            body = json.dumps({"error": f"serialization_error: {exc}"}).encode("utf-8")
+            status = 500
+
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected before response flush; avoid noisy traceback.
+            return
 
     def log_message(self, fmt: str, *args: object) -> None:  # type: ignore[override]
         # Suppress noisy polling requests from the UI
@@ -1072,8 +1434,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", args.port), _Handler) as httpd:
+    _ThreadingTCPServer.allow_reuse_address = True
+    with _ThreadingTCPServer(("127.0.0.1", args.port), _Handler) as httpd:
         print("Outcome UI server started")
         print(f"Repository root: {_REPO_ROOT}")
         print(f"Open: http://127.0.0.1:{args.port}/ui/outcome_visualization/index.html")
