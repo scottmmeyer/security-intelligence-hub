@@ -316,7 +316,17 @@ def pis_sih_lineage_summary(
             "latest_upload_date": "",
         }
 
-    latest = max(portfolios, key=lambda r: (str(r.get("created_at_utc", "")), str(r.get("snapshot_date", ""))))
+    # Filter to portfolios with ISO-format snapshot dates (YYYY-MM-DD) before
+    # finding the latest.  Non-date entries (e.g. CONCENTRATED_ALPHA) sort
+    # lexicographically after date strings and must be excluded.
+    dated_portfolios = [
+        p for p in portfolios
+        if len(str(p.get("snapshot_date", "")).strip()) == 10
+        and str(p.get("snapshot_date", "")).strip()[4:5] == "-"
+    ]
+    if not dated_portfolios:
+        dated_portfolios = portfolios
+    latest = max(dated_portfolios, key=lambda r: (str(r.get("snapshot_date", "")), str(r.get("created_at_utc", ""))))
     latest_par = str(latest.get("run_id", ""))
     latest_upload_date = str(latest.get("snapshot_date", ""))
 

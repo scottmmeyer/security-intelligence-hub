@@ -105,14 +105,17 @@ def _trigger_pis_refresh_background(*, repo_root: Path) -> None:
     Runs in a daemon thread so it never blocks the analysis response path.
     All exceptions are swallowed — failure here must never affect SIH processing.
     """
+    import sys
     import threading
 
     def _run() -> None:
+        print("[PIS] Post-ingestion refresh started.", file=sys.stderr)
         try:
             from src.pis.refresh_orchestrator import trigger_startup_refresh
             trigger_startup_refresh(repo_root=repo_root)
-        except Exception:
-            pass  # best-effort; never raise into caller
+            print("[PIS] Post-ingestion refresh completed.", file=sys.stderr)
+        except Exception as exc:
+            print(f"[PIS] Post-ingestion refresh failed: {exc}", file=sys.stderr)
 
     t = threading.Thread(target=_run, daemon=True, name="pis-post-ingestion-refresh")
     t.start()

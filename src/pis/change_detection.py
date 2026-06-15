@@ -127,12 +127,56 @@ def compute_all_snapshot_changes(
     all_summaries: list[dict[str, object]] = []
 
     root = Path(repo_root)
+    integrity_warnings: list[str] = []
     for idx in range(1, len(groups)):
         prior = groups[idx - 1]
         current = groups[idx]
 
         prior_symbols, prior_cash, prior_positions = _aggregate_positions(list(prior.rows), root)
         current_symbols, current_cash, current_positions = _aggregate_positions(list(current.rows), root)
+
+        # R1 integrity check: if the index says a snapshot has positions but none
+        # were loaded from disk, the partition file is missing or corrupt.  Emitting
+        # a warning and skipping this pair prevents silently classifying every prior
+        # symbol as EXITED_POSITION.
+        for group, loaded_count in ((prior, prior_positions), (current, current_positions)):
+            for index_row in group.rows:
+                expected = _to_int(index_row.get("position_count", 0))
+                if expected > 0 and loaded_count == 0:
+                    sid = str(index_row.get("snapshot_id", group.snapshot_date))
+                    integrity_warnings.append(
+                        f"INTEGRITY_WARNING: snapshot {sid} ({group.snapshot_date}) "
+                        f"expected {expected} positions but 0 were loaded from disk. "
+                        "Skipping this snapshot pair to prevent silent change-detection corruption."
+                    )
+
+        if integrity_warnings and any(
+            str(index_row.get("snapshot_id", "")) in w
+            for group in (prior, current)
+            for index_row in group.rows
+            for w in integrity_warnings
+        ):
+            # Skip pairs that involve a corrupt snapshot; record zero-change summary
+            current_snapshot_id = _snapshot_key(current.snapshot_ids, current.snapshot_date)
+            prior_snapshot_id = _snapshot_key(prior.snapshot_ids, prior.snapshot_date)
+            all_summaries.append(
+                {
+                    "snapshot_id": current_snapshot_id,
+                    "prior_snapshot_id": prior_snapshot_id,
+                    "snapshot_date": current.snapshot_date,
+                    "prior_snapshot_date": prior.snapshot_date,
+                    "portfolio_value_change": 0.0,
+                    "cash_change": 0.0,
+                    "position_count_change": 0,
+                    "new_holdings_count": 0,
+                    "exited_holdings_count": 0,
+                    "increased_holdings_count": 0,
+                    "reduced_holdings_count": 0,
+                    "unchanged_holdings_count": 0,
+                    "created_at": created_at,
+                }
+            )
+            continue
 
         all_symbols = sorted(set(prior_symbols.keys()) | set(current_symbols.keys()))
         current_snapshot_id = _snapshot_key(current.snapshot_ids, current.snapshot_date)
@@ -214,7 +258,10 @@ def compute_all_snapshot_changes(
     _write_rows(Path(changes_root) / "change_records.csv", CHANGE_HEADERS, all_changes)
     _write_rows(Path(changes_root) / "change_summary.csv", SUMMARY_HEADERS, all_summaries)
 
-    return {"change_records": all_changes, "change_summary": all_summaries}
+    result: dict[str, object] = {"change_records": all_changes, "change_summary": all_summaries}
+    if integrity_warnings:
+        result["integrity_warnings"] = integrity_warnings
+    return result
 
 
 def _load_change_tables(
