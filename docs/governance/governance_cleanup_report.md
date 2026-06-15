@@ -5,6 +5,24 @@
 
 ## Issues Closed
 
+### SIGNAL-COVERAGE-04/05/06/07 — Signal Coverage Governance Program
+
+**Closed:** June 12, 2026  
+**Rationale:** Operational mandatory holdings coverage is fully validated in live execution.
+
+**Delivered across the closure set:**
+- Denominator drift diagnosis and governance separation between research-universe freshness and holdings coverage
+- Canonical active holdings baseline and provider applicability model
+- Coverage-aware refresh eligibility (`coverage_repair`) and truthful refresh reporting
+- Same-day failed checkpoint retry semantics for coverage-repair targets
+
+**Validated final holdings state:**
+- Zacks: COMPLIANT (Applicable 58, Within Threshold 58, Stale 0, Missing 0, Failed 0, Not Applicable 16)
+- Danelfin: COMPLIANT (Applicable 58, Within Threshold 58, Stale 0, Missing 0, Failed 0, Not Applicable 16)
+- Yahoo: COMPLIANT (Applicable 58, Within Threshold 58, Stale 0, Missing 0, Failed 0, Not Applicable 16)
+
+**Governance verdict:** Mandatory Holdings Coverage is operationally complete.
+
 ### ISSUE-04 — Dislocation Watchlist Panel (GitHub #10)
 
 **Closed:** June 5, 2026  
