@@ -106,7 +106,9 @@ def fetch_yahoo_supplemental_for_symbols(
     delay_min: float = _DEFAULT_DELAY_MIN,
     delay_max: float = _DEFAULT_DELAY_MAX,
     verbose: bool = True,
-) -> Path:
+    force_retry_symbols: set[str] | None = None,
+    collect_stats: bool = False,
+) -> Path | tuple[Path, dict[str, int]]:
     """Fetch supplemental signals for all symbols, write CSV, return path."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -116,13 +118,33 @@ def fetch_yahoo_supplemental_for_symbols(
     latest_path = output_dir / "latest_yahoo_supplemental.csv"
 
     symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    force_retry = {str(s).strip().upper() for s in (force_retry_symbols or set()) if str(s).strip()}
     archived_rows = _load_rows_by_symbol(output_path)
     latest_rows = _load_rows_by_symbol(latest_path)
-    pending_symbols = [symbol for symbol in symbol_list if symbol not in archived_rows]
+    pending_symbols: list[str] = []
+    stats = {
+        "skipped_checkpoint": 0,
+        "skipped_already_covered": 0,
+        "retried_failed_checkpoint": 0,
+    }
+
+    for symbol in symbol_list:
+        row = archived_rows.get(symbol)
+        if row is None:
+            pending_symbols.append(symbol)
+            continue
+        if symbol not in force_retry:
+            stats["skipped_checkpoint"] += 1
+            continue
+        if _is_yahoo_row_successful_today(row, today):
+            stats["skipped_already_covered"] += 1
+            continue
+        stats["retried_failed_checkpoint"] += 1
+        pending_symbols.append(symbol)
 
     if verbose and archived_rows:
         print(
-            f"[resume] Yahoo: skipping {len(symbol_list) - len(pending_symbols)} already checkpointed "
+            f"[resume] Yahoo: skipping {stats['skipped_checkpoint']} already checkpointed "
             f"symbols from {output_path.name}."
         )
 
@@ -171,7 +193,20 @@ def fetch_yahoo_supplemental_for_symbols(
         with_target = sum(1 for r in rows if r["price_target"])
         print(f"\nYahoo supplemental fetch complete: {with_target}/{len(rows)} with price target → {output_path}")
 
+    if collect_stats:
+        stats["requested"] = len(symbol_list)
+        stats["attempted"] = len(pending_symbols)
+        return output_path, stats
     return output_path
+
+
+def _is_yahoo_row_successful_today(row: dict[str, str], today: str) -> bool:
+    if str(row.get("sourced_date", "")).strip() != today:
+        return False
+    for key in ("current_price", "abr", "price_target", "analyst_count"):
+        if str(row.get(key, "")).strip():
+            return True
+    return False
 
 
 def _merge_into_latest(latest_path: Path, new_rows: list[dict[str, str]]) -> None:
