@@ -14,6 +14,19 @@ from .models import PortfolioSnapshot, PositionSnapshot
 from .storage import append_portfolio_history, summarize_portfolio_history
 
 
+# ---------------------------------------------------------------------------
+# Investable-state filter (single source of truth for PIS)
+# ---------------------------------------------------------------------------
+# Holdings that are not in this set must never generate change-detection records,
+# lineage matches, or attribution entries.  Applying the filter here ensures that
+# PIS snapshot history is consistent with the portfolio analytics layer, which
+# already excludes these states before computing recommendations.
+_PIS_INVESTABLE_STATES: frozenset[str] = frozenset({
+    "ACTIVE_POSITION",
+    "CASH_EQUIVALENT",
+})
+
+
 @dataclass(frozen=True)
 class PortfolioRegistrationResult:
     snapshot_id: str
@@ -97,7 +110,16 @@ def register_portfolio_snapshot_from_sih(
         )
 
     pis_snapshot = _to_pis_snapshot(snapshot)
-    pis_positions = _to_pis_positions(snapshot, holdings)
+    # PIS-INTEGRITY-01: filter to investable states only before persisting positions.
+    # This excludes PENDING_SETTLEMENT, ACCOUNTING_ADJUSTMENT, ZERO_VALUE_LEGACY_POSITION
+    # and any future non-investable states, mirroring the filter applied by portfolio
+    # analytics before computing recommendations.
+    investable_holdings = [
+        h for h in holdings
+        if str(getattr(h, "operational_state", "ACTIVE_POSITION") or "ACTIVE_POSITION")
+        in _PIS_INVESTABLE_STATES
+    ]
+    pis_positions = _to_pis_positions(snapshot, investable_holdings)
     pis_snapshot = PortfolioSnapshot(
         snapshot_id=pis_snapshot.snapshot_id,
         snapshot_date=pis_snapshot.snapshot_date,
