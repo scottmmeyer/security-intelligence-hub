@@ -1619,6 +1619,35 @@ def _build_fidelity_payload() -> dict:
     return result
 
 
+def _build_fmp_payload(symbols: list[str]) -> dict:
+    """Load FMP enriched-universe fields for display-only DIL context.
+
+    This helper mirrors the existing UI contract consumed by
+    `fmp_data_by_symbol`. It is intentionally read-only and returns only the
+    per-symbol fields that the dashboard and dislocation logic already use.
+    """
+    _DISPLAY_FIELDS = frozenset({
+        "latest_eps_surprise_pct", "beat_rate_8q", "beats_last_8q",
+        "q1_surprise_pct", "q2_surprise_pct", "q3_surprise_pct", "q4_surprise_pct",
+        "revenue_growth_q1_yoy", "eps_growth_q1_yoy", "revenue_acceleration",
+        "fmp_coverage_status", "fmp_sourced_date",
+        "buy_count", "hold_count", "sell_count", "net_buy_score",
+        "ev_ebitda_ttm", "fcf_yield_ttm", "roe_ttm", "roic_ttm",
+    })
+
+    try:
+        from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
+
+        fmp = load_fmp_enriched_universe()
+        return {
+            sym.upper(): {k: v for k, v in (fmp.get(sym.upper()) or {}).items() if k in _DISPLAY_FIELDS}
+            for sym in symbols
+            if fmp.get(sym.upper())
+        }
+    except Exception:
+        return {}
+
+
 def _build_dislocation_payload(overlays: list, ac_by_sym: Optional[dict] = None) -> dict:
     """Build dislocation_by_symbol payload using FMP enriched universe.
 

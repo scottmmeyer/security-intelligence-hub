@@ -71,6 +71,9 @@ class CapitalSourceRecord:
     drift_pct:            Optional[float] = None
     cost_basis:           Optional[float] = None
     unrealized_gain_loss: Optional[float] = None
+    reduction_reason:     str = ""
+    reduction_score:      float = 0.0
+    policy_alignment_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,12 @@ class RotationDeploymentTarget:
     score_breakdown:      Dict[str, Any]   # CwDasBreakdown fields; unchanged
     headroom_pct:         float        # from CW-DAS; how far below WARN threshold
     allocation_note:      str
+    funding_source_symbol: str = ""
+    funding_source_category: str = ""
+    funding_source_reason: str = ""
+    funding_source_score: float = 0.0
+    funding_source_alternatives: List[str] = field(default_factory=list)
+    funding_policy_alignment_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -187,6 +196,9 @@ class RotationProposal:
                 "drift_pct":               s.drift_pct,
                 "cost_basis":              s.cost_basis,
                 "unrealized_gain_loss":    s.unrealized_gain_loss,
+                "reduction_reason":        s.reduction_reason,
+                "reduction_score":         s.reduction_score,
+                "policy_alignment_reason": s.policy_alignment_reason,
             }
 
         def _target_dict(t: RotationDeploymentTarget) -> Dict[str, Any]:
@@ -204,6 +216,12 @@ class RotationProposal:
                 "score_breakdown":     t.score_breakdown,
                 "headroom_pct":        t.headroom_pct,
                 "allocation_note":     t.allocation_note,
+                "funding_source_symbol": t.funding_source_symbol,
+                "funding_source_category": t.funding_source_category,
+                "funding_source_reason": t.funding_source_reason,
+                "funding_source_score": round(t.funding_source_score, 2),
+                "funding_source_alternatives": t.funding_source_alternatives,
+                "funding_policy_alignment_reason": t.funding_policy_alignment_reason,
             }
 
         return {

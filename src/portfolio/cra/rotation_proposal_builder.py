@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .capital_source_builder import build_capital_sources
+from .funding_policy import annotate_deployments_with_funding_plan
 from .impact_estimator import estimate_impact
 from .models import (
     CATEGORY_LOW_CONVICTION,
@@ -216,6 +217,12 @@ def build_rotation_proposal(
     all_sources = filtered_sources
     pool_sources = [s for s in all_sources if not s.blocked_by_policy and s.priority != "DEFER"]
     total_capital_pool = sum(s.estimated_proceeds for s in pool_sources)
+
+    # ── Attach policy-aware funding recommendations to each deployment target ─
+    deployments = annotate_deployments_with_funding_plan(
+        deployments=deployments,
+        sources=all_sources,
+    )
 
     # ── Estimate portfolio impact ─────────────────────────────────────────────
     impact = estimate_impact(
