@@ -195,18 +195,16 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
         warnings.append("Unmapped provider columns observed: " + ", ".join(sorted_unmapped))
 
     if errors:
-        return StageExecutionOutput(
-            status=PipelineStatus.FAILED.value,
-            warnings=tuple(warnings),
-            errors=tuple(errors),
-            validation_summary=_to_validation_summary(
-                discovered_files=discovered_files,
-                accounting=accounting,
-                rows_appended=0,
-                base_universe_rows_appended=0,
-                unmapped_columns=sorted_unmapped,
-            ),
+        # Row-level validation errors (e.g. missing ESS text for a single
+        # security) are demoted to warnings.  The rejected rows are already
+        # excluded from normalized_signal_records and counted in
+        # accounting["rows_rejected"].  Hard-failing the entire batch for a
+        # single incomplete row discards all other valid data, which is
+        # disproportionate.  Promote to warnings so the batch continues.
+        warnings.extend(
+            f"[ROW_REJECTED] {error}" for error in errors
         )
+        errors = []
 
     now = datetime.now(timezone.utc)
     ess_warning = build_ess_coverage_gap_warning(
