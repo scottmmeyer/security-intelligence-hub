@@ -1,13 +1,13 @@
 # PERFORMANCE ATTRIBUTION — FINAL VERDICT
-**Date:** 2026-06-11
+**Date:** 2026-06-12
 **Issue:** #50 PERFORMANCE-ATTRIBUTION-01
 **Governance:** Display-only — no impact on scoring, recommendations, or execution logic
 
 ---
 
-## Q1: Should Fidelity remain the source of truth for returns?
+## Q1: Should Fidelity remain the source of truth for portfolio returns?
 
-**YES — for 3M, YTD, 1Y, and longer windows.**
+**YES. Fidelity should remain the source of truth for 3M, YTD, 1Y, 3Y, 5Y, and since-inception returns.**
 
 **Rationale:**
 - Fidelity's time-weighted return calculations correctly handle cash flows, dividends, and corporate actions
@@ -15,7 +15,7 @@
 - Computing these independently would require daily snapshots SIH has not yet accumulated (21-day PAR history is insufficient for anything beyond 1M)
 - Replacing Fidelity return figures is unnecessary — the operator already has them; SIH's job is to *explain* them, not replicate them
 
-**For 1D, 5D, 1M:** SIH can compute adequate approximations from `price_context_by_symbol` and portfolio weights. These are already fetched and computed.
+**For 1D, 5D, 1M:** SIH can compute adequate approximations from existing holdings weights and price context.
 
 **Hybrid approach:**
 - 1D/5D/1M: SIH-computed (automated, already feasible)
@@ -25,7 +25,7 @@
 
 ## Q2: Can SIH perform attribution without replacing Fidelity calculations?
 
-**YES — and it should.**
+**YES.**
 
 **Rationale:**
 - The attribution question is not "what was the return?" — Fidelity answers that
@@ -60,9 +60,19 @@ This attribution narrative is not available anywhere else.
 
 ---
 
-## Q4: Is PERFORMANCE-ATTRIBUTION-01 justified?
+## Q4: How should Concentrated Alpha performance be measured?
 
-**YES — JUSTIFIED AND WELL-SCOPED.**
+Measure it in layers:
+- holding contribution = weight × security return
+- decision lineage = whether the position came from SIH recommendation, PAP deployment, or reduction retention
+- benchmark-relative alpha = portfolio return minus benchmark return
+- conviction quality = whether higher-conviction tiers systematically contribute more than they detract
+
+The key question is whether high-conviction capital deployment produces persistent positive contribution relative to the chosen benchmark.
+
+## Q5: Is PERFORMANCE-ATTRIBUTION-01 justified as the next major SIH initiative?
+
+**YES — justified and well-scoped.**
 
 **Evidence supporting justification:**
 1. Live portfolio data confirms the need: Portfolio 1M -1.46% vs S&P -1.65% → +0.19% alpha. SIH cannot currently explain *why*.
@@ -75,20 +85,20 @@ This attribution narrative is not available anywhere else.
 
 ---
 
-## Q5: Recommended Implementation Sequence
+## Q6: Recommended Implementation Sequence
 
 ### Next 3 Implementation Sessions
 
-**Session 1 — #25 PRA-IMPL-02 (Funding Source Panel)**
+**1. PRA-IMPL-02 — Funding Source Surface**
 - Highest trade execution ROI
 - Backend already done; UI surface is ~2-3 hours
 - Directly impacts every future deployment decision
 
-**Session 2 — #31 AI-003 (Option A: Promote dual-view to primary card)**
+**2. AI-003 — Allocation Philosophy Explainability**
 - ~30-60 minutes of UI work (move existing HTML up one level in card hierarchy)
 - Eliminates the most common operator confusion pattern
 
-**Session 3 — #50 PERFORMANCE-ATTRIBUTION-01 Phase 1**
+**3. PERFORMANCE-ATTRIBUTION-01 Phase 1**
 - ~14 hours total
 - Answers: "Why did my portfolio perform this way?"
 - Creates a compounding feedback loop: every future SIH recommendation can be attributed
@@ -97,10 +107,10 @@ This attribution narrative is not available anywhere else.
 
 | Priority | Issue | Rationale |
 |----------|-------|-----------|
-| 4 | #32 AI-004 | Policy version diff — governance infrastructure |
-| 5 | #40 AI-001-OPTION-B | Compliance validator — grows in value with portfolio complexity |
-| 6 | PA-PHASE-2 | Enhanced attribution (transaction-level, long windows) |
-| 7 | #38 PA-006 | Allocation drift trend — useful but not acute |
+| 4 | PERFORMANCE-ATTRIBUTION-01 Phase 2 | Transaction-level and Brinson-Fachler enhancements |
+| 5 | PERFORMANCE-ATTRIBUTION-01 Phase 3 | Outcome validation against recommendation history |
+| 6 | #32 AI-004 | Policy version diff — governance infrastructure |
+| 7 | #40 AI-001-OPTION-B | Compliance validator — grows with portfolio complexity |
 | 8 | #17 ISSUE-12D | Dislocation outcome review panel |
 
 ---
@@ -109,10 +119,32 @@ This attribution narrative is not available anywhere else.
 
 | Question | Answer |
 |----------|--------|
-| Fidelity source of truth for returns? | YES — for 3M+ windows. SIH computes 1D/5D/1M. |
+| Fidelity source of truth for returns? | YES — for 3M+ windows and audited return views. |
 | SIH can do attribution without replacing Fidelity? | YES — SIH explains *why*, not just *what* |
 | Recommended benchmark architecture | SPY primary, VTI secondary, ACWI international reference |
-| Is PERFORMANCE-ATTRIBUTION-01 justified? | YES — Phase 1 is low-effort, high-impact |
+| How should Concentrated Alpha be measured? | Contribution, lineage, alpha, and conviction-tier outcome tracking |
+| Is PERFORMANCE-ATTRIBUTION-01 justified? | YES — it is the next major SIH initiative after current roadmap items |
 | Implementation sequence | PRA-IMPL-02 → AI-003 → PERFORMANCE-ATTRIBUTION-01 |
 
-**PERFORMANCE-ATTRIBUTION-01 should be implemented in Session 3, immediately after the two existing highest-priority items. It is feasible, well-scoped, and creates compounding value by connecting every future SIH recommendation to measurable outcomes.**
+**PERFORMANCE-ATTRIBUTION-01 should be implemented after PRA-IMPL-02 and AI-003. It is feasible, well-scoped, and creates compounding value by connecting every future SIH recommendation to measurable outcomes.**
+
+---
+
+## 01B-A Status Update
+
+PERFORMANCE-ATTRIBUTION-01B-A (Benchmark Source and Return-Series Foundation) is now implemented.
+
+Delivered in this phase:
+- SPY benchmark source abstraction
+- canonical-date-aligned benchmark return series
+- canonical portfolio return series
+- excess return calculation
+- deterministic nearest-prior-trading-day alignment
+- benchmark return-series persistence CSV
+- read APIs for returns/latest/summary
+- deterministic validation tests
+
+Deferred intentionally:
+- source-level alpha ranking
+- recommendation-level benchmark excess attribution
+- full benchmark dashboard rendering

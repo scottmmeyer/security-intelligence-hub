@@ -572,12 +572,34 @@
 
       .signal-refresh-btn:hover { background: #0a4a50; }
       .signal-refresh-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+      .coverage-block {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+
+      .coverage-block-header {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .coverage-summary {
+        margin-bottom: 10px;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
     </style>
   </head>
   <body>
     <div class="shell">
       <h1>Outcome Visualization Prototype</h1>
       <nav class="page-nav">
+        <a href="/ui/portfolio_alignment/" class="nav-link">Security Intelligence Hub</a>
+        <a href="/ui/pis_dashboard/" class="nav-link">Portfolio Intelligence System (Beta)</a>
         <a href="/ui/outcome_visualization/" class="nav-link nav-link-active">Outcome Visualization</a>
         <a href="/ui/allocation_intelligence/" class="nav-link">Allocation Intelligence</a>
         <a href="/ui/portfolio_alignment/" class="nav-link">Portfolio Alignment</a>
@@ -672,13 +694,20 @@
 
       <section class="panel" style="margin-top: 14px;">
         <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
-          <h3 style="margin: 0; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Signal Data Freshness</h3>
+          <h3 style="margin: 0; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Research Universe Refresh Health</h3>
           <div id="signalStatusPills" class="signal-status-row">
             <span style="color: var(--muted); font-size: 0.83rem;">Loading…</span>
           </div>
           <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Stale</button>
         </div>
         <div id="signalRefreshMsg" style="margin-top: 8px; font-size: 0.82rem; color: var(--muted); display: none;"></div>
+        <div class="coverage-block">
+          <div class="coverage-block-header">Portfolio Holdings Coverage</div>
+          <div id="holdingsCoverageSummary" class="coverage-summary">Loading…</div>
+          <div id="holdingsCoveragePills" class="signal-status-row">
+            <span style="color: var(--muted); font-size: 0.83rem;">Loading…</span>
+          </div>
+        </div>
       </section>
 
       <section class="panel chart-wrap">
@@ -715,7 +744,7 @@
       </section>
     </div>
 
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
     <script>
       document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("lookupInput").addEventListener("keydown", function (e) {

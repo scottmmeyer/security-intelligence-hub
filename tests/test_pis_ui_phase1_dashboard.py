@@ -216,6 +216,9 @@ def test_sih_pis_navigation_and_api_contract_present() -> None:
     assert "/api/pis/change-summary" in pis_app
     assert "/api/pis/lineage/latest" in pis_app
     assert "/api/pis/lineage-summary" in pis_app
+    assert "/api/pis/attribution/latest" in pis_app
+    assert "/api/pis/attribution/history" in pis_app
+    assert "/api/pis/attribution-summary" in pis_app
 
     assert "Section 6: Snapshot Governance" in pis_html
     assert "governanceSummary" in pis_html
@@ -234,6 +237,22 @@ def test_sih_pis_navigation_and_api_contract_present() -> None:
     assert "Lineage Section 2" in pis_html
     assert "Lineage Section 3" in pis_html
     assert "Lineage Section 4" in pis_html
+    assert "Attribution Section 1" in pis_html
+    assert "Attribution Section 2" in pis_html
+    assert "Attribution Section 3" in pis_html
+    assert "Attribution Section 4" in pis_html
+    assert "Benchmark Attribution Section 1" in pis_html
+    assert "Benchmark Attribution Section 2" in pis_html
+    assert "Benchmark Attribution Section 3" in pis_html
+    assert "Benchmark Attribution Section 4" in pis_html
+    assert "Benchmark Attribution Section 5" in pis_html
+    assert "Benchmark Attribution Section 6" in pis_html
+    assert "/api/pis/benchmark-attribution/latest" in pis_app
+    assert "/api/pis/benchmark-attribution/returns" in pis_app
+    assert "/api/pis/benchmark-attribution/sources" in pis_app
+    assert "benchmarkQualityBadge" in pis_app
+    assert "benchmarkSummaryCard" in pis_html
+    assert "benchmarkSourceAlpha" in pis_html
 
 
 def test_dashboard_loading_shell_and_section_hooks_present() -> None:
@@ -250,6 +269,9 @@ def test_dashboard_loading_shell_and_section_hooks_present() -> None:
     assert 'data-section-key="governance"' in pis_html
     assert 'data-section-key="canonical"' in pis_html
     assert 'data-section-key="lineageDetail"' in pis_html
+    assert 'data-section-key="benchmarkSummary"' in pis_html
+    assert 'data-section-key="benchmarkSourceAlpha"' in pis_html
+    assert 'data-section-key="benchmarkQuality"' in pis_html
 
 
 def test_progressive_rendering_status_model_present_in_app() -> None:
@@ -297,12 +319,15 @@ def test_executive_dashboard_contract_present() -> None:
     assert "portfolioTrendCard" in pis_html
     assert "changeDetectionSummaryCard" in pis_html
     assert "lineageSummaryCard" in pis_html
+    assert "attributionSummaryCard" in pis_html
 
     assert "System Status" in pis_app
     assert "overallLabel" in pis_app
     assert "renderExecutiveKpiHeader" in pis_app
     assert "renderExecutiveCards" in pis_app
     assert "topReasonForStatus" in pis_app
+    assert "renderAttributionSummary" in pis_app
+    assert "renderAttributionSourcePerformance" in pis_app
 
 
 def test_detail_sections_collapsible_contract_present() -> None:

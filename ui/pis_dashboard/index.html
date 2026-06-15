@@ -273,7 +273,7 @@
         <div>
           <div class="dashboard-banner-title">Portfolio Intelligence Dashboard</div>
           <div class="dashboard-banner-text">Loading data...</div>
-          <div class="dashboard-banner-meta">0 of 17 sections loaded (0%) - 0.0s elapsed</div>
+          <div class="dashboard-banner-meta">0 of 21 sections loaded (0%) - 0.0s elapsed</div>
           <div class="dashboard-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Dashboard loading progress">
             <div class="dashboard-progress-fill" style="width: 0%;"></div>
           </div>
@@ -308,6 +308,14 @@
           <article class="summary-card full">
             <h3>Lineage Summary</h3>
             <div id="lineageSummaryCard"></div>
+          </article>
+          <article class="summary-card full">
+            <h3>Recommendation Outcome Summary</h3>
+            <div id="attributionSummaryCard"></div>
+          </article>
+          <article class="summary-card full">
+            <h3>Benchmark Attribution Summary</h3>
+            <div id="benchmarkSummaryCard"></div>
           </article>
         </div>
       </section>
@@ -416,6 +424,56 @@
         <section class="panel full" data-section-key="lineageSourceBreakdown">
           <h2>Lineage Section 4: Recommendation Source Breakdown</h2>
           <div id="lineageSourceBreakdown" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="attributionSummary">
+          <h2>Attribution Section 1: Recommendation Outcome Summary</h2>
+          <div id="attributionSummary"></div>
+        </section>
+
+        <section class="panel" data-section-key="attributionWinners">
+          <h2>Attribution Section 2: Top Winning Recommendations</h2>
+          <div id="topWinningRecommendations" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="attributionLosers">
+          <h2>Attribution Section 3: Top Losing Recommendations</h2>
+          <div id="topLosingRecommendations" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="attributionSourcePerformance">
+          <h2>Attribution Section 4: Recommendation Source Performance</h2>
+          <div id="recommendationSourcePerformance" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="benchmarkSummary">
+          <h2>Benchmark Attribution Section 1: Benchmark Performance Summary</h2>
+          <div id="benchmarkSummary"></div>
+        </section>
+
+        <section class="panel full" data-section-key="benchmarkTrend">
+          <h2>Benchmark Attribution Section 2: Portfolio vs Benchmark Trend</h2>
+          <div id="benchmarkTrend"></div>
+        </section>
+
+        <section class="panel" data-section-key="benchmarkTopAlpha">
+          <h2>Benchmark Attribution Section 3: Top Alpha Recommendations</h2>
+          <div id="benchmarkTopAlpha" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="benchmarkLowestAlpha">
+          <h2>Benchmark Attribution Section 4: Lowest Alpha Recommendations</h2>
+          <div id="benchmarkLowestAlpha" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="benchmarkSourceAlpha">
+          <h2>Benchmark Attribution Section 5: Source Alpha Rankings</h2>
+          <div id="benchmarkSourceAlpha" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="benchmarkQuality">
+          <h2>Benchmark Attribution Section 6: Benchmark Quality Summary</h2>
+          <div id="benchmarkQuality"></div>
         </section>
       </div>
     </div>

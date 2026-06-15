@@ -1431,6 +1431,7 @@ function loadSignalStatus() {
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(data => {
       _renderSignalPills(data);
+      _renderHoldingsCoverage(data.portfolio_holdings_coverage || null);
       if (data._running) {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
@@ -1442,12 +1443,17 @@ function loadSignalStatus() {
     .catch(() => {
       const el = document.getElementById("signalStatusPills");
       if (el) el.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Status unavailable \u2014 API not reachable</span>';
+      const holdingsEl = document.getElementById("holdingsCoveragePills");
+      const holdingsSummaryEl = document.getElementById("holdingsCoverageSummary");
+      if (holdingsEl) holdingsEl.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Coverage unavailable \u2014 API not reachable</span>';
+      if (holdingsSummaryEl) holdingsSummaryEl.textContent = 'Coverage unavailable.';
     });
 }
 
 function _renderSignalPills(data) {
   const el = document.getElementById("signalStatusPills");
   if (!el) return;
+  const holdingsProviders = (data.portfolio_holdings_coverage && data.portfolio_holdings_coverage.providers) || {};
   const providers = ["ess", "zacks", "danelfin", "yahoo"];
   const labels    = { ess: "ESS", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
   el.innerHTML = providers.filter(k => k in data).map(key => {
@@ -1510,7 +1516,13 @@ function _renderSignalPills(data) {
       warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} holdings absent${examples ? ` · ${examples}` : ""}</span>`;
     }
 
-    const extraLines = [coverageHtml, degradedHtml, warningHtml].filter(Boolean).join(" ");
+    let holdingsHtml = "";
+    const holdingsInfo = holdingsProviders[key] || null;
+    if (holdingsInfo && holdingsInfo.status && holdingsInfo.status !== "COMPLIANT") {
+      holdingsHtml = `<span class="pill-degraded">Holdings coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
+    }
+
+    const extraLines = [coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
 
     return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
@@ -1521,6 +1533,64 @@ function _renderSignalPills(data) {
           <span class="${stsCls}">(${stsLbl})</span>
         </div>
         ${extraLines ? `<div class="pill-detail-row">${extraLines}</div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function _renderHoldingsCoverage(coverage) {
+  const el = document.getElementById("holdingsCoveragePills");
+  const summaryEl = document.getElementById("holdingsCoverageSummary");
+  if (!el || !summaryEl) return;
+
+  if (!coverage || !coverage.providers) {
+    summaryEl.textContent = "Coverage unavailable.";
+    el.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">No holdings coverage data.</span>';
+    return;
+  }
+
+  const runId = coverage.run_id || "—";
+  const baseline = coverage.active_holdings_baseline != null ? coverage.active_holdings_baseline : "—";
+  const threshold = coverage.threshold_days != null ? coverage.threshold_days : 2;
+  summaryEl.textContent = `Baseline: ${runId} · Active holdings: ${baseline} · Threshold: ${threshold}d`;
+
+  const providers = ["zacks", "danelfin", "yahoo"];
+  const labels = { zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  el.innerHTML = providers.filter(key => coverage.providers[key]).map(key => {
+    const info = coverage.providers[key];
+    const status = info.status || "UNKNOWN";
+    const dotCls = {
+      COMPLIANT: "dot-fresh",
+      DEGRADED: "dot-partial",
+      NON_COMPLIANT: "dot-stale",
+      UNKNOWN: "dot-unknown",
+    }[status] || "dot-unknown";
+    const stsCls = {
+      COMPLIANT: "pill-status-fresh",
+      DEGRADED: "pill-status-partial",
+      NON_COMPLIANT: "pill-status-stale",
+      UNKNOWN: "pill-status-unknown",
+    }[status] || "pill-status-unknown";
+    const statusLabel = String(status).toLowerCase().replaceAll("_", " ");
+
+    const detail = [
+      `Applicable: ${info.applicable_holdings}`,
+      `Covered today: ${info.covered_today}`,
+      `Within threshold: ${info.covered_within_threshold}`,
+      `Stale: ${info.stale}`,
+      `Missing: ${info.missing}`,
+      `Not applicable: ${info.not_applicable}`,
+      `Failed: ${info.failed}`,
+    ].map(text => `<span class="pill-coverage">${text}</span>`).join(" ");
+
+    return `<div class="signal-pill ${status === 'DEGRADED' ? 'signal-pill-partial' : ''}">
+      <span class="dot ${dotCls}"></span>
+      <div class="pill-body">
+        <div class="pill-main-row">
+          <span class="pill-label">${labels[key]}</span>
+          <span class="${stsCls}">(${statusLabel})</span>
+        </div>
+        <div class="pill-detail-row">${detail}</div>
       </div>
     </div>`;
   }).join("");
@@ -1547,7 +1617,7 @@ function triggerSignalRefresh() {
       }
       btn.disabled = true;
       btn.textContent = "Refreshing\u2026";
-      msg.textContent = "Refresh started (smart mode \u2014 mandatory holdings included). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background, you can continue using the UI.";
+      msg.textContent = "Refresh started (coverage-aware mode). Running in background\u2026";
       _startRefreshPoll();
     })
     .catch(() => {
@@ -1570,10 +1640,55 @@ function _startRefreshPoll() {
           const btn = document.getElementById("signalRefreshBtn");
           const msg = document.getElementById("signalRefreshMsg");
           if (btn) { btn.disabled = false; btn.textContent = "Refresh Stale"; }
-          if (msg) { msg.textContent = "Refresh complete. Signal dates updated."; }
+          if (msg) {
+            msg.textContent = _buildRefreshOutcomeMessage(data.last_report || null);
+          }
           loadSignalStatus();
         }
       })
       .catch(() => {});
   }, 5000);
+}
+
+function _buildRefreshOutcomeMessage(report) {
+  if (!report || !report.providers) {
+    return "Refresh completed.";
+  }
+
+  const providers = ["zacks", "danelfin", "yahoo"];
+  const labels = { zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  const rows = [];
+  let totalSubmitted = 0;
+  let totalRefreshed = 0;
+  let totalFailed = 0;
+  let totalCoverageGain = 0;
+
+  providers.forEach((provider) => {
+    const info = report.providers[provider];
+    if (!info) return;
+    const submitted = Number(info.submitted || 0);
+    const refreshed = Number(info.refreshed || 0);
+    const failed = Number(info.failed || 0);
+    const before = info.coverage_before || {};
+    const after = info.coverage_after || {};
+    const beforeCovered = Number(before.covered_today || 0);
+    const afterCovered = Number(after.covered_today || 0);
+    const applicable = Number(after.applicable_holdings || before.applicable_holdings || 0);
+
+    totalSubmitted += submitted;
+    totalRefreshed += refreshed;
+    totalFailed += failed;
+    totalCoverageGain += Math.max(afterCovered - beforeCovered, 0);
+
+    rows.push(
+      `${labels[provider]}: submitted ${submitted}, refreshed ${refreshed}, failed ${failed}, coverage ${beforeCovered}/${applicable} -> ${afterCovered}/${applicable}`
+    );
+  });
+
+  if (totalSubmitted === 0) {
+    return "Refresh completed. No refresh required; holdings coverage already compliant or no stale/missing applicable holdings targeted.";
+  }
+
+  const head = `Refresh completed. ${totalRefreshed} holdings refreshed${totalFailed ? `, ${totalFailed} failures` : ""}${totalCoverageGain ? `, coverage +${totalCoverageGain}` : ""}.`;
+  return `${head} ${rows.join(" | ")}`;
 }
