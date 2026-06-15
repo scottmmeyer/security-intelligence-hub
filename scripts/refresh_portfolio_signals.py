@@ -19,22 +19,11 @@ sys.path.insert(0, str(_REPO_ROOT))
 from src.scoring.fetch_danelfin_scores import fetch_danelfin_scores_for_symbols
 from src.scoring.fetch_yahoo_supplemental import fetch_yahoo_supplemental_for_symbols
 from src.history.analytical_universe_manager import _score_from_inputs  # type: ignore[attr-defined]
+from scripts.refresh_signals import _load_portfolio_equity_holdings
 
 _DANELFIN_LATEST = _REPO_ROOT / "data" / "signals" / "danelfin" / "latest_danelfin.csv"
 _YAHOO_LATEST    = _REPO_ROOT / "data" / "signals" / "yahoo" / "latest_yahoo_supplemental.csv"
 _UNIVERSE        = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
-
-# All investable portfolio symbols (ETFs/funds/crypto excluded where providers have no data)
-_PORTFOLIO_SYMBOLS = [
-    'AEIS','AGEN','ALNT','AMG','AMZN','ANGO','ANIP','ARW','ASML','ATLC',
-    'AVGO','AVT','AZZ','BSVN','CAH','CBOE','CIEN','CMCO','CRS','CVE','DELL',
-    'DODFX','DVN','FBTC','FCPGX','FETH','FHI','FIGFX','FIS','FMCSX','FSLR',
-    'FSOL','FXAIX','GFF','GTX','HALO','HCI','IVZ','JBL','JXN','KGC','KMT',
-    'LMAT','LRCX','MCB','MKSI','MSFT','MTZ','MU','NUE','NVDA','NVS','PCB',
-    'PLTR','PRG','PRIM','PSX','SANM','SBS','SIMO','SMR','SNX','STLD','STNG',
-    'TSLA','TSM','TTNDY','UHS','UTHR','VB','VEA','VO','VOO','VRT','VXUS',
-    'XRP','XYZ','YELP',
-]
 
 
 def _missing_from(latest_csv: Path, symbols: list[str]) -> list[str]:
@@ -89,9 +78,13 @@ def patch_universe_danelfin() -> None:
 
 
 def main(skip_danelfin: bool = False, skip_yahoo: bool = False) -> None:
+    portfolio_symbols = sorted(_load_portfolio_equity_holdings())
+    if not portfolio_symbols:
+        print("\n[Portfolio] No current equity holdings discovered from latest PAR holdings.csv")
+
     # --- Danelfin ---
     if not skip_danelfin:
-        missing = _missing_from(_DANELFIN_LATEST, _PORTFOLIO_SYMBOLS)
+        missing = _missing_from(_DANELFIN_LATEST, portfolio_symbols)
         if missing:
             print(f"\n[Danelfin] Fetching {len(missing)} missing symbols: {missing}")
             fetch_danelfin_scores_for_symbols(missing, delay_min=0.3, delay_max=0.8, verbose=True)
@@ -102,7 +95,7 @@ def main(skip_danelfin: bool = False, skip_yahoo: bool = False) -> None:
 
     # --- Yahoo supplemental ---
     if not skip_yahoo:
-        missing = _missing_from(_YAHOO_LATEST, _PORTFOLIO_SYMBOLS)
+        missing = _missing_from(_YAHOO_LATEST, portfolio_symbols)
         if missing:
             print(f"\n[Yahoo] Fetching {len(missing)} missing symbols: {missing}")
             fetch_yahoo_supplemental_for_symbols(missing, delay_min=0.3, delay_max=0.8, verbose=True)

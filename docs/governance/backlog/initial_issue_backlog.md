@@ -1,5 +1,35 @@
 # Initial Issue Backlog — Phase 8.0B.1D
 
+## Program Closure Update — 2026-06-12
+
+### Closed Issues
+
+| ID | Title | Status | Closure Basis |
+|---|---|---|---|
+| SIGNAL-COVERAGE-04 | Coverage Governance Denominator Separation | CLOSED | Denominator drift identified and governance concepts separated |
+| SIGNAL-COVERAGE-05 | Operational Mandatory Holdings Coverage Enforcement | CLOSED | Canonical baseline, applicability model, and holdings coverage model implemented |
+| SIGNAL-COVERAGE-06 | Coverage-Aware Refresh Enforcement | CLOSED | coverage-aware eligibility, coverage_repair mode, report/API/UI truthfulness validated |
+| SIGNAL-COVERAGE-07 | Coverage Repair Failed Checkpoint Retry | CLOSED | failed same-day checkpoint retries implemented and live repair validated |
+
+### Final Validated State (Portfolio Holdings Coverage)
+
+| Provider | Status | Applicable | Within Threshold | Stale | Missing | Failed | Not Applicable |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Zacks | COMPLIANT | 58 | 58 | 0 | 0 | 0 | 16 |
+| Danelfin | COMPLIANT | 58 | 58 | 0 | 0 | 0 | 16 |
+| Yahoo | COMPLIANT | 58 | 58 | 0 | 0 | 0 | 16 |
+
+### Governance Closure Verdict
+
+Mandatory Holdings Coverage is operationally complete. Refresh engine behavior, holdings coverage model, applicability classification, UI reporting, and retry semantics were validated in live execution.
+
+### Post-Closure Priority Order
+
+1. PRA-IMPL-02 — Policy-Aware Funding Sources
+2. AI-003 — Allocation Philosophy Explainability
+3. PERFORMANCE-ATTRIBUTION-01
+4. PIS Phase 2 — Change Detection
+
 ## Top 10 Issues (Priority Ordered)
 
 ---

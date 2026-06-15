@@ -195,3 +195,7 @@ data/analysis/fmp_dq_validation.json
 # Analysis working artifacts and governance scratchpads
 data/analysis/phase_*/
 data/analysis/git_governance/
+
+# PIS release-prep scratch artifacts
+.pra_impl_*body.md
+.pra_impl*.md

@@ -38,6 +38,7 @@ from .models import (
     TAX_BUCKET_D,
     CapitalSourceRecord,
 )
+from .funding_policy import score_reduction_candidates
 
 log = logging.getLogger(__name__)
 
@@ -666,6 +667,10 @@ def build_capital_sources(
     # the primary actionable source list.  De-minimis sources are returned as
     # suppressed_sources for diagnostics but do not enter the main CRA workflow.
     all_records = [c.to_record() for c in sorted_records]
+    all_records = score_reduction_candidates(
+        sources=all_records,
+        deployment_queue=list(deployment_queue.get("queue", [])),
+    )
     sources: List[CapitalSourceRecord] = []
     suppressed: List[CapitalSourceRecord] = []
     for rec in all_records:

@@ -1,5 +1,26 @@
 # Regression Results
 
+## PRA-IMPL-02 Regression
+
+Command:
+
+```bash
+PYTHONPATH=. .venv/bin/pytest -q tests/test_pra_impl_02_funding_policy.py tests/test_cash_semantics.py tests/test_cra_phase_23_6a.py
+```
+
+Result:
+
+- `126 passed`
+
+Coverage highlights:
+
+1. deterministic reduction candidate ranking with stable tie-break behavior
+2. deployment funding annotations expose primary + alternatives
+3. cash-first funding behavior remains intact when excess cash exists
+4. non-cash fallback behavior works when cash reserve is insufficient
+5. explainability extracts funding source, alternatives, and policy alignment drivers
+6. existing CRA and cash semantics regressions remain green
+
 ## PIS-UI-03 Regression
 
 Focused command:
@@ -268,7 +289,6 @@ Focused command:
 
 Result:
 
-- `16 passed`
 
 Broad command:
 
@@ -278,7 +298,6 @@ Broad command:
 
 Result:
 
-- `41 passed`
 
 Coverage highlights:
 
@@ -288,6 +307,92 @@ Coverage highlights:
 4. Latest/history/aggregate attribution payload contracts are validated.
 5. New server routes for `/api/pis/attribution/latest`, `/api/pis/attribution/history`, and `/api/pis/attribution-summary` are validated.
 6. Dashboard attribution sections and endpoint wiring contracts are validated.
+
+## PERFORMANCE-ATTRIBUTION-01B-A Regression (Benchmark Source and Return-Series Foundation)
+
+Command:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_pis_benchmark_attribution_01a.py
+```
+
+Result:
+
+- `5 passed`
+
+Extended slice:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_pis_performance_attribution_01.py tests/test_pis_ui_phase1_dashboard.py tests/test_pis_benchmark_attribution_01a.py
+```
+
+Result:
+
+- `21 passed`
+
+Coverage highlights:
+
+1. SPY benchmark source abstraction is deterministic via provider interface.
+2. Canonical interval return-series calculation is validated.
+3. Nearest-prior-trading-day alignment is validated for non-trading canonical dates.
+4. Benchmark return, portfolio return, and excess return math are validated.
+5. Missing benchmark-data behavior is deterministic and explicit in `data_quality_status`.
+6. CSV persistence contract for `data/history/pis/benchmark_attribution/benchmark_return_series.csv` is validated.
+7. Benchmark attribution API route contracts are validated for returns/latest/summary endpoints.
+
+## PERFORMANCE-ATTRIBUTION-01B-B Regression (Recommendation and Source-Level Benchmark Alpha)
+
+Command:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_pis_benchmark_attribution_01a.py tests/test_pis_benchmark_attribution_01b.py
+```
+
+Result:
+
+- `10 passed`
+
+Extended slice:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_pis_performance_attribution_01.py tests/test_pis_ui_phase1_dashboard.py tests/test_pis_benchmark_attribution_01a.py tests/test_pis_benchmark_attribution_01b.py
+```
+
+Result:
+
+- `26 passed`
+
+Coverage highlights:
+
+1. Recommendation attribution rows join benchmark intervals by `snapshot_date` + `prior_snapshot_date`.
+2. Recommendation excess return math is deterministic.
+3. Source-level alpha aggregation metrics are deterministic.
+4. Positive/negative alpha classification is deterministic.
+5. Non-OK benchmark rows are excluded from headline source alpha metrics.
+6. Non-OK benchmark rows are preserved in detail records for audit.
+7. Benchmark recommendation/source/latest API contracts are validated.
+
+## PERFORMANCE-ATTRIBUTION-01B-C Regression (Benchmark Attribution Dashboard Integration)
+
+Command:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_pis_ui_phase1_dashboard.py tests/test_pis_benchmark_attribution_01a.py tests/test_pis_benchmark_attribution_01b.py tests/test_pis_performance_attribution_01.py
+```
+
+Result:
+
+- `26 passed`
+
+Coverage highlights:
+
+1. Benchmark Attribution section anchors exist in PIS dashboard HTML.
+2. Benchmark API calls wired in app.js.
+3. Quality badge helper exists in app.js.
+4. Benchmark summary card exists in HTML.
+5. Source alpha table target exists in HTML.
+6. Progressive loading section attributes exist for benchmark sections.
+7. No regressions in prior attribution or lineage dashboard contracts.
 
 ## AI-003 Regression (Allocation Explainability)
 

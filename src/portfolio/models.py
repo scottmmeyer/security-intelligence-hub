@@ -284,6 +284,9 @@ class FundingSourceEntry:
     symbols: tuple                   # tuple[str] — symbol(s) contributing this source
     available_pct: float             # estimated % of portfolio value deployable from this source
     rationale: str                   # plain-English explanation for the recommendation UI
+    reduction_reason: str = ""       # policy reason for selecting this source
+    reduction_score: float = 0.0     # deterministic score; higher = preferred
+    policy_alignment_reason: str = ""  # explicit tie to allocation philosophy
 
 
 @dataclass(frozen=True)

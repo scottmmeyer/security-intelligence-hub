@@ -112,7 +112,9 @@ def fetch_danelfin_scores_for_symbols(
     delay_min: float = _DEFAULT_DELAY_MIN,
     delay_max: float = _DEFAULT_DELAY_MAX,
     verbose: bool = True,
-) -> Path:
+    force_retry_symbols: set[str] | None = None,
+    collect_stats: bool = False,
+) -> Path | tuple[Path, dict[str, int]]:
     """Fetch Danelfin scores for all *symbols*, write dated + latest CSVs.
 
     Returns the path of the dated output CSV.
@@ -125,13 +127,33 @@ def fetch_danelfin_scores_for_symbols(
     latest_path = output_dir / "latest_danelfin.csv"
 
     symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    force_retry = {str(s).strip().upper() for s in (force_retry_symbols or set()) if str(s).strip()}
     archived_rows = _load_rows_by_symbol(output_path)
     latest_rows = _load_rows_by_symbol(latest_path)
-    pending_symbols = [symbol for symbol in symbol_list if symbol not in archived_rows]
+    pending_symbols: list[str] = []
+    stats = {
+        "skipped_checkpoint": 0,
+        "skipped_already_covered": 0,
+        "retried_failed_checkpoint": 0,
+    }
+
+    for symbol in symbol_list:
+        row = archived_rows.get(symbol)
+        if row is None:
+            pending_symbols.append(symbol)
+            continue
+        if symbol not in force_retry:
+            stats["skipped_checkpoint"] += 1
+            continue
+        if _is_danelfin_row_successful_today(row, today):
+            stats["skipped_already_covered"] += 1
+            continue
+        stats["retried_failed_checkpoint"] += 1
+        pending_symbols.append(symbol)
 
     if verbose and archived_rows:
         print(
-            f"[resume] Danelfin: skipping {len(symbol_list) - len(pending_symbols)} already checkpointed "
+            f"[resume] Danelfin: skipping {stats['skipped_checkpoint']} already checkpointed "
             f"symbols from {output_path.name}."
         )
 
@@ -170,7 +192,17 @@ def fetch_danelfin_scores_for_symbols(
             f" → {output_path}"
         )
 
+    if collect_stats:
+        stats["requested"] = len(symbol_list)
+        stats["attempted"] = len(pending_symbols)
+        return output_path, stats
     return output_path
+
+
+def _is_danelfin_row_successful_today(row: dict[str, str], today: str) -> bool:
+    if str(row.get("sourced_date", "")).strip() != today:
+        return False
+    return bool(str(row.get("danelfin_score", "")).strip() or str(row.get("danelfin_raw", "")).strip())
 
 
 # ---------------------------------------------------------------------------

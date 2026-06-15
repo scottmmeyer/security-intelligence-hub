@@ -1,6 +1,78 @@
-# Final Verdict - PIS-CLOSURE-01
+# Final Verdict - PRA-IMPL-02 Policy-Aware Funding and Allocation Reduction
 
 ## Direct answer
+
+PRA-IMPL-02 is implemented correctly as an additive, deterministic layer across CRA, PAP,
+explainability, and dashboard surfaces. Independent forensic audit confirms behavior,
+identifies gaps, and issues a conditional accept.
+
+## Gate Decision
+
+`CONDITIONAL ACCEPT` — accepted with required follow-up test additions.
+
+## Audit Finding Summary
+
+### What changes recommendation OUTCOMES
+
+1. **CRA reduction ordering**: conviction penalty (-2 to -22) re-ranks reduction
+   candidates based on deployment queue membership. A CORE_CONVICTION_LEADER is
+   now correctly depressed from topping the reduction list.
+2. **CRA deployment annotations**: targets now carry explicit primary funding source,
+   alternatives, and policy alignment — these are new fields not previously present.
+
+### What changes ONLY explanation metadata
+
+1. PAP `INCREASE_UNDERWEIGHT` recommendation rationale is enriched with:
+   - "Why this source" clause
+   - "Alternatives considered" clause
+   - "Policy alignment" clause
+2. AI-003 now extracts `funding_alternatives` and `funding_policy_alignment` drivers.
+3. UI source cards show reduction score/reason/policy.
+4. UI target cards show funding source/alternatives/policy.
+
+### PAP recommendation targets: UNCHANGED
+
+Types, priorities, affected symbols, drift targets, and execution states are identical
+before and after PRA-IMPL-02 for PAP recommendations.
+
+## Evidence (Audit-Derived)
+
+1. Deterministic policy engine implemented and verified by live trace:
+   - `src/portfolio/cra/funding_policy.py`
+   - `src/portfolio/cra/capital_source_builder.py`
+   - `src/portfolio/cra/rotation_proposal_builder.py`
+2. Additive model contract fields verified:
+   - `src/portfolio/models.py`
+   - `src/portfolio/cra/models.py`
+3. PAP funding selection upgraded — verified by live run on PAR-CONCENTRATED_ALPHA-3FAFBBBF:
+   - `src/portfolio/recommendations.py`
+   - 4 sources identified, EXCESS_CASH correctly scored 107.03 as primary
+4. AI-003 extraction verified — all 3 new driver types confirmed extracted:
+   - `src/sih/allocation_explainability.py`
+5. UI rendering verified by code inspection — all absence checks present:
+   - `ui/portfolio_alignment/app.js`
+6. Test gate: `126 passed`
+   - `tests/test_pra_impl_02_funding_policy.py`
+   - `tests/test_cash_semantics.py`
+   - `tests/test_cra_phase_23_6a.py`
+
+## Known Gaps (non-blocking)
+
+1. No serialization/API test for new CRA payload fields
+2. No PAP rationale integration test for Why/Alternatives/Policy clauses
+3. No UI DOM test for new source/target card blocks
+4. FundingSourceEntry tie-break implicit rather than explicit
+
+## Required Follow-Up
+
+1. Add `CapitalSourceRecord.to_dict()` serialization test for new fields
+2. Add `RotationDeploymentTarget.to_dict()` serialization test for new fields
+3. Add PAP rationale integration test
+
+## Disposition
+
+PRA-IMPL-02 conditionally accepted. Implementation logic is sound. Follow-up tests
+required before next workstream to close serialization contract coverage gap.
 
 Yes. PIS-CLOSURE-01 has been executed, the five reproducibility-critical foundation files are now committed, closure tests pass, and PERFORMANCE-ATTRIBUTION-01 is cleared (`GO`).
 
@@ -1031,3 +1103,106 @@ Derived layer introduced:
 ## Disposition
 
 PIS-004B acceptance criteria are satisfied.
+
+## PERFORMANCE-ATTRIBUTION-01B-A Verdict
+
+Scope delivered: benchmark source and canonical-date return-series foundation.
+
+### Required Questions
+
+Q1. Is SPY benchmark source integrated?
+- Yes. `src/pis/benchmark_attribution.py` adds a benchmark source abstraction with SPY default.
+
+Q2. Are benchmark returns aligned to canonical PIS dates?
+- Yes. Intervals are computed from canonical daily snapshots (`prior_snapshot_date` -> `snapshot_date`).
+
+Q3. Is nearest-prior-trading-day alignment deterministic?
+- Yes. Alignment resolves entry/exit prices with deterministic nearest-prior date lookup.
+
+Q4. Are portfolio returns calculated from canonical daily values only?
+- Yes. Portfolio return uses only canonical `portfolio_value` for paired canonical intervals.
+
+Q5. Is excess return calculated?
+- Yes. `excess_return_pct = portfolio_return_pct - benchmark_return_pct`.
+
+Q6. Is benchmark return-series persistence implemented?
+- Yes. Persisted to `data/history/pis/benchmark_attribution/benchmark_return_series.csv`.
+
+Q7. Are benchmark APIs available?
+- Yes.
+	- `/api/pis/benchmark-attribution/returns`
+	- `/api/pis/benchmark-attribution/latest`
+	- `/api/pis/benchmark-attribution-summary`
+
+Q8. Are deterministic tests passing?
+- Yes. `tests/test_pis_benchmark_attribution_01a.py` passed (`5 passed`), and extended PIS slice passed (`21 passed`).
+
+Q9. Is dashboard work intentionally deferred?
+- Yes. This phase exposes read APIs and persistence only; full dashboard build remains deferred by scope.
+
+Q10. Is the stream ready for 01B-B source-level alpha and dashboard integration?
+- Yes. 01B-A data contracts are now in place for 01B-B aggregation and UI integration.
+
+## 01B-A Disposition
+
+PERFORMANCE-ATTRIBUTION-01B-A is complete and validated.
+
+## PERFORMANCE-ATTRIBUTION-01B-B Verdict
+
+Scope delivered: recommendation-level and source-level benchmark alpha attribution.
+
+Q1. Can recommendation outcomes now be compared to SPY?
+- Yes. Recommendation rows are joined to SPY benchmark intervals.
+
+Q2. Is recommendation excess return calculated?
+- Yes. `recommendation_excess_return_pct = directional_return_pct - benchmark_return_pct`.
+
+Q3. Are recommendation sources ranked by alpha?
+- Yes. Source-level ranking is exposed in benchmark latest and sources payloads.
+
+Q4. Are non-OK benchmark rows excluded from headline metrics?
+- Yes. Only `data_quality_status == OK` rows contribute to primary source metrics.
+
+Q5. Are non-OK rows preserved for audit?
+- Yes. They remain in recommendation benchmark records and are counted in exclusion metadata.
+
+Q6. Are APIs available for recommendation/source benchmark attribution?
+- Yes.
+	- `/api/pis/benchmark-attribution/recommendations`
+	- `/api/pis/benchmark-attribution/sources`
+	- `/api/pis/benchmark-attribution/latest`
+
+Q7. Are deterministic tests passing?
+- Yes. Benchmark layer tests passed (`10 passed`) and focused extended PIS slice passed (`26 passed`).
+
+Q8. Is dashboard integration still deferred or included?
+- Deferred. 01B-B ships backend attribution and APIs only.
+
+Q9. Is the stream ready for 01B-C dashboard integration?
+- Yes. Recommendation/source benchmark alpha read models and APIs are now in place.
+
+Q10. Does Issue #50 now have benchmark-relative recommendation attribution?
+- Yes, for recommendation-level and source-level benchmark alpha backend attribution in this phase.
+
+## 01B-B Disposition
+
+PERFORMANCE-ATTRIBUTION-01B-B backend attribution objectives are complete and validated.
+
+## PERFORMANCE-ATTRIBUTION-01B-C Verdict
+
+Scope delivered: PIS dashboard benchmark attribution sections.
+
+Q1. Are benchmark dashboard sections visible? Yes — Benchmark Attribution Sections 1–6 added.
+Q2. Are portfolio and benchmark returns displayed? Yes — summary and trend sections render return data.
+Q3. Is excess return visible? Yes — Summary, Trend, Top Alpha, and Lowest Alpha sections show excess return.
+Q4. Are alpha recommendations ranked? Yes — top 5 positive and worst 5 negative alpha shown by section.
+Q5. Are source alpha rankings visible? Yes — Section 5 renders source-level alpha win rate and avg excess return.
+Q6. Are benchmark quality metrics visible? Yes — Section 6 shows included/excluded row counts and reason breakdown.
+Q7. Are degraded benchmark intervals clearly surfaced? Yes — quality badge switches to DEGRADED when < 80% OK rows.
+Q8. Are dashboard contracts tested? Yes — test_pis_ui_phase1_dashboard.py extended for all six benchmark sections and API wiring.
+Q9. Did focused regression pass? Yes — 26 passed.
+Q10. Is Issue #50 complete after this phase? Yes — portfolio vs SPY, recommendation alpha, and source alpha are fully visible in the dashboard.
+
+## 01B-C Disposition
+
+PERFORMANCE-ATTRIBUTION-01B-C is complete. Issue #50 Benchmark Attribution is now implemented end-to-end.

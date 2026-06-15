@@ -46,6 +46,14 @@ _FUNDING_RE = re.compile(
     r"Funding source:\s*(?P<source>[A-Za-z ]+)\s*\((?P<symbols>[^)]*?),\s*~(?P<pct>[0-9.]+)% available\)",
     re.IGNORECASE,
 )
+_FUNDING_ALTERNATIVES_RE = re.compile(
+    r"Alternatives considered:\s*(?P<alts>[^.]+)\.",
+    re.IGNORECASE,
+)
+_FUNDING_POLICY_RE = re.compile(
+    r"Policy alignment:\s*(?P<policy>[^.]+)\.",
+    re.IGNORECASE,
+)
 
 
 def _write_rows(path: Path, headers: list[str], rows: list[dict[str, object]]) -> None:
@@ -187,12 +195,30 @@ def _funding_drivers(rec: dict[str, Any]) -> list[dict[str, object]]:
         return []
     source = "_".join(match.group("source").strip().upper().split())
     symbols = [segment.strip().upper() for segment in match.group("symbols").split(",") if segment.strip()]
-    return [{
+    drivers: list[dict[str, object]] = [{
         "driver_type": "funding_source",
         "source_type": source,
         "symbols": symbols,
         "available_pct": float(match.group("pct")),
     }]
+
+    alt_match = _FUNDING_ALTERNATIVES_RE.search(rationale)
+    if alt_match:
+        alternatives = [part.strip().upper().replace(" ", "_") for part in alt_match.group("alts").split(",") if part.strip()]
+        if alternatives:
+            drivers.append({
+                "driver_type": "funding_alternatives",
+                "alternatives": alternatives,
+            })
+
+    policy_match = _FUNDING_POLICY_RE.search(rationale)
+    if policy_match:
+        drivers.append({
+            "driver_type": "funding_policy_alignment",
+            "value": policy_match.group("policy").strip(),
+        })
+
+    return drivers
 
 
 def _signal_drivers(rec: dict[str, Any], run_dir: Path) -> list[dict[str, object]]:

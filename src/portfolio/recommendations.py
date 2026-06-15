@@ -331,9 +331,21 @@ def generate_recommendations(
     if funding.sources:
         top_src = funding.sources[0]
         sym_preview = ", ".join(top_src.symbols[:2])
+        alternatives = ", ".join(
+            s.source_type.replace("_", " ").title()
+            for s in funding.sources[1:3]
+        )
+        alternatives_clause = f" Alternatives considered: {alternatives}." if alternatives else ""
+        policy_clause = (
+            f" Policy alignment: {top_src.policy_alignment_reason}"
+            if top_src.policy_alignment_reason else ""
+        )
         _top_funding_str = (
             f" Funding source: {top_src.source_type.replace('_', ' ').title()}"
             f" ({sym_preview}, ~{top_src.available_pct:.1f}% available)."
+            f" Why this source: {top_src.reduction_reason}"
+            + alternatives_clause
+            + policy_clause
         )
 
     # ── 1. Allocation drift recommendations ──────────────────────────────────
@@ -591,6 +603,41 @@ def generate_recommendations_with_phase_e_warnings(
 
 _CASH_RESERVE_FLOOR_PCT = 2.0  # keep at least this much in cash/sweep as an operational floor
 
+_FUNDING_BASE_SCORE = {
+    "EXCESS_CASH": 100.0,
+    "TRIM_CANDIDATE": 86.0,
+    "OVERWEIGHT_REDUCTION": 80.0,
+}
+
+
+def _funding_policy_score(entry: FundingSourceEntry, overlay_map: dict[str, SecurityIntelligenceOverlay]) -> float:
+    score = _FUNDING_BASE_SCORE.get(entry.source_type, 50.0)
+    score += min(20.0, max(0.0, float(entry.available_pct)))
+
+    if entry.source_type == "TRIM_CANDIDATE":
+        bearish = 0
+        for symbol in entry.symbols:
+            overlay = overlay_map.get(symbol)
+            ess = str(getattr(overlay, "ess_score_text", "") or "").upper()
+            if ess in {"BEARISH", "VERY_BEARISH"}:
+                bearish += 1
+        score += min(12.0, bearish * 4.0)
+
+    if entry.source_type == "OVERWEIGHT_REDUCTION":
+        score += 6.0
+
+    return round(max(0.0, score), 2)
+
+
+def _funding_policy_alignment(entry: FundingSourceEntry) -> str:
+    if entry.source_type == "EXCESS_CASH":
+        return "Uses excess liquidity before forcing equity reductions, preserving optionality."
+    if entry.source_type == "TRIM_CANDIDATE":
+        return "Rotates out of weaker-signal names into higher-conviction opportunities."
+    if entry.source_type == "OVERWEIGHT_REDUCTION":
+        return "Repairs allocation drift while funding underweight strategic nodes."
+    return "Policy-aware funding source."
+
 
 def identify_funding_sources(
     analysis_run_id: str,
@@ -689,16 +736,39 @@ def identify_funding_sources(
             ),
         ))
 
-    total_available = round(
-        sum(s.available_pct for s in sources if s.priority <= 2), 2
+    ranked_sources: list[FundingSourceEntry] = []
+    for source in sources:
+        score = _funding_policy_score(source, overlay_map)
+        ranked_sources.append(replace(
+            source,
+            reduction_reason=source.rationale,
+            reduction_score=score,
+            policy_alignment_reason=_funding_policy_alignment(source),
+        ))
+
+    ranked_sources.sort(
+        key=lambda s: (
+            -float(s.reduction_score),
+            int(s.priority),
+            str(s.source_type),
+        )
     )
-    if sources:
-        primary = sources[0]
+    ranked_sources = [replace(s, priority=idx + 1) for idx, s in enumerate(ranked_sources)]
+
+    total_available = round(
+        sum(s.available_pct for s in ranked_sources if s.source_type in {"EXCESS_CASH", "TRIM_CANDIDATE"}), 2
+    )
+    if ranked_sources:
+        primary = ranked_sources[0]
         sym_preview = ", ".join(primary.symbols[:2])
+        alternatives = ", ".join(s.source_type.replace("_", " ").title() for s in ranked_sources[1:3])
+        alt_clause = f" Alternatives considered: {alternatives}." if alternatives else ""
         summary = (
-            f"{len(sources)} funding source(s) identified."
+            f"{len(ranked_sources)} funding source(s) identified."
             f" Primary: {primary.source_type.replace('_', ' ').title()}"
             f" ({sym_preview}, ~{primary.available_pct:.1f}% available)."
+            f" Score {primary.reduction_score:.1f}."
+            + alt_clause
         )
     else:
         summary = "No clear internal funding sources identified. New capital contribution required."
@@ -706,7 +776,7 @@ def identify_funding_sources(
     return FundingSourceAnalysis(
         analysis_run_id=analysis_run_id,
         portfolio_snapshot_id=portfolio_snapshot_id,
-        sources=tuple(sources),
+        sources=tuple(ranked_sources),
         total_available_pct=total_available,
         summary=summary,
         created_at_utc=now_utc,

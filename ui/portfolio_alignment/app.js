@@ -6706,6 +6706,14 @@ function _craBuildSourceCard(s) {
        <span style="color:var(--muted)"> of ${_craFmt(s.current_value_usd)} (${Math.round((s.sizing_pct || 0) * 100)}%)</span>`
     : `<span style="color:var(--muted);font-style:italic">Blocked — not in capital pool</span>`;
 
+  const reductionMeta = (typeof s.reduction_score === "number" && s.reduction_score > 0)
+    ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px">
+         Reduction Score: <strong>${Number(s.reduction_score).toFixed(1)}</strong>
+         ${s.reduction_reason ? ` · ${escHtml(s.reduction_reason)}` : ""}
+       </div>
+       ${s.policy_alignment_reason ? `<div style="font-size:0.71rem;color:#5b4f36;margin-top:2px">Policy: ${escHtml(s.policy_alignment_reason)}</div>` : ""}`
+    : "";
+
   // Tax note
   const taxNote = s.tax_annotation
     ? `<div class="cra-tax-note">${escHtml(s.tax_annotation)}</div>`
@@ -6745,6 +6753,7 @@ function _craBuildSourceCard(s) {
       ${reviewHtml}
     </div>
     <div class="cra-source-row2">${proceedsHtml}</div>
+    ${reductionMeta}
     <div class="cra-source-evidence">${escHtml(s.evidence_summary || "")}</div>
     ${taxNote}
     <div class="cra-source-actions">${checkboxHtml}</div>
@@ -6838,6 +6847,18 @@ function _craBuildTargetCard(t) {
   const curWt  = t.current_weight_pct  != null ? parseFloat(t.current_weight_pct).toFixed(2)  + "%" : "—";
   const projWt = t.projected_weight_pct != null ? parseFloat(t.projected_weight_pct).toFixed(2) + "%" : "—";
 
+  const fundingHtml = t.funding_source_symbol
+    ? `<div style="font-size:0.71rem;color:#5b4f36;margin-top:4px">
+         Funding: <strong>${escHtml(t.funding_source_symbol)}</strong>
+         (${escHtml((t.funding_source_category || "").replace(/_/g, " "))}, score ${Number(t.funding_source_score || 0).toFixed(1)})
+       </div>
+       ${t.funding_source_reason ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">${escHtml(t.funding_source_reason)}</div>` : ""}
+       ${Array.isArray(t.funding_source_alternatives) && t.funding_source_alternatives.length
+         ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">Alternatives: ${escHtml(t.funding_source_alternatives.join("; "))}</div>`
+         : ""}
+       ${t.funding_policy_alignment_reason ? `<div style="font-size:0.70rem;color:#5b4f36;margin-top:2px">Policy: ${escHtml(t.funding_policy_alignment_reason)}</div>` : ""}`
+    : "";
+
   return `<div class="cra-target-card">
     <div class="cra-target-row1">
       <span class="${rankClass}">#${t.rank}</span>
@@ -6853,6 +6874,7 @@ function _craBuildTargetCard(t) {
       <span style="font-size:0.7rem">${escHtml(t.allocation_node || "")}</span>
     </div>
     ${t.allocation_note ? `<div style="font-size:0.71rem;color:var(--muted);margin-top:2px">${escHtml(t.allocation_note)}</div>` : ""}
+    ${fundingHtml}
   </div>`;
 }
 

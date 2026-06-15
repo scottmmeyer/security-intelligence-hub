@@ -110,6 +110,66 @@ const SECTION_DEFINITIONS = {
     loadingMessage: "Loading lineage...",
     slowMessage: "Lineage data is taking longer than expected...",
   },
+  attributionSummary: {
+    label: "Recommendation Outcome Summary",
+    targetIds: ["attributionSummary"],
+    loadingMessage: "Loading attribution...",
+    slowMessage: "Attribution data is taking longer than expected...",
+  },
+  attributionWinners: {
+    label: "Top Winning Recommendations",
+    targetIds: ["topWinningRecommendations"],
+    loadingMessage: "Loading attribution...",
+    slowMessage: "Attribution data is taking longer than expected...",
+  },
+  attributionLosers: {
+    label: "Top Losing Recommendations",
+    targetIds: ["topLosingRecommendations"],
+    loadingMessage: "Loading attribution...",
+    slowMessage: "Attribution data is taking longer than expected...",
+  },
+  attributionSourcePerformance: {
+    label: "Recommendation Source Performance",
+    targetIds: ["recommendationSourcePerformance"],
+    loadingMessage: "Loading attribution...",
+    slowMessage: "Attribution data is taking longer than expected...",
+  },
+  benchmarkSummary: {
+    label: "Benchmark Performance Summary",
+    targetIds: ["benchmarkSummary"],
+    loadingMessage: "Loading benchmark data...",
+    slowMessage: "Benchmark data is taking longer than expected...",
+  },
+  benchmarkTrend: {
+    label: "Portfolio vs Benchmark Trend",
+    targetIds: ["benchmarkTrend"],
+    loadingMessage: "Loading benchmark trend...",
+    slowMessage: "Benchmark trend is taking longer than expected...",
+  },
+  benchmarkTopAlpha: {
+    label: "Top Alpha Recommendations",
+    targetIds: ["benchmarkTopAlpha"],
+    loadingMessage: "Loading benchmark data...",
+    slowMessage: "Benchmark data is taking longer than expected...",
+  },
+  benchmarkLowestAlpha: {
+    label: "Lowest Alpha Recommendations",
+    targetIds: ["benchmarkLowestAlpha"],
+    loadingMessage: "Loading benchmark data...",
+    slowMessage: "Benchmark data is taking longer than expected...",
+  },
+  benchmarkSourceAlpha: {
+    label: "Source Alpha Rankings",
+    targetIds: ["benchmarkSourceAlpha"],
+    loadingMessage: "Loading benchmark data...",
+    slowMessage: "Benchmark data is taking longer than expected...",
+  },
+  benchmarkQuality: {
+    label: "Benchmark Quality Summary",
+    targetIds: ["benchmarkQuality"],
+    loadingMessage: "Loading benchmark quality...",
+    slowMessage: "Benchmark quality is taking longer than expected...",
+  },
 };
 
 const SUBSYSTEM_DEFINITIONS = {
@@ -133,6 +193,14 @@ const SUBSYSTEM_DEFINITIONS = {
     label: "Lineage",
     sectionKeys: ["lineageOverview", "lineageMatches", "lineageUnmatched", "lineageDetail", "lineageSourceBreakdown"],
   },
+  attribution: {
+    label: "Performance Attribution",
+    sectionKeys: ["attributionSummary", "attributionWinners", "attributionLosers", "attributionSourcePerformance"],
+  },
+  benchmarkAttribution: {
+    label: "Benchmark Attribution",
+    sectionKeys: ["benchmarkSummary", "benchmarkTrend", "benchmarkTopAlpha", "benchmarkLowestAlpha", "benchmarkSourceAlpha", "benchmarkQuality"],
+  },
 };
 
 const requestCache = new Map();
@@ -150,6 +218,9 @@ const executiveState = {
   canonicalSummary: { selected_dates: 0, unselected_dates: 0, selected_status_counts: {} },
   latestChanges: { summary: null, new_positions: [], exited_positions: [], increased_positions: [], reduced_positions: [] },
   lineageLatest: { summary: null, matches: [], unmatched: [], source_breakdown: [] },
+  attributionLatest: { summary: null, records: [], top_winning_recommendations: [], top_losing_recommendations: [], source_performance: [] },
+  benchmarkLatest: { benchmark_symbol: "SPY", alignment_policy: "NEAREST_PRIOR_TRADING_DAY", latest_portfolio_excess_return: null, top_positive_alpha_recommendations: [], worst_negative_alpha_recommendations: [], source_alpha_ranking: [], quality: {} },
+  benchmarkSeries: { benchmark_symbol: "SPY", series: [] },
 };
 
 function asCurrency(value) {
@@ -348,6 +419,7 @@ function renderExecutiveKpiHeader() {
   const latestChange = Number(executiveState.latestChanges.summary && executiveState.latestChanges.summary.portfolio_value_change);
   const latestValue = Number(executiveState.latest.total_value);
   const lineageMatches = Array.isArray(executiveState.lineageLatest.matches) ? executiveState.lineageLatest.matches.length : 0;
+  const attributionWinners = Number(executiveState.attributionLatest.summary && executiveState.attributionLatest.summary.winner_count);
 
   const items = [
     ["Snapshots", asInt(executiveState.snapshots.length)],
@@ -358,6 +430,7 @@ function renderExecutiveKpiHeader() {
     ["Latest Portfolio Value", Number.isFinite(latestValue) ? asCurrency(latestValue) : "-"],
     ["Latest Change", Number.isFinite(latestChange) ? asSignedCurrency(latestChange) : "-"],
     ["Lineage Matches", asInt(lineageMatches)],
+    ["Attribution Winners", Number.isFinite(attributionWinners) ? asInt(attributionWinners) : "0"],
   ];
 
   node.innerHTML = items
@@ -452,6 +525,48 @@ function renderLineageSummaryCard() {
   `;
 }
 
+function benchmarkQualityBadge(included, excluded) {
+  const total = included + excluded;
+  if (total === 0) return '<span class="section-badge section-badge-loading">NO DATA</span>';
+  const pct = total > 0 ? (included / total) * 100 : 0;
+  if (pct >= 80) return '<span class="section-badge section-badge-loaded">HEALTHY</span>';
+  return '<span class="section-badge section-badge-slow">DEGRADED</span>';
+}
+
+function renderBenchmarkSummaryCard() {
+  const node = document.getElementById("benchmarkSummaryCard");
+  if (!node) return;
+  const latest = executiveState.benchmarkLatest.latest_portfolio_excess_return || {};
+  const sym = executiveState.benchmarkLatest.benchmark_symbol || "SPY";
+  const quality = executiveState.benchmarkLatest.quality || {};
+  const included = Number(quality.included_rows || 0);
+  const excluded = Number(quality.excluded_rows || 0);
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Benchmark</span><strong>${sym}</strong></li>
+      <li class="metric-item"><span>Latest Portfolio Return</span><strong>${asPercent(latest.portfolio_return_pct)}</strong></li>
+      <li class="metric-item"><span>Latest Benchmark Return</span><strong>${asPercent(latest.benchmark_return_pct)}</strong></li>
+      <li class="metric-item"><span>Latest Excess Return</span><strong>${asPercent(latest.excess_return_pct)}</strong></li>
+      <li class="metric-item"><span>Data Quality</span><strong>${benchmarkQualityBadge(included, excluded)}</strong></li>
+    </ul>
+  `;
+}
+
+function renderAttributionSummaryCard() {
+  const node = document.getElementById("attributionSummaryCard");
+  if (!node) return;
+  const summary = executiveState.attributionLatest.summary || {};
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Matched Recommendations</span><strong>${asInt(summary.matched_recommendations)}</strong></li>
+      <li class="metric-item"><span>Winners</span><strong>${asInt(summary.winner_count)}</strong></li>
+      <li class="metric-item"><span>Neutral</span><strong>${asInt(summary.neutral_count)}</strong></li>
+      <li class="metric-item"><span>Losers</span><strong>${asInt(summary.loser_count)}</strong></li>
+      <li class="metric-item"><span>Total Directional Attribution</span><strong>${asSignedCurrency(summary.total_directional_attribution)}</strong></li>
+    </ul>
+  `;
+}
+
 function renderExecutiveCards() {
   renderExecutiveKpiHeader();
   renderGovernanceSummaryCard();
@@ -459,6 +574,118 @@ function renderExecutiveCards() {
   renderPortfolioTrendCard();
   renderChangeDetectionSummaryCard();
   renderLineageSummaryCard();
+  renderAttributionSummaryCard();
+  renderBenchmarkSummaryCard();
+}
+
+function renderBenchmarkSummary(latestPayload) {
+  const node = document.getElementById("benchmarkSummary");
+  if (!node) return;
+  const latest = latestPayload.latest_portfolio_excess_return || {};
+  const sym = latestPayload.benchmark_symbol || "SPY";
+  const quality = latestPayload.quality || {};
+  const included = Number(quality.included_rows || 0);
+  const excluded = Number(quality.excluded_rows || 0);
+  node.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Benchmark</div><div class="kpi-value">${sym}</div></div>
+      <div class="kpi"><div class="kpi-label">Portfolio Return %</div><div class="kpi-value">${asPercent(latest.portfolio_return_pct)}</div></div>
+      <div class="kpi"><div class="kpi-label">Benchmark Return %</div><div class="kpi-value">${asPercent(latest.benchmark_return_pct)}</div></div>
+      <div class="kpi"><div class="kpi-label">Excess Return %</div><div class="kpi-value">${asPercent(latest.excess_return_pct)}</div></div>
+    </div>
+    <p style="margin-top:10px;">Alignment policy: <span class="status-chip">${latestPayload.alignment_policy || "-"}</span>&nbsp;
+      Data quality: ${benchmarkQualityBadge(included, excluded)}
+      (${included} included, ${excluded} excluded)
+    </p>
+  `;
+}
+
+function renderBenchmarkTrend(seriesPayload) {
+  const series = Array.isArray(seriesPayload.series) ? seriesPayload.series : [];
+  const ok = series.filter((r) => r.data_quality_status === "OK");
+  const cumPortfolio = ok.reduce((acc, r) => acc + Number(r.portfolio_return_pct || 0), 0);
+  const cumBenchmark = ok.reduce((acc, r) => acc + Number(r.benchmark_return_pct || 0), 0);
+  const cumExcess = ok.reduce((acc, r) => acc + Number(r.excess_return_pct || 0), 0);
+  const node = document.getElementById("benchmarkTrend");
+  if (!node) return;
+  node.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Intervals</div><div class="kpi-value">${series.length}</div></div>
+      <div class="kpi"><div class="kpi-label">Cumulative Portfolio Return</div><div class="kpi-value">${asPercent(cumPortfolio)}</div></div>
+      <div class="kpi"><div class="kpi-label">Cumulative Benchmark Return</div><div class="kpi-value">${asPercent(cumBenchmark)}</div></div>
+      <div class="kpi"><div class="kpi-label">Cumulative Excess Return</div><div class="kpi-value">${asPercent(cumExcess)}</div></div>
+    </div>
+  `;
+}
+
+function renderBenchmarkTopAlpha(latestPayload) {
+  const rows = (latestPayload.top_positive_alpha_recommendations || []).map((r) => [
+    r.recommendation_id || "-",
+    r.symbol || "-",
+    r.recommendation_source || "-",
+    asPercent(r.benchmark_return_pct),
+    asPercent(r.directional_return_pct),
+    asPercent(r.recommendation_excess_return_pct),
+  ]);
+  renderTable(
+    "benchmarkTopAlpha",
+    ["Recommendation", "Symbol", "Source", "Benchmark Return %", "Rec Return %", "Excess Return %"],
+    rows,
+  );
+}
+
+function renderBenchmarkLowestAlpha(latestPayload) {
+  const rows = (latestPayload.worst_negative_alpha_recommendations || []).map((r) => [
+    r.recommendation_id || "-",
+    r.symbol || "-",
+    r.recommendation_source || "-",
+    asPercent(r.benchmark_return_pct),
+    asPercent(r.directional_return_pct),
+    asPercent(r.recommendation_excess_return_pct),
+  ]);
+  renderTable(
+    "benchmarkLowestAlpha",
+    ["Recommendation", "Symbol", "Source", "Benchmark Return %", "Rec Return %", "Excess Return %"],
+    rows,
+  );
+}
+
+function renderBenchmarkSourceAlpha(sourcesPayload) {
+  const rows = (sourcesPayload.source_summary || []).map((r) => [
+    r.recommendation_source || "-",
+    asInt(r.matched_recommendations),
+    asPercent(r.alpha_win_rate),
+    asPercent(r.avg_excess_return_pct),
+    asSignedCurrency(r.total_directional_attribution),
+  ]);
+  renderTable(
+    "benchmarkSourceAlpha",
+    ["Source", "Recommendations", "Alpha Win Rate", "Avg Excess Return %", "Total Attribution"],
+    rows,
+  );
+}
+
+function renderBenchmarkQuality(latestPayload) {
+  const node = document.getElementById("benchmarkQuality");
+  if (!node) return;
+  const quality = latestPayload.quality || {};
+  const included = Number(quality.included_rows || 0);
+  const excluded = Number(quality.excluded_rows || 0);
+  const reasonCounts = quality.excluded_reason_counts || {};
+  const reasonList = Object.entries(reasonCounts)
+    .map(([reason, count]) => `<li class="metric-item"><span>${reason}</span><strong>${count}</strong></li>`)
+    .join("") || '<li class="metric-item"><span>No exclusions</span><strong>—</strong></li>';
+  node.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Included Rows</div><div class="kpi-value">${included}</div></div>
+      <div class="kpi"><div class="kpi-label">Excluded Rows</div><div class="kpi-value">${excluded}</div></div>
+      <div class="kpi"><div class="kpi-label">Quality</div><div class="kpi-value">${benchmarkQualityBadge(included, excluded)}</div></div>
+    </div>
+    <details class="detail-toggle" style="margin-top:10px;">
+      <summary>Exclusion reason counts</summary>
+      <ul class="metric-list" style="margin-top:8px;">${reasonList}</ul>
+    </details>
+  `;
 }
 
 function updateSubsystemStatuses() {
@@ -865,6 +1092,59 @@ function renderLineageSourceBreakdown(payload) {
   renderTable("lineageSourceBreakdown", ["Source", "Matched Count"], rows);
 }
 
+function renderAttributionSummary(latestPayload, historyPayload, summaryPayload) {
+  const node = document.getElementById("attributionSummary");
+  if (!node) return;
+  const latestSummary = (latestPayload && latestPayload.summary) || {};
+  const historyRows = Array.isArray(historyPayload.summary) ? historyPayload.summary : [];
+  const aggregate = (summaryPayload && summaryPayload.summary) || {};
+  node.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Latest Snapshot</div><div class="kpi-value">${latestSummary.snapshot_date || "-"}</div></div>
+      <div class="kpi"><div class="kpi-label">History Rows</div><div class="kpi-value">${asInt(historyRows.length)}</div></div>
+      <div class="kpi"><div class="kpi-label">Total Directional Attribution</div><div class="kpi-value">${asSignedCurrency(aggregate.total_directional_attribution)}</div></div>
+      <div class="kpi"><div class="kpi-label">Average Return %</div><div class="kpi-value">${asPercent(aggregate.average_directional_return_pct)}</div></div>
+    </div>
+  `;
+}
+
+function renderAttributionWinners(payload) {
+  const rows = (payload.top_winning_recommendations || []).map((r) => [
+    r.matched_recommendation || r.matched_recommendation_id || "-",
+    r.recommendation_source || "-",
+    asInt(r.count),
+    asSignedCurrency(r.total_directional_attribution),
+  ]);
+  renderTable("topWinningRecommendations", ["Recommendation", "Source", "Matches", "Directional Attribution"], rows);
+}
+
+function renderAttributionLosers(payload) {
+  const rows = (payload.top_losing_recommendations || []).map((r) => [
+    r.matched_recommendation || r.matched_recommendation_id || "-",
+    r.recommendation_source || "-",
+    asInt(r.count),
+    asSignedCurrency(r.total_directional_attribution),
+  ]);
+  renderTable("topLosingRecommendations", ["Recommendation", "Source", "Matches", "Directional Attribution"], rows);
+}
+
+function renderAttributionSourcePerformance(payload) {
+  const rows = (payload.source_performance || []).map((r) => [
+    r.source || "-",
+    asInt(r.matched_count),
+    asInt(r.winner_count),
+    asInt(r.neutral_count),
+    asInt(r.loser_count),
+    asPercent(r.win_rate_pct),
+    asSignedCurrency(r.total_directional_attribution),
+  ]);
+  renderTable(
+    "recommendationSourcePerformance",
+    ["Source", "Matches", "Winners", "Neutral", "Losers", "Win Rate", "Directional Attribution"],
+    rows,
+  );
+}
+
 function initializeDashboardShell() {
   dashboardStartedAt = Date.now();
   requestCache.clear();
@@ -878,7 +1158,7 @@ function initializeDashboardShell() {
   });
   updateSubsystemStatuses();
   updateDashboardBanner();
-  ["executiveKpiHeader", "governanceSummaryCard", "canonicalSelectionCard", "portfolioTrendCard", "changeDetectionSummaryCard", "lineageSummaryCard"].forEach((id) => {
+  ["executiveKpiHeader", "governanceSummaryCard", "canonicalSelectionCard", "portfolioTrendCard", "changeDetectionSummaryCard", "lineageSummaryCard", "attributionSummaryCard", "benchmarkSummaryCard"].forEach((id) => {
     renderLoading(id, "Loading executive summary...");
   });
 }
@@ -986,6 +1266,63 @@ function initialize() {
     executiveState.lineageLatest = lineageLatest || { summary: null, matches: [], unmatched: [], source_breakdown: [] };
     renderExecutiveCards();
     renderLineageSourceBreakdown(lineageLatest || {});
+  });
+
+  runSectionTask("attributionSummary", () => Promise.all([
+    requestJson("/api/pis/attribution/latest"),
+    requestJson("/api/pis/attribution/history"),
+    requestJson("/api/pis/attribution-summary"),
+  ]), ([attributionLatest, attributionHistory, attributionSummary]) => {
+    executiveState.attributionLatest = attributionLatest || { summary: null, records: [], top_winning_recommendations: [], top_losing_recommendations: [], source_performance: [] };
+    renderExecutiveCards();
+    renderAttributionSummary(attributionLatest || {}, attributionHistory || {}, attributionSummary || {});
+  });
+
+  runSectionTask("attributionWinners", () => requestJson("/api/pis/attribution/latest"), (attributionLatest) => {
+    executiveState.attributionLatest = attributionLatest || { summary: null, records: [], top_winning_recommendations: [], top_losing_recommendations: [], source_performance: [] };
+    renderExecutiveCards();
+    renderAttributionWinners(attributionLatest || {});
+  });
+
+  runSectionTask("attributionLosers", () => requestJson("/api/pis/attribution/latest"), (attributionLatest) => {
+    executiveState.attributionLatest = attributionLatest || { summary: null, records: [], top_winning_recommendations: [], top_losing_recommendations: [], source_performance: [] };
+    renderExecutiveCards();
+    renderAttributionLosers(attributionLatest || {});
+  });
+
+  runSectionTask("attributionSourcePerformance", () => requestJson("/api/pis/attribution/latest"), (attributionLatest) => {
+    executiveState.attributionLatest = attributionLatest || { summary: null, records: [], top_winning_recommendations: [], top_losing_recommendations: [], source_performance: [] };
+    renderExecutiveCards();
+    renderAttributionSourcePerformance(attributionLatest || {});
+  });
+
+  runSectionTask("benchmarkSummary", () => requestJson("/api/pis/benchmark-attribution/latest"), (benchmarkLatest) => {
+    executiveState.benchmarkLatest = benchmarkLatest || { benchmark_symbol: "SPY", alignment_policy: "NEAREST_PRIOR_TRADING_DAY", latest_portfolio_excess_return: null, top_positive_alpha_recommendations: [], worst_negative_alpha_recommendations: [], source_alpha_ranking: [], quality: {} };
+    renderExecutiveCards();
+    renderBenchmarkSummary(benchmarkLatest || {});
+  });
+
+  runSectionTask("benchmarkTrend", () => requestJson("/api/pis/benchmark-attribution/returns"), (benchmarkReturns) => {
+    executiveState.benchmarkSeries = benchmarkReturns || { benchmark_symbol: "SPY", series: [] };
+    renderBenchmarkTrend(benchmarkReturns || {});
+  });
+
+  runSectionTask("benchmarkTopAlpha", () => requestJson("/api/pis/benchmark-attribution/latest"), (benchmarkLatest) => {
+    executiveState.benchmarkLatest = benchmarkLatest || { benchmark_symbol: "SPY", alignment_policy: "NEAREST_PRIOR_TRADING_DAY", latest_portfolio_excess_return: null, top_positive_alpha_recommendations: [], worst_negative_alpha_recommendations: [], source_alpha_ranking: [], quality: {} };
+    renderBenchmarkTopAlpha(benchmarkLatest || {});
+  });
+
+  runSectionTask("benchmarkLowestAlpha", () => requestJson("/api/pis/benchmark-attribution/latest"), (benchmarkLatest) => {
+    executiveState.benchmarkLatest = benchmarkLatest || { benchmark_symbol: "SPY", alignment_policy: "NEAREST_PRIOR_TRADING_DAY", latest_portfolio_excess_return: null, top_positive_alpha_recommendations: [], worst_negative_alpha_recommendations: [], source_alpha_ranking: [], quality: {} };
+    renderBenchmarkLowestAlpha(benchmarkLatest || {});
+  });
+
+  runSectionTask("benchmarkSourceAlpha", () => requestJson("/api/pis/benchmark-attribution/sources"), (benchmarkSources) => {
+    renderBenchmarkSourceAlpha(benchmarkSources || {});
+  });
+
+  runSectionTask("benchmarkQuality", () => requestJson("/api/pis/benchmark-attribution/latest"), (benchmarkLatest) => {
+    renderBenchmarkQuality(benchmarkLatest || {});
   });
 }
 

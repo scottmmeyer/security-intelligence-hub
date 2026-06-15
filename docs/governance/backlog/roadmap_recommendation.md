@@ -1,5 +1,24 @@
 # Roadmap Recommendation — Phase 8.0B.1D
 
+## Governance Update — Signal Coverage Program Closed (2026-06-12)
+
+SIGNAL-COVERAGE-04 through SIGNAL-COVERAGE-07 are closed based on live operational validation.
+
+Validated closure state:
+
+- Zacks holdings coverage: COMPLIANT (58/58 within threshold; stale=0, missing=0, failed=0)
+- Danelfin holdings coverage: COMPLIANT (58/58 within threshold; stale=0, missing=0, failed=0)
+- Yahoo holdings coverage: COMPLIANT (58/58 within threshold; stale=0, missing=0, failed=0)
+
+Mandatory Holdings Coverage is operationally complete.
+
+## Updated Next Priorities (Post-Closure)
+
+1. PRA-IMPL-02 — Policy-Aware Funding Sources
+2. AI-003 — Allocation Philosophy Explainability
+3. PERFORMANCE-ATTRIBUTION-01
+4. PIS Phase 2 — Change Detection
+
 ## Evaluation Criteria
 
 | Dimension | Weight | Description |

@@ -727,6 +727,150 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     },
                     200,
                 )
+        elif path == "/api/pis/benchmark-attribution/returns":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.benchmark_attribution import pis_benchmark_returns
+
+                self._json_response(pis_benchmark_returns())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "benchmark_symbol": "SPY",
+                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
+                        "generated_at_utc": "",
+                        "series": [],
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/benchmark-attribution/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.benchmark_attribution import pis_benchmark_latest
+
+                self._json_response(pis_benchmark_latest())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "benchmark_symbol": "SPY",
+                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
+                        "latest_portfolio_excess_return": None,
+                        "top_positive_alpha_recommendations": [],
+                        "worst_negative_alpha_recommendations": [],
+                        "source_alpha_ranking": [],
+                        "quality": {
+                            "included_rows": 0,
+                            "excluded_rows": 0,
+                            "excluded_reason_counts": {},
+                        },
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/benchmark-attribution/recommendations":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.benchmark_attribution import pis_benchmark_recommendations
+
+                self._json_response(pis_benchmark_recommendations())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "benchmark_symbol": "SPY",
+                        "records": [],
+                        "quality": {
+                            "included_rows": 0,
+                            "excluded_rows": 0,
+                            "excluded_reason_counts": {},
+                        },
+                        "generated_at_utc": "",
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/benchmark-attribution/sources":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.benchmark_attribution import pis_benchmark_sources
+
+                self._json_response(pis_benchmark_sources())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "benchmark_symbol": "SPY",
+                        "source_summary": [],
+                        "quality": {
+                            "included_rows": 0,
+                            "excluded_rows": 0,
+                            "excluded_reason_counts": {},
+                        },
+                        "generated_at_utc": "",
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/benchmark-attribution-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.benchmark_attribution import pis_benchmark_summary
+
+                self._json_response(pis_benchmark_summary())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "benchmark_symbol": "SPY",
+                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
+                        "summary": {
+                            "interval_count": 0,
+                            "ok_interval_count": 0,
+                            "missing_interval_count": 0,
+                            "latest_snapshot_date": "",
+                            "average_benchmark_return_pct": 0.0,
+                            "average_portfolio_return_pct": 0.0,
+                            "average_excess_return_pct": 0.0,
+                        },
+                        "error": str(exc),
+                    },
+                    200,
+                )
+        elif path == "/api/pis/refresh/status":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.artifact_freshness import artifact_freshness_report
+
+                self._json_response(artifact_freshness_report())
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "latest_pass_snapshot_date": "",
+                        "latest_canonical_date": "",
+                        "latest_change_date": "",
+                        "latest_lineage_date": "",
+                        "latest_attribution_date": "",
+                        "latest_benchmark_date": "",
+                        "canonical_status": "MISSING",
+                        "change_status": "MISSING",
+                        "lineage_status": "MISSING",
+                        "attribution_status": "MISSING",
+                        "benchmark_status": "MISSING",
+                        "overall_refresh_status": "MISSING",
+                        "error": str(exc),
+                    },
+                    200,
+                )
         elif path == "/api/explanations/latest":
             try:
                 import sys as _sys
@@ -1266,6 +1410,17 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
             )
             self._json_response({"started": True})
+        elif path == "/api/pis/refresh":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.refresh_orchestrator import refresh_derived_artifacts
+
+                result = refresh_derived_artifacts(repo_root=_REPO_ROOT)
+                self._json_response(result)
+            except Exception as exc:
+                self._json_response({"error": str(exc), "refreshed": [], "skipped": []}, 200)
         elif path == "/api/score-fetch":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -1580,6 +1735,19 @@ def main() -> int:
         print(f"Open: http://127.0.0.1:{args.port}/ui/outcome_visualization/index.html")
         try:
             os.chdir(_REPO_ROOT)
+            # Run PIS derived-artifact refresh once at startup without blocking
+            # the HTTP listener.  The refresh chain is idempotent — if all
+            # artifacts are already current it exits immediately.
+            if str(_REPO_ROOT) not in sys.path:
+                sys.path.insert(0, str(_REPO_ROOT))
+            from src.pis.refresh_orchestrator import trigger_startup_refresh
+            _pis_startup_thread = threading.Thread(
+                target=trigger_startup_refresh,
+                kwargs={"repo_root": _REPO_ROOT},
+                daemon=True,
+                name="pis-startup-refresh",
+            )
+            _pis_startup_thread.start()
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nStopping server...")

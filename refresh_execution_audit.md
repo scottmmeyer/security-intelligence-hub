@@ -1,4 +1,37 @@
-# Refresh Execution Audit
+# REFRESH-BEHAVIOR-01 Refresh Execution Audit
+
+## Audit context
+
+- Server: scripts/run_outcome_ui.py
+- Trigger path: POST /api/signal-refresh
+- Child script: scripts/refresh_signals.py --smart
+
+## Runtime evidence from server log
+
+Observed after POST:
+
+- [refresh_signals] Zacks: up-to-date (2026-06-12), skipping.
+- [refresh_signals] Yahoo: up-to-date (2026-06-12), skipping.
+- [refresh_signals] Danelfin: up-to-date (2026-06-12), skipping.
+- [refresh_signals] FMP (daily): up-to-date (2026-06-12), skipping.
+- [refresh_signals] All signal caches are current.
+
+## Determination
+
+The refresh button did launch the background refresh script.
+
+But for Zacks, Danelfin, and Yahoo, execution exited at freshness guards because each provider was already marked fresh at file level for today.
+
+Therefore this operation did not execute provider symbol fetch loops.
+
+## A/B/C/D classification
+
+- A) executed provider refreshes: No (not for Zacks/Danelfin/Yahoo)
+- B) only recalculated freshness metadata: Not exactly; script ran checks and exited
+- C) launched background jobs: Yes
+- D) exited early because providers already marked fresh: Yes
+
+Primary behavior for this run: C + D.# Refresh Execution Audit
 
 Repository: security-intelligence-hub  
 Date: 2026-06-09  
