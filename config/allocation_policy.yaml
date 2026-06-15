@@ -75,3 +75,20 @@ governance_notes:
   - "Historical snapshots in data/allocation/recalculation_snapshots/ are append-only and immutable."
   - "Any change to recalculation_governance or structural_policy requires a policy version increment."
   - "Tactical overlays are bounded by max_single_sector_pct and expire unless explicitly renewed."
+
+compliance_tolerance:
+  version: 1
+  effective_date: "2026-06-15"
+  notes: >
+    Tolerance bands for actual portfolio compliance checks (CPV rules).
+    advisory_pp: breach magnitude that triggers ADVISORY state.
+    warn_pp: breach magnitude that triggers WARN state. breach > warn_pp = FAIL.
+
+  CPV-01_micro_cap:      { advisory_pp: 2.0, warn_pp: 4.0 }
+  CPV-02_mega_cap:       { advisory_pp: 5.0, warn_pp: 10.0 }
+  CPV-03_digital:        { advisory_pp: 1.0, warn_pp: 2.0 }
+  CPV-04_cash_floor:     { advisory_pp: 1.0, warn_pp: 2.0 }
+  CPV-05_international:  { advisory_pp: 2.0, warn_pp: 4.0 }
+  CPV-06_asset_class:    { advisory_pp: 5.0, warn_pp: 10.0 }
+  CPV-07_equities_min:   { advisory_pp: 5.0, warn_pp: 10.0 }
+  CPV-08_fi_max:         { advisory_pp: 5.0, warn_pp: 10.0 }

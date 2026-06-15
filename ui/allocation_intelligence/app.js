@@ -550,6 +550,10 @@ async function renderPortfolioCompliance(policy) {
     }
   } catch (_) { /* no portfolio available */ }
 
+  // Load CPV formal validator results (AI-001-OPTION-B)
+  let cpvData = null;
+  try { cpvData = await fetchJson("/api/cpv/latest"); } catch (_) {}
+
   const sp = policy?.structural_policy || {};
 
   if (!Object.keys(actualByNode).length) {
@@ -562,6 +566,58 @@ async function renderPortfolioCompliance(policy) {
   if (emptyEl) emptyEl.style.display = "none";
   barsEl.style.display = "";
 
+  // Build CPV rule lookup for enhanced badges
+  const cpvByRule = {};
+  if (cpvData?.rules) {
+    for (const r of cpvData.rules) cpvByRule[r.rule_id] = r;
+  }
+
+  // Governance banner: show if any rule is WARN or FAIL
+  let bannerEl = document.getElementById("cpv-governance-banner");
+  if (!bannerEl) {
+    bannerEl = document.createElement("div");
+    bannerEl.id = "cpv-governance-banner";
+    barsEl.parentNode.insertBefore(bannerEl, barsEl);
+  }
+  if (cpvData && (cpvData.warn_count > 0 || cpvData.fail_count > 0)) {
+    const warnRules = (cpvData.rules || []).filter(r => r.status === "WARN" || r.status === "FAIL");
+    const bannerItems = warnRules.map(r =>
+      `<strong>${r.rule_id} ${r.name}</strong> ${r.actual_pct.toFixed(2)}% (${r.status === "FAIL" ? "FAIL" : "WARN"} +${r.breach_pp.toFixed(2)}pp)`
+    ).join(" &bull; ");
+    const severity = cpvData.fail_count > 0 ? "fail" : "warn";
+    bannerEl.innerHTML = `<div style="padding:8px 12px;border-radius:4px;margin-bottom:12px;background:${
+      severity === "fail" ? "rgba(220,53,69,0.12)" : "rgba(255,193,7,0.15)"
+    };border-left:3px solid var(--${severity});">` +
+      `<span style="font-size:0.85rem;font-weight:600;color:var(--${severity});">Portfolio Compliance: ${cpvData.warn_count} WARN, ${cpvData.fail_count} FAIL</span>` +
+      `<span style="font-size:0.8rem;color:var(--text-secondary);margin-left:8px;">${bannerItems}</span>` +
+      `</div>`;
+    bannerEl.style.display = "";
+  } else {
+    bannerEl.style.display = "none";
+  }
+
+  // Compliance score badge
+  let scoreEl = document.getElementById("cpv-compliance-score");
+  if (!scoreEl) {
+    scoreEl = document.createElement("div");
+    scoreEl.id = "cpv-compliance-score";
+    barsEl.parentNode.insertBefore(scoreEl, barsEl);
+  }
+  if (cpvData) {
+    const sc = cpvData.compliance_score;
+    const scColor = sc >= 90 ? "var(--pass)" : sc >= 70 ? "var(--warn)" : "var(--fail)";
+    const statusBadge = cpvData.overall_status === "OK" ? "pass" :
+      cpvData.overall_status === "ADVISORY" ? "advisory" :
+      cpvData.overall_status === "WARN" ? "warn" : "fail";
+    scoreEl.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">` +
+      `<span style="font-size:0.8rem;color:var(--muted);">CPV Overall:</span>` +
+      `<span class="badge ${statusBadge}">${cpvData.overall_status}</span>` +
+      `<span style="font-size:0.8rem;color:var(--muted);">Score:</span>` +
+      `<strong style="font-size:0.88rem;color:${scColor};">${sc}/100</strong>` +
+      `<span style="font-size:0.75rem;color:var(--muted);">(display-only)</span>` +
+      `</div>`;
+  }
+
   // Compute actual micro-cap combined
   const actualMicro = Object.entries(actualByNode)
     .filter(([k]) => k.includes("MICRO"))
@@ -573,24 +629,28 @@ async function renderPortfolioCompliance(policy) {
       value: actualByNode["EQUITIES.US.MEGA"] ?? 0,
       ceiling: sp.max_mega_concentration_pct ?? 50,
       ac: "EQUITIES",
+      cpvRule: "CPV-02",
     },
     {
       label: "DIGITAL — actual portfolio",
       value: actualByNode["DIGITAL"] ?? 0,
       ceiling: sp.max_digital_assets_pct ?? 8,
       ac: "DIGITAL",
+      cpvRule: "CPV-03",
     },
     {
       label: "Micro Cap combined (US + Intl) — actual portfolio",
       value: actualMicro,
       ceiling: sp.max_micro_cap_pct ?? 5,
       ac: "EQUITIES",
+      cpvRule: "CPV-01",
     },
     {
       label: "CASH — actual portfolio",
       value: actualByNode["CASH"] ?? 0,
       ceiling: 100, floor: sp.cash_floor_pct ?? 2,
       ac: "CASH",
+      cpvRule: "CPV-04",
     },
   ];
 
@@ -600,13 +660,24 @@ async function renderPortfolioCompliance(policy) {
     const ratio = Math.min(1, pct / (ceiling || 100));
     const over = pct > ceiling;
     const exceedance = over ? (pct - ceiling) : 0;
-    const advisory = over && exceedance < 3; // <3pp = advisory, >=3pp = warning
-    const color = over ? (advisory ? "var(--warn)" : "var(--fail)") : acColor(c.ac);
-    const badgeClass = over ? (advisory ? "advisory" : "fail") : "pass";
-    const badgeText = over ? (advisory ? "ADVISORY" : "OVER") : "OK";
+    // Use formal CPV status if available, else fall back to legacy heuristic
+    const cpvRule = cpvByRule[c.cpvRule];
+    let badgeClass, badgeText;
+    if (cpvRule) {
+      badgeClass = cpvRule.status === "OK" ? "pass" :
+        cpvRule.status === "ADVISORY" ? "advisory" :
+        cpvRule.status === "WARN" ? "warn" : "fail";
+      badgeText = cpvRule.status + (cpvRule.breach_pp > 0 ? ` +${cpvRule.breach_pp.toFixed(2)}pp` : "");
+    } else {
+      const advisory = over && exceedance < 3;
+      badgeClass = over ? (advisory ? "advisory" : "fail") : "pass";
+      badgeText = over ? (advisory ? "ADVISORY" : "OVER") : "OK";
+    }
+    const color = over ? (badgeClass === "advisory" ? "var(--warn)" : "var(--fail)") : acColor(c.ac);
     const exceedanceNote = over
-      ? `<span style="font-size:0.75rem;color:${advisory?"var(--warn)":"var(--fail)"}"> (+${exceedance.toFixed(2)}pp drift)</span>`
+      ? `<span style="font-size:0.75rem;color:${color}"> (+${exceedance.toFixed(2)}pp drift)</span>`
       : "";
+    const tooltip = cpvRule ? ` title="${cpvRule.explanation.replace(/"/g, "'")}"` : "";
 
     return `<div style="margin-bottom:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -614,7 +685,7 @@ async function renderPortfolioCompliance(policy) {
         <span>
           <strong style="font-size:0.88rem;">${pct.toFixed(2)}%</strong>${exceedanceNote}
           <span style="font-size:0.8rem;color:var(--muted);"> / ${ceiling}% ceiling</span>
-          <span class="badge ${badgeClass}" style="margin-left:6px;">${badgeText}</span>
+          <span class="badge ${badgeClass}" style="margin-left:6px;"${tooltip}>${badgeText}</span>
         </span>
       </div>
       <div class="alloc-bar-bg" style="height:12px;">

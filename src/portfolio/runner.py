@@ -27,6 +27,11 @@ from typing import Optional
 
 from .alignment import compute_alignment, compute_concentration
 from .archetype import load_archetype_targets
+from .compliance_validator import (
+    compliance_result_to_dict,
+    load_compliance_tolerances,
+    validate_portfolio_compliance,
+)
 from .enrichment import enrich_holdings, normalize_and_aggregate_holdings
 from .ingestion import IngestionError, ingest_portfolio
 from .mandate import (
@@ -744,6 +749,27 @@ def run_analysis(
         holdings=investable,
     )
 
+    # ── CPV — Current Portfolio Compliance Validator (AI-001-OPTION-B) ─────
+    try:
+        import dataclasses as _dc_cpv
+        import yaml as _yaml_cpv
+        _policy_doc = _yaml_cpv.safe_load(
+            (_REPO_ROOT / "config" / "allocation_policy.yaml").read_text(encoding="utf-8")
+        ) or {}
+        _sp_block = dict(_policy_doc.get("structural_policy", {}))
+        _sp_block["asset_class_governance"] = _policy_doc.get("asset_class_governance", {})
+        _tols = load_compliance_tolerances(_REPO_ROOT / "config" / "allocation_policy.yaml")
+        portfolio_compliance = validate_portfolio_compliance(
+            alignment_rows=[_dc_cpv.asdict(r) for r in alignment],
+            policy=_sp_block,
+            tolerances=_tols,
+            run_id=run_id,
+            snapshot_date=snapshot_date,
+        )
+    except Exception as _cpv_exc:
+        portfolio_compliance = None
+        operational_warnings.append(f"CPV_EVALUATION_FAILED: {_cpv_exc}")
+
     # ── Phase F/G/H — Recommendations + security overlays ────────────────────
     overlays = build_security_overlays(
         portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
@@ -1119,7 +1145,13 @@ def run_analysis(
             ],
         }, fh, indent=2)
 
-    # run_metadata.json
+        # ── Write compliance.json ─────────────────────────────────────────────
+        if portfolio_compliance is not None:
+            compliance_dict = compliance_result_to_dict(portfolio_compliance)
+            with open(out_dir / "compliance.json", "w") as fh:
+                json.dump(compliance_dict, fh, indent=2)
+
+        # run_metadata.json
     analysis_run = PortfolioAnalysisRun(
         run_id=run_id,
         portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
@@ -1218,6 +1250,11 @@ def run_analysis(
             dataclasses.asdict(mi) for mi in mandate_interpretations
         ],
         "multi_dimensional_score": dataclasses.asdict(multi_dim_score),
+        # AI-001-OPTION-B — Current Portfolio Compliance (CPV)
+        "portfolio_compliance": (
+            compliance_result_to_dict(portfolio_compliance)
+            if portfolio_compliance is not None else None
+        ),
         "intentional_asymmetry": dataclasses.asdict(asymmetry),
         "cash_mandate_context": cash_mandate_context,
         # Phase 6.4 — Reconciliation

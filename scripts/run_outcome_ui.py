@@ -10,6 +10,7 @@ API endpoints:
   POST /api/portfolio/analyze      → ingest + enrich + align portfolio CSV; returns full analysis
   GET  /api/portfolio/runs         → list all completed portfolio analysis runs
   GET  /api/portfolio/runs/{id}    → load a specific analysis run by run_id
+  GET  /api/cpv/latest             → current portfolio compliance validator results
 """
 
 from __future__ import annotations
@@ -985,6 +986,39 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"status": "not_found", "symbol": sym})
             else:
                 self._json_response(job)
+        elif path == "/api/cpv/latest":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                import json as _json
+                # Find latest PAR compliance.json
+                manifest_path = _REPO_ROOT / "data/portfolio_ingestion/manifest.json"
+                compliance_payload = None
+                if manifest_path.exists():
+                    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+                    portfolios = [
+                        p for p in (manifest.get("portfolios") or [])
+                        if len(str(p.get("snapshot_date", "")).strip()) == 10
+                        and str(p.get("snapshot_date", "")).strip()[4:5] == "-"
+                    ]
+                    if portfolios:
+                        latest_run_id = max(
+                            portfolios,
+                            key=lambda p: (str(p.get("snapshot_date", "")), str(p.get("created_at_utc", ""))),
+                        ).get("run_id", "")
+                        compliance_path = (
+                            _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+                            / latest_run_id / "compliance.json"
+                        )
+                        if compliance_path.exists():
+                            compliance_payload = _json.loads(compliance_path.read_text(encoding="utf-8"))
+                if compliance_payload is None:
+                    self._json_response({"error": "No compliance data available"}, 404)
+                else:
+                    self._json_response(compliance_payload)
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
         elif path == "/api/portfolio/runs":
             try:
                 manifest_path = _REPO_ROOT / "data/portfolio_ingestion/manifest.json"
