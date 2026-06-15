@@ -99,6 +99,25 @@ _EXPLAINABILITY_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _trigger_pis_refresh_background(*, repo_root: Path) -> None:
+    """Fire-and-forget PIS derived-artifact refresh after a new snapshot is registered.
+
+    Runs in a daemon thread so it never blocks the analysis response path.
+    All exceptions are swallowed — failure here must never affect SIH processing.
+    """
+    import threading
+
+    def _run() -> None:
+        try:
+            from src.pis.refresh_orchestrator import trigger_startup_refresh
+            trigger_startup_refresh(repo_root=repo_root)
+        except Exception:
+            pass  # best-effort; never raise into caller
+
+    t = threading.Thread(target=_run, daemon=True, name="pis-post-ingestion-refresh")
+    t.start()
+
+
 def _register_pis_snapshot_best_effort(
     *,
     snapshot: PortfolioSnapshot,
@@ -128,6 +147,8 @@ def _register_pis_snapshot_best_effort(
         pis_registration["status"] = "REGISTERED" if pis_result.registered else "DUPLICATE" if pis_result.duplicate else "SKIPPED"
         if pis_result.warning:
             pis_warnings.append(f"PIS_SNAPSHOT_REGISTRATION_WARNING: {pis_result.warning}")
+        if pis_result.registered:
+            _trigger_pis_refresh_background(repo_root=_REPO_ROOT)
     except Exception as exc:
         pis_registration = {
             "status": "FAILED",
