@@ -146,6 +146,65 @@ def _count_unique(rows: List[Dict[str, object]], key: str) -> int:
     return len(values)
 
 
+def _coverage_rank(row: Dict[str, object]) -> int:
+    """Higher number = preferred.  STARMINE_COVERED with ESS text ranks highest."""
+    domain = str(row.get("coverage_domain") or "").strip()
+    ess = str(row.get("starmine_ess_text") or "").strip()
+    if domain == "STARMINE_COVERED" and ess:
+        return 2
+    if ess:
+        return 1
+    return 0
+
+
+def _build_merged_snapshot(
+    *,
+    snapshot_date: str,
+    history_root: Path,
+    extra_rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Return a merged, provider-order-independent signal snapshot for *snapshot_date*.
+
+    Collects all persisted partition rows for *snapshot_date* plus *extra_rows*
+    (the rows being appended in the current call, whose partition file may not
+    yet be readable).  For each symbol keeps the best-quality row (STARMINE_COVERED
+    with ESS text > any ESS text > no ESS text), breaking ties by latest
+    ``created_at_utc``.
+    """
+    all_rows: List[Dict[str, object]] = list(extra_rows)
+
+    # Collect rows from all existing partitions for this snapshot_date
+    date_dir = history_root / f"snapshot_date={snapshot_date}"
+    if date_dir.exists():
+        for run_dir in sorted(date_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            snap_file = run_dir / "signal_snapshots.csv"
+            if snap_file.exists():
+                all_rows.extend(_read_csv_rows(snap_file))
+
+    # Pick best row per symbol
+    best: Dict[str, Dict[str, object]] = {}
+    for row in all_rows:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        existing = best.get(sym)
+        if existing is None:
+            best[sym] = row
+        else:
+            r_rank = _coverage_rank(row)
+            e_rank = _coverage_rank(existing)
+            if r_rank > e_rank:
+                best[sym] = row
+            elif r_rank == e_rank:
+                # Tiebreak: later created_at_utc wins
+                if str(row.get("created_at_utc") or "") > str(existing.get("created_at_utc") or ""):
+                    best[sym] = row
+
+    return sorted(best.values(), key=lambda r: str(r.get("symbol") or ""))
+
+
 def append_signal_snapshots(
     *,
     normalized_records: Iterable[Dict[str, object]],
@@ -258,7 +317,22 @@ def append_signal_snapshots(
     storage_paths.partition_dir.mkdir(parents=True, exist_ok=False)
     _write_csv_rows(storage_paths.partition_signal_snapshots_path, SNAPSHOT_HEADERS, snapshot_rows)
     _write_csv_rows(storage_paths.partition_signal_lineage_path, LINEAGE_HEADERS, lineage_rows)
-    _write_csv_rows(storage_paths.current_signal_snapshot_path, SNAPSHOT_HEADERS, snapshot_rows)
+
+    # ── Option-A merge: rebuild signal_snapshot.csv from ALL partitions for this
+    # snapshot_date so that provider execution order cannot affect coverage results.
+    # Rules:
+    #   1. Include every partition for the current snapshot_date.
+    #   2. For each symbol keep the row whose coverage_domain is STARMINE_COVERED
+    #      (with a non-empty ess_text) over any NON_STARMINE_ANALYST row.
+    #   3. Among equal-quality rows, keep the one from the most recently created
+    #      partition (latest created_at_utc).
+    # This produces a deterministic merged view regardless of intake order.
+    merged = _build_merged_snapshot(
+        snapshot_date=snapshot_date,
+        history_root=Path(history_root),
+        extra_rows=snapshot_rows,
+    )
+    _write_csv_rows(storage_paths.current_signal_snapshot_path, SNAPSHOT_HEADERS, merged)
 
     index_entry = {
         "snapshot_date": snapshot_date,
