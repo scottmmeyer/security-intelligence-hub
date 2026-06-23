@@ -267,6 +267,7 @@
         <a href="/ui/portfolio_alignment/" class="top-link">Security Intelligence Hub</a>
         <a href="/ui/pis_dashboard/" class="top-link top-link-active">Portfolio Intelligence System (Beta)</a>
       </nav>
+      <span id="pisBuildMarkerHtml" style="display:none;">PIS_BUILD_HTML=2026-06-23-runtime-01</span>
 
       <section id="dashboardLoadingBanner" class="dashboard-banner" role="status" aria-live="polite">
         <div class="dashboard-banner-spinner" aria-hidden="true"></div>
@@ -300,6 +301,10 @@
           <article class="summary-card">
             <h3>Portfolio Trend</h3>
             <div id="portfolioTrendCard"></div>
+          </article>
+          <article class="summary-card full">
+            <h3>Performance Returns (Snapshot-Based)</h3>
+            <div id="performanceReturnsCard"></div>
           </article>
           <article class="summary-card">
             <h3>Latest Change Detection</h3>
@@ -649,6 +654,6 @@
         </section>
       </div>
     </div>
-    <script src="app.js"></script>
+    <script src="app.js?v=2026-06-23-runtime-01"></script>
   </body>
 </html>

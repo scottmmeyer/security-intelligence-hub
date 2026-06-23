@@ -1,6 +1,9 @@
 const SLOW_THRESHOLD_MS = 5000;
 const REQUEST_TIMEOUT_MS = 12000;
 const MIN_BANNER_VISIBLE_MS = 1200;
+const PIS_BUILD_JS = "2026-06-23-runtime-01";
+console.log("[PIS_BOOT] app.js loaded", { build: PIS_BUILD_JS });
+window.__PIS_BUILD_JS__ = PIS_BUILD_JS;
 
 const STATUS_LOADING = "LOADING";
 const STATUS_LOADED = "LOADED";
@@ -416,8 +419,6 @@ const SUBSYSTEM_DEFINITIONS = {
     label: "Allocation Policy Governance",
     sectionKeys: ["policyCurrent", "policyHistory", "policyDiff", "policyGovObs", "policyChangeSummary", "policyImpact", "policyTimeline"],
   },
-    sectionKeys: ["policyCurrent", "policyHistory", "policyDiff", "policyGovObs"],
-  },
   allocationCompliance: {
     label: "Allocation Compliance Intelligence",
     sectionKeys: ["complianceSummary", "complianceLeaderboard", "complianceViolations", "complianceBest"],
@@ -430,6 +431,7 @@ const SUBSYSTEM_DEFINITIONS = {
 
 const requestCache = new Map();
 const sectionStates = {};
+const sectionErrors = {};
 const subsystemStates = {};
 let dashboardStartedAt = 0;
 let bannerHideTimerId = null;
@@ -473,17 +475,38 @@ function asPercent(value) {
   return `${num.toFixed(2)}%`;
 }
 
+function asSignedPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
+}
+
+function escHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function elapsedSeconds() {
   return ((Date.now() - dashboardStartedAt) / 1000).toFixed(1);
+}
+
+function getHtmlBuildMarker() {
+  const markerNode = document.getElementById("pisBuildMarkerHtml");
+  return markerNode ? String(markerNode.textContent || "").trim() : "UNKNOWN";
 }
 
 function formatErrorReason(error) {
   if (!error) return "Unknown error.";
   const message = error.message || String(error);
+  const requestPath = error.requestPath ? `Endpoint: ${error.requestPath}. ` : "";
   if (message.includes("Request timeout")) {
-    return "Request timed out while waiting for the server.";
+    return `${requestPath}Request timed out while waiting for the server.`;
   }
-  return message;
+  return `${requestPath}${message}`;
 }
 
 function renderEmpty(targetId, message) {
@@ -530,16 +553,36 @@ function renderTable(targetId, headers, rows) {
 
 async function loadJson(path, timeoutMs = REQUEST_TIMEOUT_MS) {
   const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(`Request timeout after ${timeoutMs}ms for ${path}`)), timeoutMs);
+    setTimeout(() => {
+      const timeoutError = new Error(`Request timeout after ${timeoutMs}ms for ${path}`);
+      timeoutError.requestPath = path;
+      reject(timeoutError);
+    }, timeoutMs);
   });
-  const response = await Promise.race([
-    fetch(path, { cache: "no-store" }),
-    timeoutPromise,
-  ]);
-  if (!response.ok) {
-    throw new Error(`Failed to load ${path} (HTTP ${response.status})`);
+  let response;
+  try {
+    response = await Promise.race([
+      fetch(path, { cache: "no-store" }),
+      timeoutPromise,
+    ]);
+  } catch (error) {
+    if (error && !error.requestPath) {
+      error.requestPath = path;
+    }
+    throw error;
   }
-  return response.json();
+  if (!response.ok) {
+    const httpError = new Error(`Failed to load ${path} (HTTP ${response.status})`);
+    httpError.requestPath = path;
+    throw httpError;
+  }
+  try {
+    return await response.json();
+  } catch (_error) {
+    const parseError = new Error(`Invalid JSON response from ${path}`);
+    parseError.requestPath = path;
+    throw parseError;
+  }
 }
 
 function requestJson(path) {
@@ -593,6 +636,17 @@ function renderDashboardStatusPanel() {
   const anyFailed = statuses.some((status) => status === STATUS_FAILED);
   const anySlow = statuses.some((status) => status === STATUS_SLOW);
   const allLoaded = statuses.length > 0 && statuses.every((status) => status === STATUS_LOADED);
+  const totalSections = Object.keys(SECTION_DEFINITIONS).length;
+  const completedSections = Object.values(sectionStates).filter((status) => status === STATUS_LOADED || status === STATUS_FAILED).length;
+  const failedSections = Object.values(sectionStates).filter((status) => status === STATUS_FAILED).length;
+  const fullyCompleted = totalSections > 0 && completedSections >= totalSections;
+  const loadOutcome = !fullyCompleted
+    ? "Loading"
+    : anyFailed
+      ? "Loaded with unavailable sections"
+      : anySlow
+        ? "Loaded with warnings"
+        : "Loaded";
   const overallLabel = anyFailed || anySlow ? "⚠ Degraded" : allLoaded ? "✓ Healthy" : "⟳ Loading";
   const overallClass = anyFailed || anySlow ? "section-badge-slow" : allLoaded ? "section-badge-loaded" : "section-badge-loading";
 
@@ -606,16 +660,106 @@ function renderDashboardStatusPanel() {
     `;
   }).join("");
 
+  const failedDiagnostics = Object.entries(sectionErrors)
+    .filter(([, error]) => Boolean(error))
+    .map(([sectionKey, error]) => {
+      const label = (SECTION_DEFINITIONS[sectionKey] && SECTION_DEFINITIONS[sectionKey].label) || sectionKey;
+      return `<li class="metric-item"><span>${label}</span><strong>${formatErrorReason(error)}</strong></li>`;
+    })
+    .join("");
+
+  const firstFailedEntry = Object.entries(sectionErrors).find(([, error]) => Boolean(error));
+  const firstFailedSection = firstFailedEntry ? firstFailedEntry[0] : "-";
+  const firstFailedEndpoint = firstFailedEntry && firstFailedEntry[1] && firstFailedEntry[1].requestPath
+    ? String(firstFailedEntry[1].requestPath)
+    : "-";
+  const firstFailedMessage = firstFailedEntry ? formatErrorReason(firstFailedEntry[1]) : "-";
+  const cacheBusted = window.location.search.includes("v=") ? "YES" : "NO";
+
+  const diagnosticsHtml = failedDiagnostics
+    ? `
+      <details class="detail-toggle" style="margin-top:12px;">
+        <summary>Section diagnostics</summary>
+        <ul class="metric-list" style="margin-top:8px;">${failedDiagnostics}</ul>
+      </details>
+    `
+    : `<p class="status-note" style="margin-top:10px;">No section-level diagnostics to report.</p>`;
+
+  const bootInfoHtml = `
+    <ul class="metric-list" style="margin-top:10px;">
+      <li class="metric-item"><span>JS build marker</span><strong>${PIS_BUILD_JS}</strong></li>
+      <li class="metric-item"><span>HTML build marker</span><strong>${getHtmlBuildMarker() || "UNKNOWN"}</strong></li>
+      <li class="metric-item"><span>Sections planned</span><strong>${totalSections}</strong></li>
+      <li class="metric-item"><span>Sections completed</span><strong>${completedSections}</strong></li>
+      <li class="metric-item"><span>Sections failed</span><strong>${failedSections}</strong></li>
+      <li class="metric-item"><span>First failed section</span><strong>${firstFailedSection}</strong></li>
+      <li class="metric-item"><span>Failed endpoint</span><strong>${firstFailedEndpoint}</strong></li>
+      <li class="metric-item"><span>First failure message</span><strong>${firstFailedMessage}</strong></li>
+      <li class="metric-item"><span>Cache-busted URL detected</span><strong>${cacheBusted}</strong></li>
+    </ul>
+  `;
+
   node.innerHTML = `
     <div class="dashboard-status-header">
       <div>
         <h2>System Status</h2>
         <p class="subtitle">Current subsystem visibility across dashboard sections.</p>
         <div class="health-overall"><span class="section-badge ${overallClass}">${overallLabel}</span></div>
+        <p class="status-note">Dashboard load outcome: <strong>${loadOutcome}</strong></p>
       </div>
     </div>
     <ul class="dashboard-status-list">${rows}</ul>
+    ${bootInfoHtml}
+    ${diagnosticsHtml}
   `;
+}
+
+function renderStartupFailure(error) {
+  const banner = document.getElementById("dashboardLoadingBanner");
+  const statusPanel = document.getElementById("dashboardStatusPanel");
+  const stack = String((error && error.stack) || "").split("\n").slice(0, 5).join("\n");
+  const message = formatErrorReason(error);
+
+  if (banner) {
+    banner.classList.remove("hidden");
+    banner.innerHTML = `
+      <div>
+        <div class="dashboard-banner-title">Dashboard failed during startup</div>
+        <div class="dashboard-banner-text">${message}</div>
+        <div class="dashboard-banner-meta">JS build: ${PIS_BUILD_JS} | HTML build: ${getHtmlBuildMarker() || "UNKNOWN"}</div>
+      </div>
+    `;
+  }
+
+  if (statusPanel) {
+    statusPanel.innerHTML = `
+      <div class="dashboard-status-header">
+        <div>
+          <h2>Startup Failure Diagnostics</h2>
+          <p class="subtitle">Dashboard failed during startup.</p>
+          <div class="health-overall"><span class="section-badge section-badge-failed">FAILED</span></div>
+        </div>
+      </div>
+      <ul class="metric-list" style="margin-top:10px;">
+        <li class="metric-item"><span>Message</span><strong>${message}</strong></li>
+        <li class="metric-item"><span>JS build marker</span><strong>${PIS_BUILD_JS}</strong></li>
+        <li class="metric-item"><span>HTML build marker</span><strong>${getHtmlBuildMarker() || "UNKNOWN"}</strong></li>
+        <li class="metric-item"><span>Sections planned</span><strong>${Object.keys(SECTION_DEFINITIONS).length}</strong></li>
+        <li class="metric-item"><span>Sections completed</span><strong>0</strong></li>
+      </ul>
+      <details class="detail-toggle" open>
+        <summary>Startup stack trace (first 5 lines)</summary>
+        <pre style="white-space:pre-wrap;font-size:0.8rem;">${stack || "No stack trace available."}</pre>
+      </details>
+    `;
+  }
+
+  console.error("[PIS_BOOT] startup failed", {
+    build: PIS_BUILD_JS,
+    htmlBuild: getHtmlBuildMarker(),
+    message,
+    stack,
+  });
 }
 
 function extractReasonTokens(raw) {
@@ -717,6 +861,71 @@ function renderPortfolioTrendCard() {
   `;
 }
 
+function _timelineReturn(points, days) {
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const latest = points[0];
+  const targetMs = latest.date.getTime() - (days * 24 * 60 * 60 * 1000);
+  const baseline = points.find((point) => point.date.getTime() <= targetMs);
+  if (!baseline || baseline.value === 0) return null;
+  return ((latest.value - baseline.value) / baseline.value) * 100;
+}
+
+function renderPerformanceReturnsCard() {
+  const node = document.getElementById("performanceReturnsCard");
+  if (!node) return;
+
+  const points = (executiveState.timeline || [])
+    .map((row) => {
+      const value = Number(row.portfolio_value);
+      const snapshotDate = String(row.snapshot_date || "");
+      const dateObj = new Date(snapshotDate);
+      if (!Number.isFinite(value) || Number.isNaN(dateObj.getTime())) return null;
+      return { value, date: dateObj, snapshotDate };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  if (points.length < 2) {
+    node.innerHTML = `
+      <ul class="metric-list">
+        <li class="metric-item"><span>Performance Status</span><strong>Unavailable / validation pending</strong></li>
+        <li class="metric-item"><span>Reason</span><strong>Insufficient snapshot history</strong></li>
+        <li class="metric-item"><span>Performance Confidence</span><strong>Unavailable</strong></li>
+      </ul>
+      <p class="status-note">Performance return is shown as a snapshot-based estimate because external cash flows have not yet been fully reconciled. Do not treat as final performance attribution.</p>
+    `;
+    return;
+  }
+
+  const latest = points[0];
+  const start = points[points.length - 1];
+  const absoluteChange = latest.value - start.value;
+  const totalReturn = start.value !== 0 ? ((absoluteChange / start.value) * 100) : null;
+  const return1d = _timelineReturn(points, 1);
+  const return5d = _timelineReturn(points, 5);
+  const return1m = _timelineReturn(points, 30);
+
+  const benchmarkLatest = (executiveState.benchmarkLatest || {}).latest_portfolio_excess_return || {};
+  const benchmarkExcess = Number(benchmarkLatest.excess_return_pct);
+
+  node.innerHTML = `
+    <ul class="metric-list">
+      <li class="metric-item"><span>Latest Portfolio Value</span><strong>${asCurrency(latest.value)}</strong></li>
+      <li class="metric-item"><span>Start Value (first snapshot)</span><strong>${asCurrency(start.value)}</strong></li>
+      <li class="metric-item"><span>Absolute Gain/Loss</span><strong>${asSignedCurrency(absoluteChange)}</strong></li>
+      <li class="metric-item"><span>Total Return</span><strong>${Number.isFinite(totalReturn) ? asSignedPercent(totalReturn) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>1D Return</span><strong>${Number.isFinite(return1d) ? asSignedPercent(return1d) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>5D Return</span><strong>${Number.isFinite(return5d) ? asSignedPercent(return5d) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>1M Return</span><strong>${Number.isFinite(return1m) ? asSignedPercent(return1m) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>Since Inception Return</span><strong>${Number.isFinite(totalReturn) ? asSignedPercent(totalReturn) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>Benchmark Comparison (excess)</span><strong>${Number.isFinite(benchmarkExcess) ? asSignedPercent(benchmarkExcess) : "Unavailable / validation pending"}</strong></li>
+      <li class="metric-item"><span>Performance Confidence</span><strong>Snapshot-based estimate (cash-flow-unadjusted)</strong></li>
+    </ul>
+    <p class="status-note">Performance return is shown as a snapshot-based estimate because external cash flows have not yet been fully reconciled. Do not treat as final performance attribution.</p>
+    <p class="status-note">Window anchor: ${latest.snapshotDate} vs ${start.snapshotDate}.</p>
+  `;
+}
+
 function renderChangeDetectionSummaryCard() {
   const node = document.getElementById("changeDetectionSummaryCard");
   if (!node) return;
@@ -797,6 +1006,7 @@ function renderExecutiveCards() {
   renderGovernanceSummaryCard();
   renderCanonicalSelectionCard();
   renderPortfolioTrendCard();
+  renderPerformanceReturnsCard();
   renderChangeDetectionSummaryCard();
   renderLineageSummaryCard();
   renderAttributionSummaryCard();
@@ -1004,6 +1214,7 @@ function setSectionState(sectionKey, status, error = null) {
 }
 
 function beginSection(sectionKey) {
+  sectionErrors[sectionKey] = null;
   setSectionState(sectionKey, STATUS_LOADING);
 }
 
@@ -1014,6 +1225,7 @@ function markSectionSlow(sectionKey) {
 }
 
 function completeSection(sectionKey) {
+  sectionErrors[sectionKey] = null;
   sectionStates[sectionKey] = STATUS_LOADED;
   updateSectionBadge(sectionKey, STATUS_LOADED);
   updateSubsystemStatuses();
@@ -1021,6 +1233,7 @@ function completeSection(sectionKey) {
 }
 
 function failSection(sectionKey, error) {
+  sectionErrors[sectionKey] = error || new Error("Unknown section failure.");
   setSectionState(sectionKey, STATUS_FAILED, error);
 }
 
@@ -1035,6 +1248,11 @@ function runSectionTask(sectionKey, requestFactory, onSuccess) {
     })
     .catch((error) => {
       clearTimeout(slowTimer);
+      console.error(`[PIS Dashboard] Section ${sectionKey} failed`, {
+        sectionKey,
+        endpoint: error && error.requestPath ? error.requestPath : null,
+        message: error && error.message ? error.message : String(error),
+      });
       failSection(sectionKey, error);
     });
 }
@@ -2358,6 +2576,7 @@ function initializeDashboardShell() {
   requestCache.clear();
   Object.keys(SECTION_DEFINITIONS).forEach((sectionKey) => {
     sectionStates[sectionKey] = STATUS_LOADING;
+    sectionErrors[sectionKey] = null;
   });
   ensureSectionBadges();
   Object.keys(SECTION_DEFINITIONS).forEach((sectionKey) => {
@@ -2366,12 +2585,17 @@ function initializeDashboardShell() {
   });
   updateSubsystemStatuses();
   updateDashboardBanner();
-  ["executiveKpiHeader", "governanceSummaryCard", "canonicalSelectionCard", "portfolioTrendCard", "changeDetectionSummaryCard", "lineageSummaryCard", "attributionSummaryCard", "benchmarkSummaryCard"].forEach((id) => {
+  ["executiveKpiHeader", "governanceSummaryCard", "canonicalSelectionCard", "portfolioTrendCard", "performanceReturnsCard", "changeDetectionSummaryCard", "lineageSummaryCard", "attributionSummaryCard", "benchmarkSummaryCard"].forEach((id) => {
     renderLoading(id, "Loading executive summary...");
   });
 }
 
 function initialize() {
+  console.log("[PIS_BOOT] initializeDashboard start", {
+    build: PIS_BUILD_JS,
+    sectionsPlanned: Object.keys(SECTION_DEFINITIONS).length,
+    htmlBuild: getHtmlBuildMarker(),
+  });
   initializeDashboardShell();
 
   runSectionTask("inventory", () => requestJson("/api/pis/snapshots"), (snapshotsPayload) => {
@@ -2785,4 +3009,19 @@ function renderMeiEventImpact(payload) {
   </div>`;
 }
 
-initialize();
+function bootstrapDashboard() {
+  try {
+    console.log("[PIS_BOOT] bootstrapDashboard invoked", { build: PIS_BUILD_JS });
+    initialize();
+  } catch (error) {
+    renderStartupFailure(error);
+  }
+}
+
+if (document.readyState === "loading") {
+  console.log("[PIS_BOOT] DOMContentLoaded registered", { build: PIS_BUILD_JS });
+  document.addEventListener("DOMContentLoaded", bootstrapDashboard, { once: true });
+} else {
+  console.log("[PIS_BOOT] DOM already ready, booting immediately", { build: PIS_BUILD_JS });
+  bootstrapDashboard();
+}
