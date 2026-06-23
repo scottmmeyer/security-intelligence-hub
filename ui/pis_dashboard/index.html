@@ -475,6 +475,178 @@
           <h2>Benchmark Attribution Section 6: Benchmark Quality Summary</h2>
           <div id="benchmarkQuality"></div>
         </section>
+
+        <section class="panel full" data-section-key="driftSummary">
+          <h2>Allocation Drift Trends: Summary</h2>
+          <div id="driftSummaryCards"></div>
+          <div id="driftObservations" style="margin-top:12px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="driftTrendTable">
+          <h2>Allocation Drift Trends: Node Trend Table</h2>
+          <div id="driftTrendTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="driftWorsening">
+          <h2>Allocation Drift Trends: Top Worsening Nodes</h2>
+          <div id="driftWorseningTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="driftImproving">
+          <h2>Allocation Drift Trends: Top Improving Nodes</h2>
+          <div id="driftImprovingTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="actionAttributionSummary">
+          <h2>Recommendation Action Attribution: Summary</h2>
+          <div id="actionAttributionSummaryCards"></div>
+          <div id="actionAttributionObservations" style="margin-top:10px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="actionAttributionTable">
+          <h2>Recommendation Action Attribution: Action Status</h2>
+          <div id="actionAttributionTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="actionAttributionSources">
+          <h2>Recommendation Action Attribution: Source Effectiveness</h2>
+          <div id="actionAttributionSourcesTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="actionAttributionMissed">
+          <h2>Recommendation Action Attribution: Missed Opportunities</h2>
+          <div id="actionAttributionMissedTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="dorSummary">
+          <h2>Dislocation Outcome Review: Summary</h2>
+          <div id="dorSummaryCards"></div>
+          <div id="dorObservations" style="margin-top:12px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="dorCohorts">
+          <h2>Dislocation Outcome Review: UCF Cohort Performance</h2>
+          <div id="dorCohortTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="dorMissedWinners">
+          <h2>Dislocation Outcome Review: Top Missed Winners</h2>
+          <div id="dorMissedWinnersTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="dorFollowedWinners">
+          <h2>Dislocation Outcome Review: Top Followed Winners</h2>
+          <div id="dorFollowedWinnersTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="policyCurrent">
+          <h2>Allocation Policy Governance: Current Policy</h2>
+          <div id="policyCurrentCards"></div>
+          <div id="policyCurrentNodes" class="table-wrap" style="margin-top:10px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="policyHistory">
+          <h2>Allocation Policy Governance: Version Timeline</h2>
+          <div id="policyHistoryTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="policyDiff">
+          <h2>Allocation Policy Governance: Policy Diff Viewer</h2>
+          <div id="policyDiffTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="policyGovObs">
+          <h2>Allocation Policy Governance: Governance Observations</h2>
+          <div id="policyGovObs"></div>
+        </section>
+
+        <!-- AI-004B: Policy Change Intelligence -->
+        <section class="panel full" data-section-key="policyChangeSummary">
+          <h2>Policy Change Intelligence: Change Summary &amp; Notifications</h2>
+          <div id="policyChangeSummaryEl"></div>
+        </section>
+        <section class="panel full" data-section-key="policyImpact">
+          <h2>Policy Change Intelligence: Recommendation Impact &amp; Before/After</h2>
+          <div id="policyImpactEl"></div>
+        </section>
+        <section class="panel full" data-section-key="policyTimeline">
+          <h2>Policy Change Intelligence: Policy Timeline</h2>
+          <div id="policyTimelineEl" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="complianceSummary">
+          <h2>Allocation Compliance Intelligence: Summary</h2>
+          <div id="complianceSummaryCards"></div>
+          <div id="complianceTopViolations" style="margin-top:10px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="complianceLeaderboard">
+          <h2>Allocation Compliance Intelligence: Leaderboard</h2>
+          <div id="complianceLeaderboardTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="complianceViolations">
+          <h2>Allocation Compliance Intelligence: Persistent Violations</h2>
+          <div id="complianceViolationsTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel" data-section-key="complianceBest">
+          <h2>Allocation Compliance Intelligence: Most Compliant Nodes</h2>
+          <div id="complianceBestTable" class="table-wrap"></div>
+        </section>
+
+        <!-- MEI: Market Event Intelligence -->
+        <section class="panel full" data-section-key="meiCalendarSummary">
+          <h2>Market Event Intelligence: Event Calendar</h2>
+          <div id="meiCalendarCards"></div>
+          <div id="meiCalendarObservations" style="margin-top:10px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiCalendarTable">
+          <h2>Market Event Intelligence: Upcoming Events (Next 14 Days)</h2>
+          <div id="meiCalendarTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiExposuresSummary">
+          <h2>Market Event Intelligence: Portfolio Exposure Summary</h2>
+          <div id="meiExposuresSummaryCards"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiExposuresTable">
+          <h2>Market Event Intelligence: Event Exposure Detail</h2>
+          <div id="meiExposuresTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiContextSummary">
+          <h2>Market Event Intelligence: Recommendation Event Context</h2>
+          <div id="meiContextSummaryCards"></div>
+          <div id="meiContextObservations" style="margin-top:10px;"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiContextTable">
+          <h2>Market Event Intelligence: Recommendation Context Detail</h2>
+          <div id="meiContextTable" class="table-wrap"></div>
+        </section>
+
+        <section class="panel full" data-section-key="meiHistory">
+          <h2>Market Event Intelligence: Event Impact History</h2>
+          <div id="meiHistoryCards"></div>
+          <div id="meiHistoryTable" class="table-wrap" style="margin-top:10px;"></div>
+        </section>
+
+        <!-- MEI-002: Event Outcome Attribution -->
+        <section class="panel full" data-section-key="meiOutcomeSummary">
+          <h2>MEI-002 — Event Outcome Review</h2>
+          <div id="meiOutcomeCards"></div>
+        </section>
+        <section class="panel full" data-section-key="meiOutcomeTable">
+          <h2>Historical Event Outcomes</h2>
+          <div id="meiOutcomeTable" class="table-wrap"></div>
+        </section>
+        <section class="panel full" data-section-key="meiEventImpact">
+          <h2>Event Type Effectiveness</h2>
+          <div id="meiEventImpactTable" class="table-wrap"></div>
+        </section>
       </div>
     </div>
     <script src="app.js"></script>
