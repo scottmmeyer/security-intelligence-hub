@@ -513,6 +513,19 @@
         </div>
       </div>
 
+      <!-- ─── Section 6b: Allocation Drift Trends (PA-006A) ─── -->
+      <div class="panel" id="section-drift-trends" style="display:none;">
+        <div class="card-header" onclick="toggleCard('drift-trends-body','drift-trends-toggle')">
+          <h2>Allocation Drift Trends</h2>
+          <button class="toggle-btn" id="drift-trends-toggle">▲ collapse</button>
+        </div>
+        <div class="card-body" id="drift-trends-body">
+          <div id="drift-summary-banner"></div>
+          <div id="drift-trend-table-wrap"></div>
+          <p id="drift-empty" class="empty-state" style="display:none;">No drift history available. Upload portfolios on multiple dates to see trend data.</p>
+        </div>
+      </div>
+
       <!-- ─── Section 7: Allocation Recommendation ─── -->
       <div class="panel" id="section-recommendation" style="display:none;">
         <div class="card-header" onclick="toggleCard('recommendation-body','recommendation-toggle')">

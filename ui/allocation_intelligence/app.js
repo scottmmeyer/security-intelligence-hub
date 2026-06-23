@@ -697,6 +697,114 @@ async function renderPortfolioCompliance(policy) {
   show("section-portfolio-compliance");
 }
 
+// ─── Section 6C: Allocation Drift Trends (PA-006A) ───────────────────────────
+
+async function renderDriftTrends() {
+  const bannerEl = document.getElementById("drift-summary-banner");
+  const tableEl  = document.getElementById("drift-trend-table-wrap");
+  const emptyEl  = document.getElementById("drift-empty");
+  if (!bannerEl || !tableEl) return;
+
+  let data = null;
+  try {
+    data = await fetchJson("/api/drift/summary");
+  } catch (_) {}
+
+  if (!data || !data.cpv_trend || data.cpv_trend.length === 0) {
+    if (emptyEl) emptyEl.style.display = "";
+    return;
+  }
+
+  show("section-drift-trends");
+  if (emptyEl) emptyEl.style.display = "none";
+
+  // ── View 4: Drift Summary Banner ──────────────────────────────────────────
+  const violating = data.cpv_trend.filter(r => r.current_status === "WARN" || r.current_status === "FAIL");
+  const bannerSeverity = violating.some(r => r.current_status === "FAIL") ? "fail" : violating.length > 0 ? "warn" : "pass";
+  const improvingCount = data.cpv_trend.filter(r => r.trend_direction === "IMPROVING").length;
+  const worseningCount = data.cpv_trend.filter(r => r.trend_direction === "WORSENING").length;
+
+  let bannerHtml = `<div class="dataset-source-banner source-actual" style="margin-bottom:12px;">`;
+  if (violating.length === 0) {
+    bannerHtml += `✅ <strong>Allocation Drift:</strong> All CPV rules within policy. Compliance score: <strong>${data.current_compliance_score}/100</strong>.`;
+  } else {
+    const violNames = violating.map(r => `${r.rule_id} <span class="badge ${bannerSeverity}">${r.current_status}</span>`).join(" · ");
+    bannerHtml += `⚠️ <strong>Allocation Drift — ${data.current_date}</strong>: ${violNames}`;
+    bannerHtml += ` &nbsp;·&nbsp; Compliance score: <strong>${data.current_compliance_score}/100</strong>`;
+    if (data.prior_date) {
+      bannerHtml += ` &nbsp;·&nbsp; vs ${data.prior_date}: `;
+      if (improvingCount > 0) bannerHtml += `<span style="color:var(--pass)">↓ ${improvingCount} improving</span> `;
+      if (worseningCount > 0) bannerHtml += `<span style="color:var(--fail)">↑ ${worseningCount} worsening</span>`;
+    }
+  }
+  bannerHtml += `</div>`;
+  bannerEl.innerHTML = bannerHtml;
+
+  // ── View 1: CPV Trend Table ───────────────────────────────────────────────
+  const STATUS_ICONS = { FAIL: "✖", WARN: "⚠", ADVISORY: "◆", OK: "✓" };
+  const STATUS_COLORS = { FAIL: "var(--fail)", WARN: "var(--warn)", ADVISORY: "#e6a817", OK: "var(--pass)" };
+  const TREND_ARROWS = { IMPROVING: "↓", WORSENING: "↑", STABLE: "→", UNKNOWN: "—" };
+  const TREND_COLORS = { IMPROVING: "var(--pass)", WORSENING: "var(--fail)", STABLE: "var(--muted)", UNKNOWN: "var(--muted)" };
+
+  function fmtDelta(pp) {
+    if (pp === null || pp === undefined) return '<span style="color:var(--muted)">—</span>';
+    const sign = pp > 0 ? "+" : "";
+    const color = Math.abs(pp) < 0.5 ? "var(--muted)" : (pp > 0 ? "var(--fail)" : "var(--pass)");
+    return `<span style="color:${color}">${sign}${pp.toFixed(2)}pp</span>`;
+  }
+
+  function statusCell(status) {
+    if (!status) return '<span style="color:var(--muted)">—</span>';
+    const icon = STATUS_ICONS[status] || status;
+    const col  = STATUS_COLORS[status] || "inherit";
+    return `<span style="color:${col};font-weight:600;">${icon} ${status}</span>`;
+  }
+
+  let tableHtml = `
+    <div class="table-scroll" style="margin-top:8px;">
+      <table class="data-table" style="font-size:0.82rem;">
+        <thead><tr>
+          <th>Rule</th>
+          <th>Policy</th>
+          <th>Current</th>
+          <th>Prior</th>
+          <th>7d Delta</th>
+          <th>30d Delta</th>
+          <th>Trend</th>
+          <th>Status</th>
+        </tr></thead><tbody>`;
+
+  for (const rule of data.cpv_trend) {
+    const limitStr = rule.rule_type === "ceiling"
+      ? `≤${rule.policy_limit_pct}%`
+      : `≥${rule.policy_limit_pct}%`;
+    const trendArrow = TREND_ARROWS[rule.trend_direction] || "—";
+    const trendColor = TREND_COLORS[rule.trend_direction] || "inherit";
+    const rowBg = (rule.current_status === "FAIL") ? "rgba(220,53,69,0.07)"
+                : (rule.current_status === "WARN") ? "rgba(255,165,0,0.07)" : "";
+
+    tableHtml += `<tr style="background:${rowBg}">
+      <td><strong>${rule.rule_id}</strong><br><span style="color:var(--muted);font-size:0.78rem">${rule.name}</span></td>
+      <td style="white-space:nowrap">${limitStr}</td>
+      <td style="white-space:nowrap;font-weight:600">${rule.current_pct.toFixed(2)}%</td>
+      <td style="white-space:nowrap;color:var(--muted)">${rule.prior_pct !== null && rule.prior_pct !== undefined ? rule.prior_pct.toFixed(2) + "%" : "—"}</td>
+      <td style="white-space:nowrap">${fmtDelta(rule.delta_7d_pp)}</td>
+      <td style="white-space:nowrap">${fmtDelta(rule.delta_30d_pp)}</td>
+      <td style="white-space:nowrap;color:${trendColor};font-weight:600">${trendArrow} ${rule.trend_direction}</td>
+      <td style="white-space:nowrap">${statusCell(rule.current_status)}</td>
+    </tr>`;
+  }
+
+  tableHtml += `</tbody></table></div>`;
+  tableHtml += `<p style="margin-top:6px;font-size:0.75rem;color:var(--muted)">
+    Based on ${data.dates_available} compliance record${data.dates_available !== 1 ? "s" : ""} available.
+    Current: ${data.current_date}${data.prior_date ? " · Prior: " + data.prior_date : ""}.
+    Trend computed from 7-day delta where available.
+  </p>`;
+
+  tableEl.innerHTML = tableHtml;
+}
+
 // ─── Section 7: Allocation Recommendation ────────────────────────────────────
 
 let recommendationChart = null;
@@ -917,6 +1025,7 @@ async function loadAllData() {
   renderTargets(state.targets);
   renderConcentration(state.targets, state.policy);
   renderPortfolioCompliance(state.policy);  // AI-001 Option D: actual portfolio vs policy
+  renderDriftTrends();                       // PA-006A: allocation drift trend visibility
   renderRecommendation(state.recommendations, state.targets);
   renderHistory(state.manifest);
 

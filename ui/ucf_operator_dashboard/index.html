@@ -376,6 +376,7 @@
 
 </div><!-- /.shell -->
 
+<script src="../signal_translation_registry.js?v=1"></script>
 <script>
 "use strict";
 // ─────────────────────────────────────────────────────────────────────────────
@@ -744,11 +745,20 @@ function renderSignalDivergence(ucfBySymbol, fidBySymbol, ovBySymbol, acBySymbol
     const essDir    = dirSpan(matrix.ess_direction);
     const yahooDir  = dirSpan(matrix.yahoo_direction);
     const zacksDir  = dirSpan(matrix.zacks_direction);
-    const danelfin  = ov.danelfin_score != null
-      ? `<span style="font-weight:700">${parseFloat(ov.danelfin_score).toFixed(1)}</span>`
-      : `<span style="color:var(--muted)">—</span>`;
-    const abrLbl    = ac ? esc(ac.consensus_label || "—") : "—";
-    const essText   = esc(ov.ess_score_text || fs.ess_text || "—");
+
+    // SIGNAL-UX-01 — native translations for conflict display
+    const _tZ  = typeof _sihZacksTranslate    !== "undefined" ? _sihZacksTranslate(ov.zacks_rating) : null;
+    const _tD  = typeof _sihDanelfinTranslate !== "undefined" ? _sihDanelfinTranslate(ov.danelfin_score) : null;
+    const _tE  = typeof _sihEssTranslate      !== "undefined" ? _sihEssTranslate(ov.ess_score_text || fs.ess_text) : null;
+    const _tA  = (ac && typeof _sihAnalystConsensusTranslate !== "undefined") ? _sihAnalystConsensusTranslate(ac.abr, ac.consensus_label) : null;
+
+    const danelfinCell = _tD
+      ? `<span style="font-weight:700">${esc(_tD.nativeRating)}</span> <span style="font-size:0.70rem;color:var(--muted)">${esc(_tD.meaning)} (${_tD.normalizedScore})</span>`
+      : (ov.danelfin_score != null ? `<span style="font-weight:700">${parseFloat(ov.danelfin_score).toFixed(1)}</span>` : `<span style="color:var(--muted)">—</span>`);
+
+    const abrLbl    = _tA ? `${esc(_tA.nativeRating)} · ${esc(_tA.meaning)}` : (ac ? esc(ac.consensus_label || "—") : "—");
+    const essNative = _tE ? esc(_tE.meaning) : esc(ov.ess_score_text || fs.ess_text || "—");
+    const zacksNative = _tZ ? `${esc(_tZ.nativeRating)} ${esc(_tZ.meaning)}` : "";
     const conflictFlags = flagChips(ucf.conflict_flags);
 
     return `<tr>
@@ -759,20 +769,21 @@ function renderSignalDivergence(ucfBySymbol, fidBySymbol, ovBySymbol, acBySymbol
           <div class="sig-stack-cell">
             <div class="sig-stack-lbl">ESS (Fidelity)</div>
             <div class="sig-stack-val">${essDir}</div>
-            <div style="font-size:0.68rem;color:var(--muted)">${essText}</div>
+            <div style="font-size:0.68rem;color:var(--muted)">${essNative}${_tE ? ' · Norm. ' + _tE.normalizedScore : ''}</div>
           </div>
           <div class="sig-stack-cell">
             <div class="sig-stack-lbl">Yahoo ABR</div>
             <div class="sig-stack-val">${yahooDir}</div>
-            <div style="font-size:0.68rem">${abrLbl}</div>
+            <div style="font-size:0.68rem">${abrLbl}${_tA ? ' · Norm. ' + _tA.normalizedScore : ''}</div>
           </div>
           <div class="sig-stack-cell">
             <div class="sig-stack-lbl">Zacks</div>
             <div class="sig-stack-val">${zacksDir}</div>
+            <div style="font-size:0.68rem;color:var(--muted)">${zacksNative}</div>
           </div>
           <div class="sig-stack-cell">
             <div class="sig-stack-lbl">Danelfin</div>
-            <div class="sig-stack-val">${danelfin}</div>
+            <div class="sig-stack-val">${danelfinCell}</div>
           </div>
         </div>
       </td>
