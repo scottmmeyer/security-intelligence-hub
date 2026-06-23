@@ -60,6 +60,15 @@ def _has_fresh_starmine(rows: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _has_non_starmine_analyst_coverage(rows: list[dict[str, Any]]) -> bool:
+    """Check if any row explicitly marks this symbol as non-StarMine analyst covered."""
+    for row in rows:
+        domain = str(row.get("coverage_domain") or "").strip().upper()
+        if domain == "NON_STARMINE_ANALYST":
+            return True
+    return False
+
+
 def _load_latest_historical_signals(history_root: Path) -> dict[str, FidelitySignal]:
     latest_by_symbol: dict[str, FidelitySignal] = {}
     if not history_root.exists():
@@ -114,6 +123,12 @@ def build_ess_coverage_gap_warning(
         symbol_rows = rows_by_symbol.get(sym, [])
         previous = prior_ess.get(sym) or historical_ess.get(sym) or (prior_signals or {}).get(sym)
 
+        # Check if current rows have NON_STARMINE_ANALYST coverage.
+        # If so, provider has explicitly declared this symbol is not StarMine-scored NOW.
+        # This should never be classified as STALE — only as NO_FRESH_STARMINE,
+        # even if there is old historical StarMine data.
+        has_non_starmine = _has_non_starmine_analyst_coverage(symbol_rows)
+
         if not symbol_rows:
             if previous is not None:
                 gap_type = "STALE_ESS"
@@ -121,16 +136,26 @@ def build_ess_coverage_gap_warning(
             else:
                 gap_type = "TRUE_MISSING"
                 true_missing_symbols.append(sym)
-        else:
-            last_ess_date = str(previous.refresh_date) if previous else ""
-            if previous and last_ess_date and last_ess_date < snapshot_date.isoformat():
+        elif has_non_starmine:
+            # Provider explicitly marked as non-StarMine in CURRENT snapshot.
+            # Classify as NO_FRESH_STARMINE, regardless of historical data.
+            gap_type = "NO_FRESH_STARMINE"
+            no_fresh_symbols.append(sym)
+        elif previous is not None:
+            # Symbol has prior ESS data. Check if it's fresh by date.
+            last_ess_date = str(previous.refresh_date)
+            if last_ess_date < snapshot_date.isoformat():
+                # Prior ESS is old (stale).
                 gap_type = "STALE_ESS"
                 stale_symbols.append(sym)
-            elif not _has_fresh_starmine(symbol_rows):
-                gap_type = "NO_FRESH_STARMINE"
-                no_fresh_symbols.append(sym)
             else:
+                # Prior ESS is current/fresh — not a concern.
                 continue
+        else:
+            # No prior ESS, no NON_STARMINE_ANALYST, but has rows.
+            # This shouldn't happen for applicable equities, but classify as NO_FRESH_STARMINE.
+            gap_type = "NO_FRESH_STARMINE"
+            no_fresh_symbols.append(sym)
 
         company_name = (
             (holding.get("description") or "").strip()
