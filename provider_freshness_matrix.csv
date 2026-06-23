@@ -1,0 +1,6 @@
+provider,total_symbols,fresh_within_threshold,stale,missing,notes
+Zacks,2473,254,2115,104,"Latest file date is 2026-06-18, but many universe symbols still carry older sourced dates"
+Danelfin,2473,436,1935,102,"Latest file date is 2026-06-18"
+Yahoo,2473,725,1741,7,"Latest file date is 2026-06-18"
+FMP,2473,0,2465,8,"Merged latest FMP universe carries 2026-06-04 sourced dates and is stale across the universe"
+ESS,2473,2445,0,28,"Current signal snapshot is fresh for the covered universe; SIMO remains the only current warning symbol"

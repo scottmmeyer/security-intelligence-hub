@@ -1,0 +1,49 @@
+symbol,description,asset_class,security_type,security_class,in_ess_absent_warning,in_danelfin_stale,in_yahoo_stale,ess_applicable,ess_applicability_reason,danelfin_applicable,danelfin_applicability_reason,yahoo_applicable,yahoo_applicability_reason
+AGEN,AGENUS INC COM NEW,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+ALNT,ALLIENT INC COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+AMG,AFFILIATED MANAGERS GROUP INC COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+AMZN,AMAZON.COM INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+ANGO,ANGIODYNAMICS INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+ANIP,ANI PHARMACEUTICALS INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+AVGO,BROADCOM INC COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+AZZ,AZZ INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+BSVN,BANK7 CORP COM,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+CIEN,CIENA CORP,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+CRS,CARPENTER TECHNOLOGY CORP,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+DODFX,DODGE & COX INTERNATL STOCK CL I,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+DVN,DEVON ENERGY CORP NEW,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+FCPGX,FIDELITY SMALL CAP GROWTH,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+FHI,FEDERATED HERMES INC CL B,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+FMCSX,FIDELITY MID CAP STOCK,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+FSLR,FIRST SOLAR INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+FXAIX,FIDELITY 500 INDEX FUND,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+GFF,GRIFFON CORP,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+HALO,HALOZYME THERAPEUTICS INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+HCI,HCI GROUP INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+IVZ,INVESCO LTD,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+JBL,JABIL INC COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+KGC,KINROSS GOLD CORP COM NPV ISIN #CA4969024047 SEDOL #B03Z841,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+LRCX,LAM RESEARCH CORP COM NEW,EQUITIES,Common Stock,MUTUAL_FUND,0,1,1,1,applicable,1,applicable,1,applicable
+MCB,METROPOLITAN BK HLDG CORP COM,EQUITIES,Common Stock,STOCK,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+MSFT,MICROSOFT CORP,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+NVDA,NVIDIA CORPORATION COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+NVS,NOVARTIS AG SPONSORED ADR,EQUITIES,Depository Receipt,ADR_STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+PCB,PCB BANCORP COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+PRIM,PRIMORIS SVCS CORP COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+SBS,SANEAMEN SAO PAU ADR REP 1 ORD,EQUITIES,Common Stock,ADR_STOCK,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+SIMO,SILICON MOTION TECHNO ADR REP 4 ORD,EQUITIES,ETF,ETF,1,0,0,1,applicable,1,applicable,1,applicable
+SMR,NUSCALE PWR CORP CL A COM,EQUITIES,Common Stock,STOCK,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+SNX,TD SYNNEX CORPORATION COM,EQUITIES,Common Stock,MUTUAL_FUND,0,1,1,1,applicable,1,applicable,1,applicable
+SPCX,SPACE EXPL TECHNOLOGIES CORP CL A,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+STLD,STEEL DYNAMICS INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+STNG,SCORPIO TANKERS INC COM USD0.01 (POST REV SPLIT),EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+TSLA,TESLA INC COM,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+TSM,TAIWAN SEMICONDUCTOR MANUFACTURING SPON ADS EACH REP 5 ORD TWD10,EQUITIES,Depository Receipt,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+TTNDY,TECHTRONIC INDUSTRIES COMPANY ADR,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+UHS,UNIVERSAL HEALTH SERVICES INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+UTHR,UNITED THERAPEUTICS CORP,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
+VB,VANGUARD SMALL-CAP INDEX FUND,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+VO,VANGUARD MID-CAP INDEX FUND,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+VOO,VANGUARD INDEX FUNDS S&P 500 ETF USD,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+VWO,VANGUARD INTL EQUITY INDEX FDS FTSE EMR MKT ETF,EQUITIES,ETF,ETF,1,0,0,0,not_in_base_equity_universe,0,not_in_base_equity_universe,0,not_in_base_equity_universe
+YELP,YELP INC,EQUITIES,Common Stock,STOCK,0,1,1,1,applicable,1,applicable,1,applicable
