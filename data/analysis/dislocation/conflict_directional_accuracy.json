@@ -1,0 +1,561 @@
+{
+  "generated_at": "2026-06-17T10:56:58.199932+00:00",
+  "version": "1.0",
+  "status": "OK",
+  "total_pairs": 3593,
+  "universe_median_pct": 0.5546,
+  "direction_thresholds": {
+    "positive_above_pp": 0.5,
+    "negative_below_pp": -0.5
+  },
+  "overall": {
+    "n": 3593,
+    "hits": 1560,
+    "hit_rate": 43.4,
+    "precision": 46.8,
+    "recall": 91.4,
+    "false_positive_rate": 92.2,
+    "false_negative_rate": 8.6,
+    "balanced_accuracy": 49.6,
+    "confusion_matrix": {
+      "tp": 1546,
+      "fp": 1754,
+      "tn": 148,
+      "fn": 145
+    },
+    "predicted_distribution": {
+      "POSITIVE": 3300,
+      "NEGATIVE": 2,
+      "NEUTRAL": 291
+    },
+    "actual_distribution": {
+      "POSITIVE": 1691,
+      "NEGATIVE": 1698,
+      "NEUTRAL": 204
+    }
+  },
+  "reliability_distribution": {
+    "WEAK": 6,
+    "INSUFFICIENT_DATA": 1
+  },
+  "patterns": [
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "pattern_label": "ESS Buy / Analyst Sell",
+      "n": 93,
+      "predicted_excess_pct": 2.2559,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 53.8,
+      "hits": 49,
+      "hit_rate": 52.7,
+      "precision": 52.7,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 49,
+        "fp": 44,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 93,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 49,
+        "NEGATIVE": 42,
+        "NEUTRAL": 2
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+      "pattern_label": "ESS Buy / All Agree Buy",
+      "n": 116,
+      "predicted_excess_pct": 1.6808,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 54.3,
+      "hits": 58,
+      "hit_rate": 50.0,
+      "precision": 50.0,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 58,
+        "fp": 58,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 116,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 58,
+        "NEGATIVE": 50,
+        "NEUTRAL": 8
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MAJORITY_BULLISH",
+      "pattern_label": "ESS Sell / Analyst Buy",
+      "n": 2,
+      "predicted_excess_pct": -1.7036,
+      "predicted_direction": "NEGATIVE",
+      "alpha_class": "ALPHA_LAGGARD",
+      "win_rate_pct": 50.0,
+      "hits": 1,
+      "hit_rate": 50.0,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 100.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 1,
+        "fn": 1
+      },
+      "predicted_distribution": {
+        "POSITIVE": 0,
+        "NEGATIVE": 2,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 1,
+        "NEGATIVE": 1,
+        "NEUTRAL": 0
+      },
+      "reliability": "INSUFFICIENT_DATA",
+      "reliability_label": "Insufficient data for directional reliability classification"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "pattern_label": "ESS Buy / Analysts Skeptical",
+      "n": 1560,
+      "predicted_excess_pct": 0.7219,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "hits": 739,
+      "hit_rate": 47.4,
+      "precision": 47.4,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 739,
+        "fp": 821,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 1560,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 739,
+        "NEGATIVE": 727,
+        "NEUTRAL": 94
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "pattern_label": "ESS Buy / Analysts Mixed",
+      "n": 1531,
+      "predicted_excess_pct": 1.0234,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 48.4,
+      "hits": 700,
+      "hit_rate": 45.7,
+      "precision": 45.7,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 700,
+        "fp": 831,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 1531,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 700,
+        "NEGATIVE": 744,
+        "NEUTRAL": 87
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_NEUTRAL_ANALYST_MIXED",
+      "pattern_label": "ESS Neutral / Analysts Mixed",
+      "n": 233,
+      "predicted_excess_pct": -0.1336,
+      "predicted_direction": "NEUTRAL",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "hits": 13,
+      "hit_rate": 5.6,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 100.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 122,
+        "fn": 111
+      },
+      "predicted_distribution": {
+        "POSITIVE": 0,
+        "NEGATIVE": 0,
+        "NEUTRAL": 233
+      },
+      "actual_distribution": {
+        "POSITIVE": 111,
+        "NEGATIVE": 109,
+        "NEUTRAL": 13
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MIXED",
+      "pattern_label": "ESS Sell / Analysts Mixed",
+      "n": 58,
+      "predicted_excess_pct": 0.2823,
+      "predicted_direction": "NEUTRAL",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 56.9,
+      "hits": 0,
+      "hit_rate": 0.0,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 100.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 25,
+        "fn": 33
+      },
+      "predicted_distribution": {
+        "POSITIVE": 0,
+        "NEGATIVE": 0,
+        "NEUTRAL": 58
+      },
+      "actual_distribution": {
+        "POSITIVE": 33,
+        "NEGATIVE": 25,
+        "NEUTRAL": 0
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    }
+  ],
+  "most_reliable": [
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "pattern_label": "ESS Buy / Analyst Sell",
+      "n": 93,
+      "predicted_excess_pct": 2.2559,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 53.8,
+      "hits": 49,
+      "hit_rate": 52.7,
+      "precision": 52.7,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 49,
+        "fp": 44,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 93,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 49,
+        "NEGATIVE": 42,
+        "NEUTRAL": 2
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+      "pattern_label": "ESS Buy / All Agree Buy",
+      "n": 116,
+      "predicted_excess_pct": 1.6808,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 54.3,
+      "hits": 58,
+      "hit_rate": 50.0,
+      "precision": 50.0,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 58,
+        "fp": 58,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 116,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 58,
+        "NEGATIVE": 50,
+        "NEUTRAL": 8
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "pattern_label": "ESS Buy / Analysts Skeptical",
+      "n": 1560,
+      "predicted_excess_pct": 0.7219,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "hits": 739,
+      "hit_rate": 47.4,
+      "precision": 47.4,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 739,
+        "fp": 821,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 1560,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 739,
+        "NEGATIVE": 727,
+        "NEUTRAL": 94
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    }
+  ],
+  "least_reliable": [
+    {
+      "pattern": "ESS_NEUTRAL_ANALYST_MIXED",
+      "pattern_label": "ESS Neutral / Analysts Mixed",
+      "n": 233,
+      "predicted_excess_pct": -0.1336,
+      "predicted_direction": "NEUTRAL",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "hits": 13,
+      "hit_rate": 5.6,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": 0.0,
+      "false_negative_rate": 100.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 122,
+        "fn": 111
+      },
+      "predicted_distribution": {
+        "POSITIVE": 0,
+        "NEGATIVE": 0,
+        "NEUTRAL": 233
+      },
+      "actual_distribution": {
+        "POSITIVE": 111,
+        "NEGATIVE": 109,
+        "NEUTRAL": 13
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "pattern_label": "ESS Buy / Analysts Mixed",
+      "n": 1531,
+      "predicted_excess_pct": 1.0234,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 48.4,
+      "hits": 700,
+      "hit_rate": 45.7,
+      "precision": 45.7,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 700,
+        "fp": 831,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 1531,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 700,
+        "NEGATIVE": 744,
+        "NEUTRAL": 87
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "pattern_label": "ESS Buy / Analysts Skeptical",
+      "n": 1560,
+      "predicted_excess_pct": 0.7219,
+      "predicted_direction": "POSITIVE",
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "hits": 739,
+      "hit_rate": 47.4,
+      "precision": 47.4,
+      "recall": 100.0,
+      "false_positive_rate": 100.0,
+      "false_negative_rate": 0.0,
+      "balanced_accuracy": 50.0,
+      "confusion_matrix": {
+        "tp": 739,
+        "fp": 821,
+        "tn": 0,
+        "fn": 0
+      },
+      "predicted_distribution": {
+        "POSITIVE": 1560,
+        "NEGATIVE": 0,
+        "NEUTRAL": 0
+      },
+      "actual_distribution": {
+        "POSITIVE": 739,
+        "NEGATIVE": 727,
+        "NEUTRAL": 94
+      },
+      "reliability": "WEAK",
+      "reliability_label": "Low reliability \u2014 directional accuracy below chance threshold"
+    }
+  ],
+  "comparative": {
+    "patterns": [
+      {
+        "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+        "pattern_label": "ESS Buy / Analyst Sell",
+        "n": 93,
+        "directional_hit_rate": 52.7,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 8.747,
+        "magnitude_confidence": "LOW"
+      },
+      {
+        "pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+        "pattern_label": "ESS Buy / All Agree Buy",
+        "n": 116,
+        "directional_hit_rate": 50.0,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 8.794,
+        "magnitude_confidence": "LOW"
+      },
+      {
+        "pattern": "ESS_BEARISH_ANALYST_MAJORITY_BULLISH",
+        "pattern_label": "ESS Sell / Analyst Buy",
+        "n": 2,
+        "directional_hit_rate": 50.0,
+        "directional_reliability": "INSUFFICIENT_DATA",
+        "magnitude_mae_pp": 2.82,
+        "magnitude_confidence": "INSUFFICIENT_DATA"
+      },
+      {
+        "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+        "pattern_label": "ESS Buy / Analysts Skeptical",
+        "n": 1560,
+        "directional_hit_rate": 47.4,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 7.623,
+        "magnitude_confidence": "LOW"
+      },
+      {
+        "pattern": "ESS_BULLISH_ANALYST_MIXED",
+        "pattern_label": "ESS Buy / Analysts Mixed",
+        "n": 1531,
+        "directional_hit_rate": 45.7,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 7.974,
+        "magnitude_confidence": "LOW"
+      },
+      {
+        "pattern": "ESS_NEUTRAL_ANALYST_MIXED",
+        "pattern_label": "ESS Neutral / Analysts Mixed",
+        "n": 233,
+        "directional_hit_rate": 5.6,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 8.463,
+        "magnitude_confidence": "LOW"
+      },
+      {
+        "pattern": "ESS_BEARISH_ANALYST_MIXED",
+        "pattern_label": "ESS Sell / Analysts Mixed",
+        "n": 58,
+        "directional_hit_rate": 0.0,
+        "directional_reliability": "WEAK",
+        "magnitude_mae_pp": 10.731,
+        "magnitude_confidence": "LOW"
+      }
+    ],
+    "avg_directional_hit_rate": 35.9,
+    "avg_magnitude_mae_pp": 7.879,
+    "verdict": "NEITHER",
+    "verdict_label": "Conflict patterns do not demonstrate reliable directional or magnitude predictive accuracy at the individual security level."
+  },
+  "governance_note": "DISLOCATION-07 is research-only. Directional accuracy metrics are derived from historical observations and do not guarantee future accuracy. No ESS, CW-DAS, UCF, CRA, Replay, PAP, or governance logic is modified. Reliability classifications are informational \u2014 operator judgment is required."
+}

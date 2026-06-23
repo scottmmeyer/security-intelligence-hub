@@ -1,0 +1,131 @@
+{
+  "patterns": [
+    {
+      "signal_pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "occurrences": 154,
+      "occurrences_with_price_data": 149,
+      "winner_count": 66,
+      "loser_count": 44,
+      "winner_rate_pct": 44.3,
+      "loser_rate_pct": 29.5,
+      "avg_return_30d_pct": 2.11,
+      "median_return_30d_pct": 1.39,
+      "best_return_30d_pct": 28.75,
+      "worst_return_30d_pct": -42.6,
+      "ess_correct_count": 66,
+      "ess_correct_rate_pct": 44.3,
+      "top_symbols": [
+        "NGS",
+        "LLY",
+        "NAT",
+        "ENB",
+        "MPAA"
+      ]
+    },
+    {
+      "signal_pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+      "occurrences": 129,
+      "occurrences_with_price_data": 116,
+      "winner_count": 46,
+      "loser_count": 41,
+      "winner_rate_pct": 39.7,
+      "loser_rate_pct": 35.3,
+      "avg_return_30d_pct": 2.24,
+      "median_return_30d_pct": 1.08,
+      "best_return_30d_pct": 50.1,
+      "worst_return_30d_pct": -28.87,
+      "ess_correct_count": 46,
+      "ess_correct_rate_pct": 39.7,
+      "top_symbols": [
+        "HHH",
+        "ALLE",
+        "APP",
+        "MCY",
+        "EVR"
+      ]
+    },
+    {
+      "signal_pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "occurrences": 102,
+      "occurrences_with_price_data": 93,
+      "winner_count": 45,
+      "loser_count": 39,
+      "winner_rate_pct": 48.4,
+      "loser_rate_pct": 41.9,
+      "avg_return_30d_pct": 2.81,
+      "median_return_30d_pct": 2.0,
+      "best_return_30d_pct": 52.92,
+      "worst_return_30d_pct": -26.61,
+      "ess_correct_count": 45,
+      "ess_correct_rate_pct": 48.4,
+      "top_symbols": [
+        "EXE",
+        "GHC",
+        "INVX",
+        "BIDU",
+        "TBRG"
+      ]
+    },
+    {
+      "signal_pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "occurrences": 90,
+      "occurrences_with_price_data": 80,
+      "winner_count": 41,
+      "loser_count": 28,
+      "winner_rate_pct": 51.2,
+      "loser_rate_pct": 35.0,
+      "avg_return_30d_pct": 5.0,
+      "median_return_30d_pct": 3.74,
+      "best_return_30d_pct": 101.95,
+      "worst_return_30d_pct": -34.73,
+      "ess_correct_count": 41,
+      "ess_correct_rate_pct": 51.2,
+      "top_symbols": [
+        "IRWD",
+        "PRDO",
+        "TAC",
+        "AGX",
+        "SSRM"
+      ]
+    },
+    {
+      "signal_pattern": "ESS_BEARISH_ANALYST_MIXED",
+      "occurrences": 21,
+      "occurrences_with_price_data": 21,
+      "winner_count": 12,
+      "loser_count": 5,
+      "winner_rate_pct": 57.1,
+      "loser_rate_pct": 23.8,
+      "avg_return_30d_pct": 5.11,
+      "median_return_30d_pct": 5.08,
+      "best_return_30d_pct": 24.95,
+      "worst_return_30d_pct": -16.37,
+      "ess_correct_count": 5,
+      "ess_correct_rate_pct": 23.8,
+      "top_symbols": [
+        "SKYW",
+        "CAG",
+        "EXPD",
+        "ALDX",
+        "CENT"
+      ]
+    },
+    {
+      "signal_pattern": "ESS_BEARISH_ANALYST_MAJORITY_BULLISH",
+      "occurrences": 2,
+      "occurrences_with_price_data": 2,
+      "winner_count": 0,
+      "loser_count": 1,
+      "winner_rate_pct": 0.0,
+      "loser_rate_pct": 50.0,
+      "avg_return_30d_pct": -1.15,
+      "median_return_30d_pct": -1.15,
+      "best_return_30d_pct": 1.67,
+      "worst_return_30d_pct": -3.97,
+      "ess_correct_count": 1,
+      "ess_correct_rate_pct": 50.0,
+      "top_symbols": []
+    }
+  ],
+  "version": "1.0"
+}

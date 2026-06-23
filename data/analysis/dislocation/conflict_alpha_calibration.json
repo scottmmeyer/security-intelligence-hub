@@ -1,0 +1,572 @@
+{
+  "generated_at": "2026-06-17T00:38:46.089686+00:00",
+  "version": "1.0",
+  "status": "OK",
+  "total_pairs": 3593,
+  "universe_median_pct": 0.5546,
+  "overall_mae_pp": 7.941,
+  "overall_accuracy_bands": {
+    "within_1pp": 10.5,
+    "within_2pp": 21.2,
+    "within_5pp": 47.9,
+    "within_10pp": 74.2
+  },
+  "confidence_counts": {
+    "LOW": 6,
+    "INSUFFICIENT_DATA": 1
+  },
+  "patterns": [
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "pattern_label": "ESS Buy / Analysts Skeptical",
+      "n": 1560,
+      "predicted_excess_return_pct": 0.7219,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "mae_pp": 7.623,
+      "rmse_pp": 11.599,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 12.0,
+        "within_2pp": 22.6,
+        "within_5pp": 49.6,
+        "within_10pp": 75.4
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "SBSI",
+          "avg_error_pp": 0.02
+        },
+        {
+          "symbol": "SMFG",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "MFG",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "BWA",
+          "avg_error_pp": 0.07
+        },
+        {
+          "symbol": "REI",
+          "avg_error_pp": 0.21
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "pattern_label": "ESS Buy / Analysts Mixed",
+      "n": 1531,
+      "predicted_excess_return_pct": 1.0234,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 48.4,
+      "mae_pp": 7.974,
+      "rmse_pp": 11.894,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 9.8,
+        "within_2pp": 20.0,
+        "within_5pp": 47.2,
+        "within_10pp": 74.3
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "SHBI",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "TCOM",
+          "avg_error_pp": 0.09
+        },
+        {
+          "symbol": "EVRG",
+          "avg_error_pp": 0.28
+        },
+        {
+          "symbol": "OPRT",
+          "avg_error_pp": 0.33
+        },
+        {
+          "symbol": "RRBI",
+          "avg_error_pp": 0.33
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_NEUTRAL_ANALYST_MIXED",
+      "pattern_label": "ESS Neutral / Analysts Mixed",
+      "n": 233,
+      "predicted_excess_return_pct": -0.1336,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "mae_pp": 8.463,
+      "rmse_pp": 12.214,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 9.9,
+        "within_2pp": 24.5,
+        "within_5pp": 45.1,
+        "within_10pp": 69.1
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "RARE",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "NOV",
+          "avg_error_pp": 0.09
+        },
+        {
+          "symbol": "IEX",
+          "avg_error_pp": 0.12
+        },
+        {
+          "symbol": "DUK",
+          "avg_error_pp": 0.16
+        },
+        {
+          "symbol": "ROG",
+          "avg_error_pp": 0.16
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+      "pattern_label": "ESS Buy / All Agree Buy",
+      "n": 116,
+      "predicted_excess_return_pct": 1.6808,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 54.3,
+      "mae_pp": 8.794,
+      "rmse_pp": 12.808,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 7.8,
+        "within_2pp": 19.8,
+        "within_5pp": 45.7,
+        "within_10pp": 70.7
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "FFIV",
+          "avg_error_pp": 0.54
+        },
+        {
+          "symbol": "MC",
+          "avg_error_pp": 1.19
+        },
+        {
+          "symbol": "APH",
+          "avg_error_pp": 1.41
+        },
+        {
+          "symbol": "ZWS",
+          "avg_error_pp": 1.48
+        },
+        {
+          "symbol": "NEU",
+          "avg_error_pp": 2.04
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "pattern_label": "ESS Buy / Analyst Sell",
+      "n": 93,
+      "predicted_excess_return_pct": 2.2559,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 53.8,
+      "mae_pp": 8.747,
+      "rmse_pp": 13.01,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 7.5,
+        "within_2pp": 16.1,
+        "within_5pp": 47.3,
+        "within_10pp": 74.2
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "EBS",
+          "avg_error_pp": 0.14
+        },
+        {
+          "symbol": "ELV",
+          "avg_error_pp": 1.7
+        },
+        {
+          "symbol": "SWX",
+          "avg_error_pp": 1.88
+        },
+        {
+          "symbol": "PDS",
+          "avg_error_pp": 2.08
+        },
+        {
+          "symbol": "MDU",
+          "avg_error_pp": 2.56
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MIXED",
+      "pattern_label": "ESS Sell / Analysts Mixed",
+      "n": 58,
+      "predicted_excess_return_pct": 0.2823,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 56.9,
+      "mae_pp": 10.731,
+      "rmse_pp": 15.183,
+      "mean_error_pp": 0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 3.4,
+        "within_2pp": 13.8,
+        "within_5pp": 34.5,
+        "within_10pp": 63.8
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "AOS",
+          "avg_error_pp": 0.32
+        },
+        {
+          "symbol": "AMZN",
+          "avg_error_pp": 0.43
+        },
+        {
+          "symbol": "MGEE",
+          "avg_error_pp": 1.04
+        },
+        {
+          "symbol": "OLN",
+          "avg_error_pp": 1.23
+        },
+        {
+          "symbol": "SWK",
+          "avg_error_pp": 1.39
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MAJORITY_BULLISH",
+      "pattern_label": "ESS Sell / Analyst Buy",
+      "n": 2,
+      "predicted_excess_return_pct": -1.7036,
+      "alpha_class": "ALPHA_LAGGARD",
+      "win_rate_pct": 50.0,
+      "mae_pp": 2.82,
+      "rmse_pp": 2.82,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 0.0,
+        "within_2pp": 0.0,
+        "within_5pp": 100.0,
+        "within_10pp": 100.0
+      },
+      "correlation": null,
+      "confidence": "INSUFFICIENT_DATA",
+      "confidence_label": "Insufficient historical data for calibration",
+      "top_accurate_symbols": [
+        {
+          "symbol": "CCK",
+          "avg_error_pp": 2.82
+        },
+        {
+          "symbol": "S",
+          "avg_error_pp": 2.82
+        }
+      ]
+    }
+  ],
+  "most_reliable": [
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "pattern_label": "ESS Buy / Analysts Skeptical",
+      "n": 1560,
+      "predicted_excess_return_pct": 0.7219,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "mae_pp": 7.623,
+      "rmse_pp": 11.599,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 12.0,
+        "within_2pp": 22.6,
+        "within_5pp": 49.6,
+        "within_10pp": 75.4
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "SBSI",
+          "avg_error_pp": 0.02
+        },
+        {
+          "symbol": "SMFG",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "MFG",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "BWA",
+          "avg_error_pp": 0.07
+        },
+        {
+          "symbol": "REI",
+          "avg_error_pp": 0.21
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "pattern_label": "ESS Buy / Analysts Mixed",
+      "n": 1531,
+      "predicted_excess_return_pct": 1.0234,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 48.4,
+      "mae_pp": 7.974,
+      "rmse_pp": 11.894,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 9.8,
+        "within_2pp": 20.0,
+        "within_5pp": 47.2,
+        "within_10pp": 74.3
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "SHBI",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "TCOM",
+          "avg_error_pp": 0.09
+        },
+        {
+          "symbol": "EVRG",
+          "avg_error_pp": 0.28
+        },
+        {
+          "symbol": "OPRT",
+          "avg_error_pp": 0.33
+        },
+        {
+          "symbol": "RRBI",
+          "avg_error_pp": 0.33
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_NEUTRAL_ANALYST_MIXED",
+      "pattern_label": "ESS Neutral / Analysts Mixed",
+      "n": 233,
+      "predicted_excess_return_pct": -0.1336,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 50.6,
+      "mae_pp": 8.463,
+      "rmse_pp": 12.214,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 9.9,
+        "within_2pp": 24.5,
+        "within_5pp": 45.1,
+        "within_10pp": 69.1
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "RARE",
+          "avg_error_pp": 0.04
+        },
+        {
+          "symbol": "NOV",
+          "avg_error_pp": 0.09
+        },
+        {
+          "symbol": "IEX",
+          "avg_error_pp": 0.12
+        },
+        {
+          "symbol": "DUK",
+          "avg_error_pp": 0.16
+        },
+        {
+          "symbol": "ROG",
+          "avg_error_pp": 0.16
+        }
+      ]
+    }
+  ],
+  "least_reliable": [
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MIXED",
+      "pattern_label": "ESS Sell / Analysts Mixed",
+      "n": 58,
+      "predicted_excess_return_pct": 0.2823,
+      "alpha_class": "ALPHA_NEUTRAL",
+      "win_rate_pct": 56.9,
+      "mae_pp": 10.731,
+      "rmse_pp": 15.183,
+      "mean_error_pp": 0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 3.4,
+        "within_2pp": 13.8,
+        "within_5pp": 34.5,
+        "within_10pp": 63.8
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "AOS",
+          "avg_error_pp": 0.32
+        },
+        {
+          "symbol": "AMZN",
+          "avg_error_pp": 0.43
+        },
+        {
+          "symbol": "MGEE",
+          "avg_error_pp": 1.04
+        },
+        {
+          "symbol": "OLN",
+          "avg_error_pp": 1.23
+        },
+        {
+          "symbol": "SWK",
+          "avg_error_pp": 1.39
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_FULL_AGREE",
+      "pattern_label": "ESS Buy / All Agree Buy",
+      "n": 116,
+      "predicted_excess_return_pct": 1.6808,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 54.3,
+      "mae_pp": 8.794,
+      "rmse_pp": 12.808,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 7.8,
+        "within_2pp": 19.8,
+        "within_5pp": 45.7,
+        "within_10pp": 70.7
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "FFIV",
+          "avg_error_pp": 0.54
+        },
+        {
+          "symbol": "MC",
+          "avg_error_pp": 1.19
+        },
+        {
+          "symbol": "APH",
+          "avg_error_pp": 1.41
+        },
+        {
+          "symbol": "ZWS",
+          "avg_error_pp": 1.48
+        },
+        {
+          "symbol": "NEU",
+          "avg_error_pp": 2.04
+        }
+      ]
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "pattern_label": "ESS Buy / Analyst Sell",
+      "n": 93,
+      "predicted_excess_return_pct": 2.2559,
+      "alpha_class": "ALPHA_LEADER",
+      "win_rate_pct": 53.8,
+      "mae_pp": 8.747,
+      "rmse_pp": 13.01,
+      "mean_error_pp": -0.0,
+      "bias_direction": "NEUTRAL",
+      "accuracy_bands": {
+        "within_1pp": 7.5,
+        "within_2pp": 16.1,
+        "within_5pp": 47.3,
+        "within_10pp": 74.2
+      },
+      "correlation": null,
+      "confidence": "LOW",
+      "confidence_label": "Poorly calibrated \u2014 small sample or high error",
+      "top_accurate_symbols": [
+        {
+          "symbol": "EBS",
+          "avg_error_pp": 0.14
+        },
+        {
+          "symbol": "ELV",
+          "avg_error_pp": 1.7
+        },
+        {
+          "symbol": "SWX",
+          "avg_error_pp": 1.88
+        },
+        {
+          "symbol": "PDS",
+          "avg_error_pp": 2.08
+        },
+        {
+          "symbol": "MDU",
+          "avg_error_pp": 2.56
+        }
+      ]
+    }
+  ],
+  "governance_note": "DISLOCATION-06 is research-only. Calibration metrics are derived from historical observations and do not guarantee future accuracy. No ESS, CW-DAS, UCF, CRA, Replay, PAP, or governance logic is modified. Confidence levels are informational \u2014 operator judgment is required."
+}

@@ -1,0 +1,53 @@
+{
+  "scorecard": [
+    {
+      "signal_name": "ESS (StarMine)",
+      "signal_key": "ESS_BEARISH",
+      "direction": "BEARISH",
+      "total_cases": 62,
+      "winner_rate_pct": 45.0,
+      "avg_return_pct": 0.77,
+      "conflict_cases": 23,
+      "conflict_winner_rate_pct": 52.2,
+      "conflict_avg_return_pct": 4.57,
+      "interpretation": "ESS bearish signal historically has predictive value even when analysts disagree."
+    },
+    {
+      "signal_name": "ESS (StarMine)",
+      "signal_key": "ESS_BULLISH",
+      "direction": "BULLISH",
+      "total_cases": 3572,
+      "winner_rate_pct": 39.3,
+      "avg_return_pct": 1.49,
+      "conflict_cases": 346,
+      "conflict_winner_rate_pct": 47.2,
+      "conflict_avg_return_pct": 3.03,
+      "interpretation": "ESS primary signal (55% weight in CW-DAS). When ESS is bullish and analysts disagree, ESS historically outperforms analyst consensus."
+    },
+    {
+      "signal_name": "Analyst Consensus (Zacks+Independent)",
+      "signal_key": "ANALYST_BEARISH",
+      "direction": "BEARISH",
+      "total_cases": 12,
+      "winner_rate_pct": 58.3,
+      "avg_return_pct": 1.6,
+      "conflict_cases": 12,
+      "conflict_winner_rate_pct": 58.3,
+      "conflict_avg_return_pct": 1.6,
+      "interpretation": "Analyst consensus (buy-side). During signal conflicts, analyst consensus has lower historical reliability than ESS in the SIH universe."
+    },
+    {
+      "signal_name": "Analyst Consensus (Zacks+Independent)",
+      "signal_key": "ANALYST_BULLISH",
+      "direction": "BULLISH",
+      "total_cases": 389,
+      "winner_rate_pct": 43.5,
+      "avg_return_pct": 2.46,
+      "conflict_cases": 8,
+      "conflict_winner_rate_pct": 25.0,
+      "conflict_avg_return_pct": -0.63,
+      "interpretation": "Analyst consensus (buy-side). During signal conflicts, analyst consensus has lower historical reliability than ESS in the SIH universe."
+    }
+  ],
+  "version": "1.0"
+}

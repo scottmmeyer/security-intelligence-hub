@@ -1,0 +1,90 @@
+{
+  "total_conflict_observations": 345,
+  "ess_conflict_correct_rate_pct": 45.8,
+  "strongest_conflict_winners": [
+    {
+      "symbol": "ENB",
+      "winner_count": 4
+    },
+    {
+      "symbol": "EXE",
+      "winner_count": 4
+    },
+    {
+      "symbol": "GHC",
+      "winner_count": 4
+    },
+    {
+      "symbol": "IRWD",
+      "winner_count": 4
+    },
+    {
+      "symbol": "LLY",
+      "winner_count": 4
+    }
+  ],
+  "strongest_conflict_losers": [
+    {
+      "symbol": "AKBA",
+      "loser_count": 3
+    },
+    {
+      "symbol": "AVT",
+      "loser_count": 3
+    },
+    {
+      "symbol": "AZZ",
+      "loser_count": 3
+    },
+    {
+      "symbol": "BAX",
+      "loser_count": 3
+    },
+    {
+      "symbol": "EBS",
+      "loser_count": 3
+    }
+  ],
+  "most_reliable_patterns": [
+    {
+      "pattern": "ESS_BEARISH_ANALYST_MIXED",
+      "occurrences": 21,
+      "winner_rate_pct": 57.1,
+      "avg_return_pct": 5.11
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "occurrences": 90,
+      "winner_rate_pct": 51.2,
+      "avg_return_pct": 5.0
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "occurrences": 102,
+      "winner_rate_pct": 48.4,
+      "avg_return_pct": 2.81
+    }
+  ],
+  "least_reliable_patterns": [
+    {
+      "pattern": "ESS_BULLISH_ANALYST_SKEPTICAL",
+      "occurrences": 154,
+      "winner_rate_pct": 44.3,
+      "avg_return_pct": 2.11
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MAJORITY_BEARISH",
+      "occurrences": 102,
+      "winner_rate_pct": 48.4,
+      "avg_return_pct": 2.81
+    },
+    {
+      "pattern": "ESS_BULLISH_ANALYST_MIXED",
+      "occurrences": 90,
+      "winner_rate_pct": 51.2,
+      "avg_return_pct": 5.0
+    }
+  ],
+  "governance_note": "This panel is informational only. No scoring, ranking, or recommendation logic is modified by these findings. Historical patterns are computed from SIH signal archive + price data. Q10 answer: No algorithm changes are recommended. Signal reliability is an operator-education tool, not a tuning trigger.",
+  "version": "1.0"
+}

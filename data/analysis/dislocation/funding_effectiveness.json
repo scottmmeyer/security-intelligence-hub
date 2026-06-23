@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-06-17T00:10:48.232944+00:00",
+  "inventory_entries": 3897,
+  "symbols_analyzed": 1284,
+  "category_outcomes": {
+    "ESS_BEARISH": {
+      "n": 60,
+      "avg_return": 0.771,
+      "median": 2.361,
+      "positive_pct": 56.7
+    },
+    "ESS_BULLISH": {
+      "n": 3300,
+      "avg_return": 1.493,
+      "median": 0.54,
+      "positive_pct": 52.8
+    },
+    "ESS_NEUTRAL": {
+      "n": 233,
+      "avg_return": 0.421,
+      "median": 0.604,
+      "positive_pct": 53.2
+    }
+  },
+  "key_findings": [
+    "BEARISH ESS signals: avg 30d return +0.77% (57% positive). Some BEARISH ESS positions rebounded \u2014 premature exits may be costly.",
+    "ESS signal spread: BULLISH (+1.49%) outperformed BEARISH (+0.77%) by +0.72pp over 30 days. This supports using ESS direction as a primary CRA triage signal."
+  ],
+  "governance_note": "RESEARCH-01 is research-only. No CRA capital source selection logic, recommendation algorithms, or governance rules are modified. Effectiveness estimates are based on historical price data and are not predictive of future outcomes."
+}
