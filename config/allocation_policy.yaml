@@ -92,3 +92,9 @@ compliance_tolerance:
   CPV-06_asset_class:    { advisory_pp: 5.0, warn_pp: 10.0 }
   CPV-07_equities_min:   { advisory_pp: 5.0, warn_pp: 10.0 }
   CPV-08_fi_max:         { advisory_pp: 5.0, warn_pp: 10.0 }
+
+signal_conflict:
+  # SIGNAL-GOV-02A: Advisory conflict badge thresholds.
+  # Changes here affect badge classification only — no scoring or ranking impact.
+  significant_conflict_sell_ratio_pct: 15.0  # SIGNIFICANT_CONFLICT badge threshold
+  high_hold_ratio_pct: 50.0                  # HIGH_HOLD_RATIO badge threshold
