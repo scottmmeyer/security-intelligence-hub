@@ -1,0 +1,212 @@
+[
+  {
+    "event_id": "FOMC-2025-06-11",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2025-06-11",
+    "impact_level": "HIGH",
+    "consensus_expectation": "No change expected; Fed holding rates amid sticky inflation",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX"]
+  },
+  {
+    "event_id": "CPI-JUN-2025",
+    "event_name": "CPI (June 2025)",
+    "event_type": "INFLATION",
+    "event_date": "2025-07-15",
+    "impact_level": "HIGH",
+    "consensus_expectation": "CPI expected flat MoM; core CPI +0.2%",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTEREST_RATE", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "NFP-JUL-2025",
+    "event_name": "Nonfarm Payrolls (July 2025)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2025-08-01",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +175K; unemployment 4.1%",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING", "INTEREST_RATE"]
+  },
+  {
+    "event_id": "FOMC-2025-07-30",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2025-07-30",
+    "impact_level": "HIGH",
+    "consensus_expectation": "First cut of 2025 expected; -25bp discussion",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX", "HOUSING"]
+  },
+  {
+    "event_id": "CPI-AUG-2025",
+    "event_name": "CPI (August 2025)",
+    "event_type": "INFLATION",
+    "event_date": "2025-09-10",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Core CPI expected +0.2% MoM",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTEREST_RATE"]
+  },
+  {
+    "event_id": "FOMC-2025-09-17",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2025-09-17",
+    "impact_level": "HIGH",
+    "consensus_expectation": "-25bp cut expected following data softening",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX"]
+  },
+  {
+    "event_id": "NFP-SEP-2025",
+    "event_name": "Nonfarm Payrolls (September 2025)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2025-10-03",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +165K; unemployment 4.2%",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "CPI-OCT-2025",
+    "event_name": "CPI (October 2025)",
+    "event_type": "INFLATION",
+    "event_date": "2025-11-12",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Core CPI closely watched post-cut",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTEREST_RATE"]
+  },
+  {
+    "event_id": "FOMC-2025-11-06",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2025-11-06",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Hold expected; Fed assessing labor market",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "HOUSING"]
+  },
+  {
+    "event_id": "NFP-NOV-2025",
+    "event_name": "Nonfarm Payrolls (November 2025)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2025-12-05",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +155K; holiday hiring",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "FOMC-2025-12-17",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2025-12-17",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Year-end policy; possible -25bp cut anticipated",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX"]
+  },
+  {
+    "event_id": "CPI-DEC-2025",
+    "event_name": "CPI (December 2025)",
+    "event_type": "INFLATION",
+    "event_date": "2026-01-14",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Year-end inflation snapshot",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTEREST_RATE"]
+  },
+  {
+    "event_id": "FOMC-2026-01-29",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2026-01-29",
+    "impact_level": "HIGH",
+    "consensus_expectation": "First 2026 meeting; likely hold pending data",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX"]
+  },
+  {
+    "event_id": "NFP-JAN-2026",
+    "event_name": "Nonfarm Payrolls (January 2026)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2026-02-06",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +180K",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "CPI-FEB-2026",
+    "event_name": "CPI (February 2026)",
+    "event_type": "INFLATION",
+    "event_date": "2026-03-11",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Core CPI +0.3% MoM; tariff effects emerging",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTERNATIONAL_TRADE", "INTEREST_RATE"]
+  },
+  {
+    "event_id": "FOMC-2026-03-19",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2026-03-19",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Hold amid tariff uncertainty and inflation rebound",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX", "HOUSING"]
+  },
+  {
+    "event_id": "NFP-MAR-2026",
+    "event_name": "Nonfarm Payrolls (March 2026)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2026-04-03",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +145K; tariff impact on labor",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING", "INTERNATIONAL_TRADE"]
+  },
+  {
+    "event_id": "CPI-APR-2026",
+    "event_name": "CPI (April 2026)",
+    "event_type": "INFLATION",
+    "event_date": "2026-05-13",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Tariff pass-through closely watched; core CPI +0.3%",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["INFLATION", "INTERNATIONAL_TRADE", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "FOMC-2026-05-07",
+    "event_name": "FOMC Rate Decision",
+    "event_type": "MONETARY_POLICY",
+    "event_date": "2026-05-07",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Hold; Fed watching tariff/inflation interaction",
+    "source": "Federal Reserve",
+    "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "TECHNOLOGY_CAPEX"]
+  },
+  {
+    "event_id": "NFP-MAY-2026",
+    "event_name": "Nonfarm Payrolls (May 2026)",
+    "event_type": "LABOR_MARKET",
+    "event_date": "2026-06-05",
+    "impact_level": "HIGH",
+    "consensus_expectation": "NFP expected +155K; labor market resilience",
+    "source": "Bureau of Labor Statistics",
+    "sensitivity_tags": ["LABOR", "CONSUMER_SPENDING"]
+  },
+  {
+    "event_id": "TARIFF-ESCALATION-APR-2026",
+    "event_name": "Tariff Escalation Announcement",
+    "event_type": "TRADE_POLICY",
+    "event_date": "2026-04-09",
+    "impact_level": "HIGH",
+    "consensus_expectation": "Major tariff announcement affecting technology and semiconductor sectors",
+    "source": "White House",
+    "sensitivity_tags": ["INTERNATIONAL_TRADE", "TECHNOLOGY_CAPEX", "ENERGY"]
+  }
+]
