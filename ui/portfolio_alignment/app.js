@@ -39,7 +39,25 @@ let _strategicExitSymbols = [];  // persisted via /api/operator/strategic-exits
 // Phase 23.2 — operator policy state
 let _operatorPolicies = {};  // { [symbol]: { policy_type, policy_annotation, status, ... } }
 
+let _dataConfidenceCache = {
+  runId: null,
+  loaded: false,
+  loading: false,
+  rowsBySymbol: {},
+  error: null,
+};
+
 const _STORAGE_KEY = "sih_portfolio_last_result";
+
+const _DATA_CONF_LEVEL_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+const _DATA_CONF_PROVIDER_ORDER = ["ess", "zacks", "danelfin", "yahoo", "fmp"];
+const _DATA_CONF_PROVIDER_LABELS = {
+  ess: "ESS",
+  zacks: "Zacks",
+  danelfin: "Danelfin",
+  yahoo: "Yahoo",
+  fmp: "FMP",
+};
 
 // Drilldown state: per-rec toggle + sort mode
 const _drilldownState = {};   // { [recId]: { rendered: bool, sortMode: string } }
@@ -892,7 +910,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>ESS Signal</th><th>Flag</th>
-              <th>Score</th><th>% Port</th><th>Priority</th><th>Policy</th><th>Effective Action</th><th>Rationale</th>
+              <th>Score</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>Policy</th><th>Effective Action</th><th>Rationale</th>
             </tr></thead>
             <tbody>
               ${cat1.map(c => `<tr class="pap-row ${c.priority === "HIGH" && c.execution_state !== "DEFERRED_BY_POLICY" ? "pap-row-high" : ""} ${c.execution_state === "DEFERRED_BY_POLICY" ? "pap-row-deferred" : ""} ${c.execution_state === "INFORMATIONAL_ONLY" ? "pap-row-info-only" : ""}">
@@ -901,6 +919,7 @@ function renderPortfolioActionPipeline(data) {
                 <td><span class="flag-${escHtml(c.flag)}">${escHtml(c.flag || "—")}</span></td>
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
                 <td>${c.policy_badge ? `<span class="policy-badge ${_policyBadgeClass(c.policy_type)}">${escHtml(c.policy_badge)}</span>` : '<span style="color:var(--muted);font-size:0.75rem">—</span>'}</td>
                 <td><span class="pap-exec-action pap-exec-${escHtml(c.execution_state)}">${escHtml(c.effective_action || c.flag || "—")}</span></td>
@@ -926,7 +945,7 @@ function renderPortfolioActionPipeline(data) {
           ${cat2.length === 0 ? '<div class="pap-cat-empty">No strategic exits designated.</div>' : `
           <table class="pap-tbl">
             <thead><tr>
-              <th>Symbol</th><th>Reason</th><th>Signal</th><th>Flag</th><th>% Port</th><th>Priority</th>
+              <th>Symbol</th><th>Reason</th><th>Signal</th><th>Flag</th><th>% Port</th><th>Data Confidence</th><th>Priority</th>
             </tr></thead>
             <tbody>
               ${cat2.map(c => `<tr class="pap-row pap-row-high">
@@ -935,6 +954,7 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.ov_flag ? `<span class="flag-${escHtml(c.ov_flag)}">${escHtml(c.ov_flag)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio != null ? c.percent_of_portfolio.toFixed(2) + "%" : "—"}</td>
+                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-HIGH">HIGH</span></td>
               </tr>`).join("")}
             </tbody>
@@ -971,7 +991,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Overweight Node</th><th>Drift</th>
-              <th>Signal</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Note</th>
+              <th>Signal</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>FVI</th><th>Note</th>
             </tr></thead>
             <tbody>
               ${cat3.map(c => `<tr class="pap-row ${c.severity === "HIGH" ? "pap-row-high" : ""}">
@@ -982,6 +1002,7 @@ function renderPortfolioActionPipeline(data) {
                 <td><span class="pap-drift">+${Math.abs(c.drift_pct).toFixed(1)}pp</span></td>
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.severity}">${c.severity}</span></td>
                 <td>${_fviBadgeHtml(c.fvi, true)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">${c.is_protected ? "Protected — consider reducing via index vehicles" : "Node overweight reduction candidate"}</td>
@@ -1009,7 +1030,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Flag</th><th>Signal</th>
-              <th>Score</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
+              <th>Score</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
             </tr></thead>
             <tbody>
               ${cat4.map(c => `<tr class="pap-row ${c.priority === "HIGH" ? "pap-row-high" : c.priority === "MEDIUM" ? "pap-row-med" : ""}">
@@ -1018,6 +1039,7 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.signal ? `<span class="ess-badge ess-${escHtml(c.signal)}">${escHtml(c.signal)}</span>` : "—"}</td>
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
+                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
                 <td>${_fviBadgeHtml(c.fvi, false)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">
@@ -1100,8 +1122,27 @@ function renderResults(data) {
   renderPortfolioActionPipeline(data);
   // Phase 23.6B — Capital Rotation Advisor (auto-load after analysis)
   loadCRAProposal();
+  // PA-006B — Allocation Drift Intelligence (load once per session, non-blocking)
+  if (!_daiData) loadDriftIntelligence();
+  // ISSUE-12D — Signal Conflict Review (load once per session, non-blocking)
+  if (!_conflictReviewData) loadConflictReview();
+  // DISLOCATION-03 — Security Alpha (always refresh — signals change with each analysis)
+  _loadSecurityAlpha();
+  // DISLOCATION-06 — Calibration cache (load once per session, non-blocking)
+  if (!_calibrationCache) _loadCalibrationCache();
   // Phase 8.0B.X — load company context metadata (non-blocking)
   _loadSecurityMetadata();
+  // SIGNAL-GOV-02A — load advisory conflict badges for all queue + holdings symbols
+  const _allSymbols = [
+    ...((data.deployment_queue && data.deployment_queue.queue) || []).map(c => c.symbol),
+    ...(data.security_overlays || []).map(o => o.symbol),
+  ].filter(Boolean);
+  _signalConflictCache = {};
+  _loadSignalConflicts(_allSymbols).then(() => {
+    // Re-render DQ table rows after conflict data arrives (non-blocking refresh)
+    renderDeploymentQueue(data);
+  });
+  _loadDataConfidence();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1139,6 +1180,254 @@ async function loadPISStatus() {
       }
     }
   } catch (_) { /* best-effort */ }
+}
+
+function _emptyDataConfidenceProvider() {
+  return { state: "missing", date: null, age_days: null };
+}
+
+function _normalizeDataConfidenceProvider(info) {
+  if (!info || typeof info !== "object") return _emptyDataConfidenceProvider();
+  return {
+    state: String(info.state || "missing").toLowerCase(),
+    date: info.date ? String(info.date) : null,
+    age_days: info.age_days != null ? Number(info.age_days) : null,
+  };
+}
+
+function _buildDataConfidenceIndex(payload) {
+  const rowsBySymbol = {};
+  const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+  for (const row of rows) {
+    const sym = String((row && row.symbol) || "").trim().toUpperCase();
+    if (!sym) continue;
+    rowsBySymbol[sym] = {
+      symbol: sym,
+      ess: _normalizeDataConfidenceProvider(row.ess),
+      zacks: _normalizeDataConfidenceProvider(row.zacks),
+      danelfin: _normalizeDataConfidenceProvider(row.danelfin),
+      yahoo: _normalizeDataConfidenceProvider(row.yahoo),
+      fmp: _normalizeDataConfidenceProvider(row.fmp),
+      freshness: row.freshness || "",
+      sources: row.sources || {},
+    };
+  }
+  return rowsBySymbol;
+}
+
+async function _loadDataConfidence(force = false) {
+  const expectedRunId = (_analysisResult && _analysisResult.run_id) || null;
+  if (!force && _dataConfidenceCache.loading) return;
+  if (!force && _dataConfidenceCache.loaded && _dataConfidenceCache.runId === expectedRunId) return;
+
+  _dataConfidenceCache.loading = true;
+  try {
+    const resp = await fetch("/api/refresh-transparency", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const payload = await resp.json();
+    _dataConfidenceCache = {
+      runId: payload && payload.run_id ? String(payload.run_id) : expectedRunId,
+      loaded: true,
+      loading: false,
+      rowsBySymbol: _buildDataConfidenceIndex(payload),
+      error: null,
+    };
+    if (_analysisResult) _rerenderDataConfidenceSurfaces();
+  } catch (err) {
+    _dataConfidenceCache.loading = false;
+    _dataConfidenceCache.error = String(err);
+  }
+}
+
+function _rerenderDataConfidenceSurfaces() {
+  if (!_analysisResult) return;
+  renderDeploymentQueue(_analysisResult);
+  renderRecommendations(_analysisResult.recommendations || []);
+  renderPortfolioActionPipeline(_analysisResult);
+  if (_craProposal) _renderCRAProposal(_craProposal);
+}
+
+function _dataConfidenceRow(symbol) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym || !_dataConfidenceCache.loaded) return null;
+  return _dataConfidenceCache.rowsBySymbol[sym] || null;
+}
+
+function _dataConfidenceStateLabel(state) {
+  const normalized = String(state || "missing").toLowerCase();
+  if (normalized === "fresh") return "Fresh";
+  if (normalized === "stale") return "Stale";
+  return "Missing";
+}
+
+function _dataConfidenceProviderLine(providerKey, providerInfo, symbolPrefix = "") {
+  const label = _DATA_CONF_PROVIDER_LABELS[providerKey] || providerKey;
+  const state = _dataConfidenceStateLabel(providerInfo && providerInfo.state);
+  const date = providerInfo && providerInfo.date ? ` ${providerInfo.date}` : "";
+  return `${symbolPrefix}${label} ${state}${date}`.trim();
+}
+
+function _computeDataConfidenceLevel(providers, surfaceType) {
+  if (!providers) return "LOW";
+
+  if (surfaceType === "deployment") {
+    const issueCount = ["ess", "zacks", "danelfin", "yahoo", "fmp"].reduce((count, key) => {
+      return count + ((providers[key] && providers[key].state === "fresh") ? 0 : 1);
+    }, 0);
+    if (issueCount === 0) return "HIGH";
+    if (issueCount === 1) return "MEDIUM";
+    return "LOW";
+  }
+
+  const coreIssueCount = ["ess", "zacks", "danelfin", "yahoo"].reduce((count, key) => {
+    return count + ((providers[key] && providers[key].state === "fresh") ? 0 : 1);
+  }, 0);
+  const fmpIssue = !providers.fmp || providers.fmp.state !== "fresh";
+  if (coreIssueCount >= 2) return "LOW";
+  if (coreIssueCount === 1 || fmpIssue) return "MEDIUM";
+  return "HIGH";
+}
+
+function _getSymbolDataConfidence(symbol, surfaceType) {
+  if (!_dataConfidenceCache.loaded) return null;
+  const row = _dataConfidenceRow(symbol);
+  if (!row) {
+    return {
+      symbol: String(symbol || "").trim().toUpperCase(),
+      level: "LOW",
+      providers: {
+        ess: _emptyDataConfidenceProvider(),
+        zacks: _emptyDataConfidenceProvider(),
+        danelfin: _emptyDataConfidenceProvider(),
+        yahoo: _emptyDataConfidenceProvider(),
+        fmp: _emptyDataConfidenceProvider(),
+      },
+      issues: ["No freshness record available"],
+    };
+  }
+
+  const providers = {
+    ess: row.ess,
+    zacks: row.zacks,
+    danelfin: row.danelfin,
+    yahoo: row.yahoo,
+    fmp: row.fmp,
+  };
+  const level = _computeDataConfidenceLevel(providers, surfaceType);
+  const issues = [];
+  for (const key of ["ess", "zacks", "danelfin", "yahoo", "fmp"]) {
+    const info = providers[key];
+    if (!info || info.state === "fresh") continue;
+    issues.push(_dataConfidenceProviderLine(key, info));
+  }
+  return { symbol: row.symbol, level, providers, issues };
+}
+
+function _worstDataConfidenceLevel(levels) {
+  const normalized = levels.filter(Boolean);
+  if (!normalized.length) return "LOW";
+  return normalized.sort((a, b) => (_DATA_CONF_LEVEL_ORDER[a] ?? 9) - (_DATA_CONF_LEVEL_ORDER[b] ?? 9))[normalized.length - 1];
+}
+
+function _getAggregateDataConfidence(symbols, surfaceType) {
+  if (!_dataConfidenceCache.loaded) return null;
+  const unique = [...new Set((symbols || []).map((sym) => String(sym || "").trim().toUpperCase()).filter(Boolean))];
+  if (!unique.length) return null;
+
+  const perSymbol = unique.map((sym) => _getSymbolDataConfidence(sym, surfaceType)).filter(Boolean);
+  if (!perSymbol.length) return null;
+
+  const level = _worstDataConfidenceLevel(perSymbol.map((item) => item.level));
+  const issues = [];
+  for (const item of perSymbol) {
+    if (item.level === "HIGH") continue;
+    for (const issue of item.issues || []) {
+      issues.push(`${item.symbol} ${issue}`);
+    }
+  }
+  return {
+    level,
+    providers: null,
+    issues: [...new Set(issues)].slice(0, 6),
+    perSymbol,
+  };
+}
+
+function _dataConfidenceBadgeHtml(confidence, label = "Data Confidence") {
+  if (!confidence || !confidence.level) return "";
+  const text = label ? `${label}: ${confidence.level}` : confidence.level;
+  return `<span class="dc-badge dc-${confidence.level}">${text}</span>`;
+}
+
+function _dataConfidenceProviderGridHtml(confidence, title = "Data Confidence") {
+  if (!confidence || !confidence.providers) return "";
+  const items = _DATA_CONF_PROVIDER_ORDER.map((key) => {
+    const info = confidence.providers[key] || _emptyDataConfidenceProvider();
+    return `<div class="dc-provider-item">
+      <span class="dc-provider-name">${_DATA_CONF_PROVIDER_LABELS[key]}</span>
+      <span class="dc-provider-state dc-state-${info.state}">${_dataConfidenceStateLabel(info.state)}</span>
+      <span class="dc-provider-date">${info.date || "—"}</span>
+    </div>`;
+  }).join("");
+  return `<div class="dc-detail-block">
+    <div class="dc-detail-title">${title}</div>
+    <div class="dc-provider-grid">${items}</div>
+  </div>`;
+}
+
+function _dataConfidenceIssuesHtml(confidence, title = "Freshness Issues") {
+  if (!confidence || !Array.isArray(confidence.issues) || !confidence.issues.length) return "";
+  return `<div class="dc-issues-block">
+    <div class="dc-issues-title">${title}</div>
+    <ul class="dc-issues-list">${confidence.issues.map((issue) => `<li>${escHtml(issue)}</li>`).join("")}</ul>
+  </div>`;
+}
+
+function _dataConfidenceSummaryStripHtml(title, levels) {
+  if (!_dataConfidenceCache.loaded || !Array.isArray(levels) || !levels.length) return "";
+  const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+  for (const level of levels) {
+    if (counts[level] != null) counts[level] += 1;
+  }
+  return `<div class="dc-summary-strip">
+    <span class="dc-summary-title">${title}</span>
+    <span class="dc-summary-chip dc-HIGH">HIGH ${counts.HIGH}</span>
+    <span class="dc-summary-chip dc-MEDIUM">MEDIUM ${counts.MEDIUM}</span>
+    <span class="dc-summary-chip dc-LOW">LOW ${counts.LOW}</span>
+  </div>`;
+}
+
+function _recommendationDataConfidence(rec) {
+  return _getAggregateDataConfidence(rec && rec.affected_symbols, "recommendation");
+}
+
+function _recommendationSummaryLevels(recs) {
+  if (!_dataConfidenceCache.loaded) return [];
+  return (recs || [])
+    .map((rec) => _recommendationDataConfidence(rec))
+    .filter(Boolean)
+    .map((item) => item.level);
+}
+
+function _queueSummaryLevels(data) {
+  if (!_dataConfidenceCache.loaded || !data || !data.deployment_queue || !Array.isArray(data.deployment_queue.queue)) return [];
+  return data.deployment_queue.queue
+    .map((row) => _getSymbolDataConfidence(row.symbol, "deployment"))
+    .filter(Boolean)
+    .map((item) => item.level);
+}
+
+function _craSummaryLevels(proposal) {
+  if (!_dataConfidenceCache.loaded || !proposal) return [];
+  const sourceLevels = (proposal.sources || [])
+    .map((row) => _getSymbolDataConfidence(row.symbol, "recommendation"))
+    .filter(Boolean)
+    .map((item) => item.level);
+  const targetLevels = (proposal.deployments || [])
+    .map((row) => _getSymbolDataConfidence(row.symbol, "deployment"))
+    .filter(Boolean)
+    .map((item) => item.level);
+  return [...sourceLevels, ...targetLevels];
 }
 
 function kpiCard(value, label, sub = "", extraClass = "") {
@@ -2297,12 +2586,16 @@ function _yahooDirection(consensusLabel) {
   return "UNKNOWN";
 }
 
-/** Convert normalized Danelfin score (1–5) to direction. */
+/** Convert normalized Danelfin score (1–5) to direction.
+ * Official Danelfin semantics: 7–10 = Bullish, 4–6 = Neutral, 1–3 = Bearish.
+ * Normalized equivalents (÷2): ≥3.5 = Bullish, 2.0–3.49 = Neutral, <2.0 = Bearish.
+ * AI-006B: corrected from <= 2.5 to < 2.0 to align with Danelfin's published Neutral zone (4–6 raw).
+ */
 function _danelfinDirection(danelfinScore) {
   const d = parseFloat(danelfinScore);
   if (isNaN(d)) return "UNKNOWN";
   if (d >= 3.5) return "BULLISH";
-  if (d <= 2.5) return "BEARISH";
+  if (d < 2.0)  return "BEARISH";
   return "NEUTRAL";
 }
 
@@ -2342,34 +2635,38 @@ function _computeSignalAgreement(ov, ac, fs) {
   const yDir    = _yahooDirection(ac && ac.consensus_label);
   const danDir  = _danelfinDirection(ov && ov.danelfin_score);
 
-  const zRank   = _zacksNativeRank(ov && ov.zacks_rating);
-  const danRaw  = _danelfinNativeRaw(ov && ov.danelfin_score);
+  // SIGNAL-UX-01 — full translations for display
+  const _tzR    = typeof _sihZacksTranslate    !== "undefined" ? _sihZacksTranslate(ov && ov.zacks_rating) : null;
+  const _tdR    = typeof _sihDanelfinTranslate !== "undefined" ? _sihDanelfinTranslate(ov && ov.danelfin_score) : null;
+  const _teR    = typeof _sihEssTranslate      !== "undefined" ? _sihEssTranslate((ov && ov.ess_score_text) || (fs && fs.ess_text)) : null;
+  const _taR    = (ac && typeof _sihAnalystConsensusTranslate !== "undefined") ? _sihAnalystConsensusTranslate(ac.abr, ac.consensus_label) : null;
+
   const abrVal  = (ac && ac.abr != null) ? parseFloat(ac.abr).toFixed(2) : null;
   const essLabel = (ov && ov.ess_score_text) ? ov.ess_score_text.replace(/_/g, " ") : "—";
 
   const signals = [
     {
       name: "ESS",
-      native: essLabel,
-      sublabel: "Primary Signal (55%)",
+      native: _teR ? `${_teR.meaning}` : essLabel,
+      sublabel: `Primary Signal (55%)${_teR ? ' · Normalized ' + _teR.normalizedScore : ''}`,
       direction: essDir,
     },
     {
       name: "Zacks",
-      native: zRank != null ? `Rank #${zRank} ${_zacksRankLabel(zRank)}` : "—",
-      sublabel: zRank != null ? `Score ${parseFloat(ov.zacks_rating).toFixed(1)} / 5` : "",
+      native: _tzR ? `${_tzR.nativeRating} ${_tzR.meaning}` : (ov && ov.zacks_rating ? `Score ${parseFloat(ov.zacks_rating).toFixed(1)} / 5` : "—"),
+      sublabel: _tzR ? `Normalized ${_tzR.normalizedScore} / 5` : "",
       direction: zDir,
     },
     {
       name: "Yahoo ABR",
-      native: abrVal != null ? `ABR ${abrVal}` : "—",
-      sublabel: ac && ac.consensus_label ? ac.consensus_label.replace(/_/g, " ") : "",
+      native: _taR ? `${_taR.nativeRating} · ${_taR.meaning}` : (abrVal != null ? `ABR ${abrVal}` : "—"),
+      sublabel: _taR ? `Normalized ${_taR.normalizedScore}` : (ac && ac.consensus_label ? ac.consensus_label.replace(/_/g, " ") : ""),
       direction: yDir,
     },
     {
       name: "Danelfin",
-      native: danRaw != null ? `${danRaw} / 10` : "—",
-      sublabel: danRaw != null ? `Score ${parseFloat(ov.danelfin_score).toFixed(1)} / 5` : "",
+      native: _tdR ? `${_tdR.nativeRating}` : (ov && ov.danelfin_score ? `${ov.danelfin_score}` : "—"),
+      sublabel: _tdR ? `${_tdR.meaning} · Normalized ${_tdR.normalizedScore}` : (ov && ov.danelfin_score ? `Score ${parseFloat(ov.danelfin_score).toFixed(1)} / 5` : ""),
       direction: danDir,
     },
   ];
@@ -2527,7 +2824,10 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
   const essCoverageHtml = (essGapWarning && Number(essGapWarning.warning_count || 0) > 0)
     ? `<div class="sa-ess-override" style="margin-top:8px;border-color:#c0392b;background:#fff5f5;">
         ⚠ <strong>ESS Coverage Warning:</strong>
-        ${Number(essGapWarning.warning_count || 0)} holdings absent from latest ESS file.
+        ${Number(essGapWarning.warning_count || 0)} holdings require ESS attention.
+        (${Number(essGapWarning.true_missing_count || 0)} missing,
+        ${Number(essGapWarning.stale_coverage_count || 0)} stale,
+        ${Number(essGapWarning.no_fresh_starmine_count || 0)} no fresh StarMine)
         ${Array.isArray(essGapWarning.example_symbols) && essGapWarning.example_symbols.length
           ? `Examples: ${escHtml(essGapWarning.example_symbols.join(", "))}`
           : ""}
@@ -2591,6 +2891,166 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
     </div>` : ""}
     ${yahooFlag}
   </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DISLOCATION-03 — Security-Level Conflict Alpha Badges
+// Governance: display-only. No scoring, CW-DAS, ESS, UCF, Replay, CRA, PAP.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Load security alpha summary from API and populate the cache.
+ * Called once after analysis loads; non-blocking.
+ */
+async function _loadSecurityAlpha() {
+  try {
+    const resp = await fetch("/api/conflict-review/security-alpha-summary");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.securities) {
+      _securityAlphaCache = data.securities;
+    }
+  } catch (_) { /* non-blocking */ }
+}
+
+/**
+ * Get SecurityConflictAlpha for a symbol from the cache.
+ * Returns null if not available.
+ */
+function _getSecurityAlpha(symbol) {
+  if (!_securityAlphaCache || !symbol) return null;
+  return _securityAlphaCache[(symbol || "").toUpperCase()] || null;
+}
+
+/**
+ * Render a compact inline conflict alpha badge for a security.
+ * Used in DQ cards, RQ rows, and dislocation watchlist.
+ */
+function _securityAlphaBadgeHtml(symbol) {
+  const sca = _getSecurityAlpha(symbol);
+  if (!sca || !sca.alpha_class || !sca.is_conflict) return "";
+
+  const cfg = {
+    ALPHA_LEADER:  { cls: "diso3-leader",  icon: "↑", label: "ALPHA LEADER" },
+    ALPHA_LAGGARD: { cls: "diso3-laggard", icon: "↓", label: "ALPHA LAGGARD" },
+    ALPHA_NEUTRAL: { cls: "diso3-neutral", icon: "→", label: "ALPHA NEUTRAL" },
+  };
+  const c = cfg[sca.alpha_class] || { cls: "", icon: "·", label: sca.alpha_class };
+  const excessStr = sca.excess_return_pct != null
+    ? ` ${sca.excess_return_pct >= 0 ? "+" : ""}${sca.excess_return_pct}%`
+    : "";
+  const title = `${escHtml(sca.pattern_label || sca.signal_pattern)} · Excess: ${excessStr} · ${escHtml(sca.significance || "")}`;
+
+  return `<span class="diso3-badge ${c.cls}" title="${title}">${c.icon} ${c.label}${excessStr}</span>`;
+}
+
+/**
+ * Render a full Security Alpha Insight card (for profile drilldowns).
+ */
+function _securityAlphaInsightHtml(symbol) {
+  const sca = _getSecurityAlpha(symbol);
+  if (!sca) return "";
+
+  if (!sca.is_conflict && sca.alpha_class === "ALPHA_NEUTRAL") {
+    return `<div class="diso3-insight diso3-no-conflict">
+      <span class="diso3-insight-label">Signal Conflict</span>
+      <span style="color:var(--muted);font-size:0.76rem">No active conflict — signals aligned.</span>
+    </div>`;
+  }
+  if (!sca.is_conflict) return "";
+
+  const cfg = {
+    ALPHA_LEADER:  { cls: "diso3-leader-card",  badge: "↑ ALPHA LEADER",  badgeCls: "diso3-leader" },
+    ALPHA_LAGGARD: { cls: "diso3-laggard-card", badge: "↓ ALPHA LAGGARD", badgeCls: "diso3-laggard" },
+    ALPHA_NEUTRAL: { cls: "diso3-neutral-card", badge: "→ ALPHA NEUTRAL",  badgeCls: "diso3-neutral" },
+  };
+  const c = cfg[sca.alpha_class] || { cls: "", badge: sca.alpha_class || "—", badgeCls: "" };
+
+  const excessStr  = sca.excess_return_pct != null
+    ? `<span class="${sca.excess_return_pct >= 0 ? "scr-ret-pos" : "scr-ret-neg"}">${sca.excess_return_pct >= 0 ? "+" : ""}${sca.excess_return_pct}%</span>`
+    : "—";
+  const avgStr = sca.avg_return_30d_pct != null
+    ? `${sca.avg_return_30d_pct >= 0 ? "+" : ""}${sca.avg_return_30d_pct}%`
+    : "—";
+  const winStr = sca.win_rate_pct != null ? `${sca.win_rate_pct}%` : "—";
+  const sigBadge = sca.significance && sca.significance !== "INSUFFICIENT_DATA"
+    ? `<span class="scr-sig-badge scr-sig-${sca.significance.toLowerCase()}">${sca.significance}</span>`
+    : "";
+  const obsCopy = sca.observations > 0
+    ? `<span style="font-size:0.70rem;color:var(--muted)">${sca.observations} obs</span>` : "";
+
+  // DISLOCATION-06: attach calibration
+  const cal = _getCalibration(sca.signal_pattern);
+  const confBadge = cal ? _confidenceBadgeHtml(sca.signal_pattern) : "";
+  const maeStr  = cal && cal.mae_pp != null ? `MAE ±${cal.mae_pp}pp` : null;
+  const band2   = cal && cal.accuracy_bands ? cal.accuracy_bands["within_2pp"] : null;
+  const calMeta = (maeStr || band2 != null) ? `<div class="diso6-cal-meta">${
+    [maeStr, band2 != null ? `${band2}% within ±2pp` : null, cal && cal.n ? `${cal.n} calibration obs` : null]
+      .filter(Boolean).join(" · ")
+  }</div>` : "";
+
+  return `<div class="diso3-insight ${c.cls}">
+    <div class="diso3-insight-header">
+      <span class="diso3-insight-label">Conflict Alpha</span>
+      <span class="diso3-badge ${c.badgeCls}">${c.badge}</span>
+      ${sigBadge}
+      ${confBadge}
+      ${obsCopy}
+    </div>
+    <div class="diso3-insight-pattern">${escHtml(sca.pattern_label || sca.signal_pattern)}</div>
+    <div class="diso3-insight-metrics">
+      <span><span class="diso3-met-lbl">Excess Return</span> ${excessStr}</span>
+      <span><span class="diso3-met-lbl">Avg 30d Return</span> ${avgStr}</span>
+      <span><span class="diso3-met-lbl">Above-Median Rate</span> ${winStr}</span>
+    </div>
+    ${calMeta}
+    <div class="diso3-insight-text">${escHtml(sca.insight || "")}</div>
+    <div class="diso3-insight-gov">Informational only — research finding, not a trade signal.</div>
+  </div>`;
+}
+
+/**
+ * DISLOCATION-06: Load calibration index.
+ */
+async function _loadCalibrationCache() {
+  try {
+    const resp = await fetch("/api/predictive/calibration");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.patterns) {
+      _calibrationCache = {};
+      for (const c of data.patterns) {
+        if (c.pattern) _calibrationCache[c.pattern] = c;
+      }
+    }
+  } catch (_) { /* non-blocking */ }
+}
+
+/**
+ * Get calibration data for a conflict pattern.
+ */
+function _getCalibration(pattern) {
+  if (!_calibrationCache || !pattern) return null;
+  return _calibrationCache[pattern] || null;
+}
+
+/**
+ * DISLOCATION-06: Render confidence badge for a conflict pattern.
+ */
+function _confidenceBadgeHtml(pattern) {
+  const cal = _getCalibration(pattern);
+  if (!cal || !cal.confidence || cal.confidence === "INSUFFICIENT_DATA") return "";
+  const cfg = {
+    VERY_HIGH: { cls: "diso6-very-high", label: "⭐ VERY HIGH CONFIDENCE" },
+    HIGH:      { cls: "diso6-high",      label: "↑ HIGH CONFIDENCE" },
+    MEDIUM:    { cls: "diso6-medium",    label: "~ MEDIUM CONFIDENCE" },
+    LOW:       { cls: "diso6-low",       label: "↓ LOW CONFIDENCE" },
+  };
+  const c = cfg[cal.confidence] || { cls: "", label: cal.confidence };
+  const mae = cal.mae_pp != null ? ` · MAE ±${cal.mae_pp}pp` : "";
+  const band2 = (cal.accuracy_bands || {})["within_2pp"];
+  const acc = band2 != null ? ` · ${band2}% within ±2pp` : "";
+  return `<span class="diso6-badge ${c.cls}" title="Calibration n=${cal.n || 0}${mae}${acc}">${c.label}</span>`;
 }
 
 function _actionBadge(action) {
@@ -2666,6 +3126,7 @@ function renderHoldingsTable(holdings, containerId, sortMode) {
           ${_fidelityPanelHtml(fs)}
           ${_consensusPanelHtml(ac, h.ess_score_text)}
           ${_consensusStackHtml(fs, ac)}
+          ${_signalIntelligencePanelHtml(h.symbol, h, ac, fs)}
         </td>
       </tr>`;
   }).join("");
@@ -2692,6 +3153,288 @@ function renderHoldingsTable(holdings, containerId, sortMode) {
 function toggleRpsExplain(explainId) {
   const el = document.getElementById(explainId);
   if (el) el.classList.toggle("open");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI-006C — Signal Intelligence Panel (Explainable Signal Decomposition)
+// Display-only. No scoring, ranking, or recommendation changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the full signal intelligence explainability panel for a holding row.
+ * Shows: CW-DAS decomposition, UCF reasoning, driver summary, conflict analysis.
+ * All data sourced from existing analysis artifacts — no new backend calls.
+ */
+function _signalIntelligencePanelHtml(sym, ov, ac, fs) {
+  if (!sym) return "";
+  const symU = sym.toUpperCase();
+
+  // ── Data sources ──────────────────────────────────────────────────────────
+  const ucfBySymbol = (_lastAnalysisData && _lastAnalysisData.ucf_verdicts_by_symbol) || {};
+  const ucf = ucfBySymbol[symU] || {};
+  const srcSig = ucf.source_signals || {};
+  const dqBySymbol = {};
+  if (_lastAnalysisData && _lastAnalysisData.deployment_queue && _lastAnalysisData.deployment_queue.queue) {
+    for (const c of _lastAnalysisData.deployment_queue.queue) {
+      dqBySymbol[c.symbol] = c;
+    }
+  }
+  const dqEntry = dqBySymbol[symU] || {};
+  const bd = dqEntry.score_breakdown || {};
+
+  const essText    = (ov && ov.ess_score_text)  || (fs && fs.ess_text) || "";
+  const danelfin   = ov && ov.danelfin_score != null ? parseFloat(ov.danelfin_score) : null;
+  const zacks      = ov && ov.zacks_rating   != null ? parseFloat(ov.zacks_rating)   : null;
+  const composite  = ov && ov.composite_score != null ? parseFloat(ov.composite_score) : null;
+  const replayPct  = ov && ov.replay_percentile != null ? parseFloat(ov.replay_percentile) : null;
+  const replayOn   = ov && (ov.replay_supported === true || ov.replay_supported === "True");
+  const ucfLabel   = ucf.ucf_label  || "";
+  const ucfScore   = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score)  : null;
+  const ucfRank    = ucf.ucf_rank   != null ? parseInt(ucf.ucf_rank)     : null;
+  const ucfSummary = ucf.signal_summary || "";
+  const dataConfidence = _getSymbolDataConfidence(symU, "deployment");
+  const conflictFlags = ucf.conflict_flags || [];
+  const matrix = (fs && fs.consensus_matrix) || {};
+
+  // Nothing useful to show if we have no data
+  const hasData = essText || composite != null || ucfLabel || (bd.signal != null);
+  if (!hasData) return "";
+
+  // ── Helper: direction coloring ────────────────────────────────────────────
+  const dirColor = d => d === "BULLISH" ? "var(--green)" : d === "BEARISH" ? "var(--sev-high)" : "var(--muted)";
+  const dirChip  = d => `<span style="color:${dirColor(d)};font-weight:700;font-size:0.8rem">${d || "—"}</span>`;
+
+  // ── Section A: CW-DAS Score Decomposition ─────────────────────────────────
+  let cwdasHtml = "";
+  if (bd.signal != null || Object.keys(bd).length > 0) {
+    const totalScore = dqEntry.deployment_score != null ? parseFloat(dqEntry.deployment_score).toFixed(1) : "—";
+    const bars = [
+      { lbl: "Signal",      val: bd.signal,             max: 30,  tip: "ESS + Danelfin + Zacks weighted direction signal",    positive: true },
+      { lbl: "Replay",      val: bd.replay,             max: 20,  tip: "Replay backing strength and percentile",              positive: true },
+      { lbl: "Conviction",  val: bd.conviction,         max: 35,  tip: "UCF tier × conviction multiplier (CCL 1.75×, HCA 1.25×)", positive: true },
+      { lbl: "Sizing",      val: bd.sizing,             max: 8,   tip: "Headroom to portfolio weight warning threshold",      positive: true },
+      { lbl: "Momentum",    val: bd.momentum,           max: 10,  tip: "ESS momentum direction score",                       positive: true },
+      { lbl: "Fund. Mod",   val: bd.fundamental_modifier, max: 5, tip: "Fundamental consistency bonus or penalty",           positive: null },
+      { lbl: "Redund. Pen", val: -(bd.redundancy_pen||0), max: 0, tip: "Allocation node overweight penalty",                 positive: false },
+      { lbl: "Conc. Pen",   val: -(bd.conc_pen||0),    max: 0,   tip: "Concentration penalty for outsized positions",       positive: false },
+    ].filter(b => b.val != null && b.val !== 0);
+
+    const barRows = bars.map(b => {
+      const v = parseFloat(b.val) || 0;
+      const sign = v >= 0 ? "+" : "";
+      const isPos = b.positive === true || (b.positive === null && v > 0);
+      const col   = isPos ? "var(--green)" : "var(--sev-high)";
+      const pct   = b.max > 0 ? Math.min(100, Math.abs(v) / b.max * 100) : Math.min(100, Math.abs(v) * 20);
+      return `<div class="si-bd-row" title="${escHtml(b.tip)}">
+        <span class="si-bd-lbl">${escHtml(b.lbl)}</span>
+        <div class="si-bd-bar-wrap"><div class="si-bd-bar" style="width:${pct.toFixed(0)}%;background:${col}"></div></div>
+        <span class="si-bd-val" style="color:${col}">${sign}${v.toFixed(1)}</span>
+      </div>`;
+    }).join("");
+
+    cwdasHtml = `<div class="si-section">
+      <div class="si-section-title">CW-DAS Score Decomposition
+        <span class="si-section-sub">Deployment Score: <strong>${totalScore}</strong></span>
+        ${bd.thesis_integrity ? `<span class="si-badge si-badge-${bd.thesis_integrity === 'INTACT' ? 'green' : 'warn'}">${escHtml(bd.thesis_integrity)}</span>` : ""}
+        ${bd.fundamental_consistency ? `<span class="si-badge si-badge-${bd.fundamental_consistency === 'CONSISTENT' ? 'green' : 'warn'}">${escHtml(bd.fundamental_consistency.replace(/_/g," "))}</span>` : ""}
+      </div>
+      <div class="si-bd-grid">${barRows}</div>
+      ${dqEntry.notes ? `<div class="si-notes">${escHtml(dqEntry.notes)}</div>` : ""}
+    </div>`;
+  }
+
+  // ── Section B: UCF Explainability ─────────────────────────────────────────
+  let ucfHtml = "";
+  if (ucfLabel) {
+    const ucfLabelColor = {
+      CORE_CONVICTION_LEADER: "#1a6ea8",
+      HIGH_CONVICTION_ANCHOR: "#1976d2",
+      DEPLOYMENT_CANDIDATE:   "#2e7d52",
+      TACTICAL_GROWTH:        "#6a5acd",
+      MAINTAIN:               "#888",
+      TRIM_WATCH:             "#c0392b",
+    }[ucfLabel] || "var(--muted)";
+
+    const ucfDrivers = [];
+    if (srcSig.composite_score != null) ucfDrivers.push({ factor: "Composite Score", val: parseFloat(srcSig.composite_score).toFixed(2) + " / 5", rationale: "Blended ESS+Danelfin+Zacks signal score" });
+    if (srcSig.signal_direction)         ucfDrivers.push({ factor: "Signal Direction", val: srcSig.signal_direction, rationale: "Dominant signal direction across all providers" });
+    if (srcSig.replay_supported)         ucfDrivers.push({ factor: "Replay Support",  val: replayPct != null ? `${Math.round(replayPct)}th percentile` : "Active", rationale: "Historical setup has replay-backed evidence" });
+    if (srcSig.cw_das_score != null)     ucfDrivers.push({ factor: "CW-DAS Score",   val: parseFloat(srcSig.cw_das_score).toFixed(1), rationale: "Conviction-Weighted Deployment Allocation Score" });
+    if (srcSig.cw_das_rank != null)      ucfDrivers.push({ factor: "CW-DAS Rank",    val: "#" + srcSig.cw_das_rank + " in portfolio", rationale: "Portfolio-wide deployment priority ranking" });
+    if (srcSig.trim_priority_score != null && srcSig.trim_priority_score > 0)
+                                          ucfDrivers.push({ factor: "Trim Pressure",  val: parseFloat(srcSig.trim_priority_score).toFixed(0) + " / 100", rationale: "Higher = greater signal to reduce" });
+
+    const driverRows = ucfDrivers.map(d => `
+      <tr>
+        <td style="font-weight:600;font-size:0.80rem;padding:4px 8px;white-space:nowrap">${escHtml(d.factor)}</td>
+        <td style="font-size:0.80rem;padding:4px 8px;font-weight:700">${escHtml(d.val)}</td>
+        <td style="font-size:0.76rem;color:var(--muted);padding:4px 8px">${escHtml(d.rationale)}</td>
+      </tr>`).join("");
+
+    const deploymentStatus = ucf.deployment
+      ? (ucf.deployment.deployment_blocked
+          ? `<span class="si-badge si-badge-warn">Blocked: ${escHtml(ucf.deployment.deployment_block_reason || "overweight node")}</span>`
+          : `<span class="si-badge si-badge-green">Deployment Eligible</span>`)
+      : "";
+
+    ucfHtml = `<div class="si-section">
+      <div class="si-section-title">UCF Classification
+        <span style="color:${ucfLabelColor};font-weight:700;font-size:0.88rem;margin-left:6px">${escHtml(ucfLabel.replace(/_/g," "))}</span>
+        ${ucfScore != null ? `<span class="si-section-sub">Score: ${ucfScore.toFixed(1)}</span>` : ""}
+        ${ucfRank  != null ? `<span class="si-section-sub">Rank: #${ucfRank}</span>` : ""}
+        ${_dataConfidenceBadgeHtml(dataConfidence)}
+        ${deploymentStatus}
+      </div>
+      ${ucfSummary ? `<div class="si-summary-text">${escHtml(ucfSummary)}</div>` : ""}
+      ${_dataConfidenceIssuesHtml(dataConfidence)}
+      ${driverRows ? `<table class="si-driver-table"><tbody>${driverRows}</tbody></table>` : ""}
+      ${conflictFlags.length ? `<div class="si-conflict-flags">${conflictFlags.map(f => `<span class="si-badge si-badge-warn">⚑ ${escHtml(f.replace(/_/g," "))}</span>`).join(" ")}</div>` : ""}
+    </div>`;
+  }
+
+  // ── Section C: Recommendation Driver Summary ──────────────────────────────
+  const bullishDrivers = [];
+  const bearishDrivers = [];
+  const neutralDrivers = [];
+
+  // ESS
+  if (essText) {
+    const essDir = (essText === "VERY_BULLISH" || essText === "BULLISH") ? "bullish"
+                 : (essText === "VERY_BEARISH" || essText === "BEARISH") ? "bearish" : "neutral";
+    const essLabel = essText.replace(/_/g," ");
+    if (essDir === "bullish")  bullishDrivers.push({ icon: "✓", label: `ESS (StarMine): ${essLabel}`, strength: essText === "VERY_BULLISH" ? "STRONG" : "MODERATE" });
+    else if (essDir === "bearish") bearishDrivers.push({ icon: "✗", label: `ESS (StarMine): ${essLabel}`, strength: essText === "VERY_BEARISH" ? "STRONG" : "MODERATE" });
+    else neutralDrivers.push({ icon: "·", label: `ESS (StarMine): ${essLabel}`, strength: "WEAK" });
+  }
+
+  // Replay
+  if (replayOn && replayPct != null) {
+    if (replayPct >= 60) bullishDrivers.push({ icon: "✓", label: `Replay: ${Math.round(replayPct)}th percentile`, strength: replayPct >= 80 ? "STRONG" : "MODERATE" });
+    else neutralDrivers.push({ icon: "·", label: `Replay: ${Math.round(replayPct)}th percentile`, strength: "WEAK" });
+  } else if (replayOn) {
+    bullishDrivers.push({ icon: "✓", label: "Replay: Supported", strength: "MODERATE" });
+  }
+
+  // Composite score
+  if (composite != null) {
+    if (composite >= 3.5)      bullishDrivers.push({ icon: "✓", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: composite >= 4.5 ? "STRONG" : "MODERATE" });
+    else if (composite <= 2.5) bearishDrivers.push({ icon: "✗", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: composite <= 1.5 ? "STRONG" : "MODERATE" });
+    else neutralDrivers.push({ icon: "·", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: "WEAK" });
+  }
+
+  // Danelfin
+  if (danelfin != null) {
+    if (danelfin >= 3.5)      bullishDrivers.push({ icon: "✓", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: danelfin >= 4.5 ? "STRONG" : "MODERATE" });
+    else if (danelfin <= 2.5) bearishDrivers.push({ icon: "✗", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: danelfin <= 1.5 ? "STRONG" : "MODERATE" });
+    else neutralDrivers.push({ icon: "·", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: "WEAK" });
+  }
+
+  // Zacks
+  if (zacks != null) {
+    if (zacks <= 2.0)      bullishDrivers.push({ icon: "✓", label: `Zacks: ${zacks.toFixed(0)} (${zacks <= 1.5 ? "Strong Buy" : "Buy"})`, strength: zacks <= 1.5 ? "STRONG" : "MODERATE" });
+    else if (zacks >= 4.0) bearishDrivers.push({ icon: "✗", label: `Zacks: ${zacks.toFixed(0)} (Sell)`, strength: "MODERATE" });
+    else neutralDrivers.push({ icon: "·", label: `Zacks: ${zacks.toFixed(0)} (Hold)`, strength: "WEAK" });
+  }
+
+  // Analyst consensus
+  if (ac && ac.consensus_label && ac.consensus_label !== "NO_CONSENSUS") {
+    const isBuy = ["STRONG_BUY","BUY","MODERATE_BUY"].includes(ac.consensus_label);
+    const isSell = ["SELL"].includes(ac.consensus_label);
+    const label = `Analyst Consensus: ${ac.consensus_label.replace(/_/g," ")}${ac.upside_pct != null ? ` (${ac.upside_pct >= 0 ? "+" : ""}${parseFloat(ac.upside_pct).toFixed(1)}% upside)` : ""}`;
+    if (isBuy)       bullishDrivers.push({ icon: "✓", label, strength: ac.consensus_label === "STRONG_BUY" ? "STRONG" : "MODERATE" });
+    else if (isSell) bearishDrivers.push({ icon: "✗", label, strength: "MODERATE" });
+    else             neutralDrivers.push({ icon: "·", label, strength: "WEAK" });
+  }
+
+  // Fundamental modifier
+  if (bd.fundamental_modifier != null && bd.fundamental_modifier !== 0) {
+    const fm = parseFloat(bd.fundamental_modifier);
+    if (fm >= 1.5) bullishDrivers.push({ icon: "✓", label: `Fundamental Quality: +${fm.toFixed(1)} bonus (strong business quality)`, strength: fm >= 3 ? "STRONG" : "MODERATE" });
+    else if (fm <= -1.5) bearishDrivers.push({ icon: "✗", label: `Fundamental Quality: ${fm.toFixed(1)} penalty (thesis deterioration)`, strength: Math.abs(fm) >= 3 ? "STRONG" : "MODERATE" });
+  }
+
+  // Deployment block
+  if (ucf.deployment && ucf.deployment.deployment_blocked) {
+    bearishDrivers.push({ icon: "✗", label: `Deployment: Blocked (${ucf.deployment.deployment_block_reason || "overweight node"})`, strength: "MODERATE" });
+  }
+
+  const strengthColor = s => s === "STRONG" ? "var(--green)" : s === "MODERATE" ? "#e67e22" : "var(--muted)";
+  const driverItem = (d) => `<div class="si-driver-item ${d.icon === "✓" ? "si-driver-bullish" : d.icon === "✗" ? "si-driver-bearish" : "si-driver-neutral"}">
+    <span class="si-driver-icon">${d.icon}</span>
+    <span class="si-driver-label">${escHtml(d.label)}</span>
+    <span class="si-driver-strength" style="color:${strengthColor(d.strength)}">${escHtml(d.strength)}</span>
+  </div>`;
+
+  const driverSummaryHtml = (bullishDrivers.length + bearishDrivers.length + neutralDrivers.length > 0)
+    ? `<div class="si-section">
+        <div class="si-section-title">Recommendation Driver Summary</div>
+        <div class="si-drivers-grid">
+          ${bullishDrivers.length ? `<div class="si-driver-col">
+            <div class="si-driver-col-header si-col-bullish">Bullish Evidence (${bullishDrivers.length})</div>
+            ${bullishDrivers.map(driverItem).join("")}
+          </div>` : ""}
+          ${bearishDrivers.length ? `<div class="si-driver-col">
+            <div class="si-driver-col-header si-col-bearish">Bearish Evidence (${bearishDrivers.length})</div>
+            ${bearishDrivers.map(driverItem).join("")}
+          </div>` : ""}
+          ${neutralDrivers.length ? `<div class="si-driver-col">
+            <div class="si-driver-col-header si-col-neutral">Neutral (${neutralDrivers.length})</div>
+            ${neutralDrivers.map(driverItem).join("")}
+          </div>` : ""}
+        </div>
+      </div>`
+    : "";
+
+  // ── Section D: Conflict Explanation ──────────────────────────────────────
+  let conflictHtml = "";
+  const matrixClass = matrix.classification || "";
+  if (matrixClass === "MAJOR_DIVERGENCE" || matrixClass === "PARTIAL_ALIGNMENT" || conflictFlags.length > 0) {
+    const essDir   = matrix.ess_direction   || _essDirection(essText);
+    const zDir     = matrix.zacks_direction || "UNKNOWN";
+    const yahDir   = matrix.yahoo_direction || (ac ? _essDirection(ac.consensus_label === "STRONG_BUY" || ac.consensus_label === "BUY" ? "BULLISH" : ac.consensus_label === "SELL" ? "BEARISH" : "NEUTRAL") : "UNKNOWN");
+    const danDir   = danelfin != null ? (danelfin >= 3.5 ? "BULLISH" : danelfin <= 2.5 ? "BEARISH" : "NEUTRAL") : "UNKNOWN";
+
+    const sigs = [
+      { name: "ESS (StarMine)", dir: essDir,  native: essText ? essText.replace(/_/g," ") : "—" },
+      { name: "Danelfin AI",    dir: danDir,  native: danelfin != null ? danelfin.toFixed(1) + " / 5" : "—" },
+      { name: "Zacks",          dir: zDir,    native: zacks != null ? zacks.toFixed(0) + " (1=StrongBuy)" : "—" },
+      { name: "Yahoo Consensus",dir: yahDir,  native: ac ? (ac.consensus_label || "—").replace(/_/g," ") : "—" },
+    ].filter(s => s.dir && s.dir !== "UNKNOWN");
+
+    const conflictRows = sigs.map(s => `<div class="si-conflict-row">
+      <span class="si-conflict-name">${escHtml(s.name)}</span>
+      <span class="si-conflict-native" style="color:var(--muted)">${escHtml(s.native)}</span>
+      ${dirChip(s.dir)}
+    </div>`).join("");
+
+    const conflictSource = matrixClass === "MAJOR_DIVERGENCE"
+      ? "Institutional quantitative signals (ESS, Danelfin) diverge from analyst consensus. This is the root of the signal disagreement."
+      : "Signals show partial alignment — some sources agree while others diverge.";
+
+    conflictHtml = `<div class="si-section si-section-conflict">
+      <div class="si-section-title">Signal Conflict Analysis
+        <span class="si-badge ${matrixClass === "MAJOR_DIVERGENCE" ? "si-badge-warn" : "si-badge-neutral"}">${escHtml(matrixClass.replace(/_/g," "))}</span>
+      </div>
+      <div class="si-conflict-grid">${conflictRows}</div>
+      <div class="si-conflict-source"><strong>Conflict Source:</strong> ${escHtml(conflictSource)}</div>
+    </div>`;
+  }
+
+  // ── Assemble panel ────────────────────────────────────────────────────────
+  if (!cwdasHtml && !ucfHtml && !driverSummaryHtml && !conflictHtml) return "";
+
+  return `<details class="si-panel">
+    <summary class="si-panel-summary">
+      <span class="si-panel-title">▸ Signal Intelligence</span>
+      <span class="si-panel-sub">CW-DAS · UCF · Evidence · Conflicts</span>
+    </summary>
+    <div class="si-panel-body">
+      ${driverSummaryHtml}
+      ${cwdasHtml}
+      ${ucfHtml}
+      ${conflictHtml}
+    </div>
+  </details>`;
 }
 
 function _formatExplanationDriverList(items, formatter) {
@@ -2761,6 +3504,7 @@ function _buildExplanationBlock(rec) {
 function renderRecommendations(recs) {
   const el = document.getElementById("recommendationsContent");
   const sepHtml = `<div class="rec-section-separator">Allocation &amp; Portfolio Observations</div>`;
+  const summaryHtml = _dataConfidenceSummaryStripHtml("Recommendations", _recommendationSummaryLevels(recs));
 
   if (!recs.length) {
     el.innerHTML = sepHtml + `<div style="padding:20px;text-align:center;color:var(--muted)">
@@ -2795,6 +3539,7 @@ function renderRecommendations(recs) {
 
   // ── Card builder (same logic as before, reused for all lanes) ──────────
   const buildCard = (r, i) => {
+    const dataConfidence = _recommendationDataConfidence(r);
     const symbols = (r.affected_symbols || []).map(s =>
       `<span class="rec-symbol">${s}</span>`
     ).join("");
@@ -2933,12 +3678,14 @@ function renderRecommendations(recs) {
       <div class="rec-meta">
         ${stateBadge}
         <span class="rec-type-badge">${typeLabel}</span>
-        <span class="rec-conf-badge">Confidence: ${r.confidence || "—"}</span>
+        <span class="rec-conf-badge">Action Confidence: ${r.confidence || "—"}</span>
+        ${_dataConfidenceBadgeHtml(dataConfidence)}
         ${r.mandate_urgency ? `<span class="mandate-urgency-badge urgency-${r.mandate_urgency}">${r.mandate_urgency}</span>` : ""}
         ${r.mandate_drift_label ? `<span class="mandate-drift-badge mdrift-${r.mandate_drift_label}">${r.mandate_drift_label.replace(/_/g, " ")}</span>` : ""}
         ${driftStr}
         ${symbols ? `<div class="rec-symbols">${symbols}</div>` : ""}
       </div>
+      ${_dataConfidenceIssuesHtml(dataConfidence)}
       ${exposureHtml}
       ${etfBarHtml}
       ${r.recommendation_type === "CASH_ALLOCATION" && r.cash_mandate_context
@@ -3108,7 +3855,7 @@ function renderRecommendations(recs) {
     buildLane(laneExplain,   "explain",   "Explainability",       true),
   ].join("");
 
-  el.innerHTML = sepHtml + html;
+  el.innerHTML = sepHtml + summaryHtml + html;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3213,6 +3960,55 @@ function _renderConstructionEvidence(r) {
 
 // Lookup STI trim score from the last analysis data
 let _lastAnalysisData = null;
+
+// ── SIGNAL-GOV-02A: Signal conflict badge cache ───────────────────────────
+// Populated on analysis load; keyed by UPPERCASE symbol.
+let _signalConflictCache = {};
+
+/**
+ * Fetch signal conflict badges for a list of symbols (batch call).
+ * Stores results in _signalConflictCache.  Non-blocking; UI degrades gracefully.
+ */
+async function _loadSignalConflicts(symbols) {
+  if (!symbols || symbols.length === 0) return;
+  const unique = [...new Set(symbols.map(s => String(s || "").toUpperCase()).filter(Boolean))];
+  try {
+    const resp = await fetch(`/api/signal-conflicts?symbols=${unique.join(",")}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.conflicts) {
+      Object.assign(_signalConflictCache, data.conflicts);
+    }
+  } catch (_) { /* non-blocking */ }
+}
+
+/**
+ * Render HTML for SIGNAL-GOV-02A advisory conflict badges for a symbol.
+ * Returns empty string if no conflicts.
+ */
+function _signalConflictBadgesHtml(symbol) {
+  const conflicts = _signalConflictCache[(symbol || "").toUpperCase()] || [];
+  if (!conflicts.length) return "";
+
+  const SEV_CLASS = { WARN: "gov02-badge-warn", INFO: "gov02-badge-info" };
+  const TYPE_LABELS = {
+    SIGNIFICANT_CONFLICT:        "SIGNIFICANT CONFLICT",
+    HIGH_ANALYST_DISAGREEMENT:   "ANALYST DISAGREEMENT",
+    CONFLICTING_SIGNAL:          "CONFLICTING SIGNAL",
+    HOLD_CONSENSUS:              "HOLD CONSENSUS",
+    HIGH_HOLD_RATIO:             "HIGH HOLD RATIO",
+  };
+
+  const badges = conflicts.map(c => {
+    const cls   = SEV_CLASS[c.severity] || "gov02-badge-info";
+    const label = TYPE_LABELS[c.type] || c.type.replace(/_/g, " ");
+    const title = escHtml(c.description || "");
+    return `<span class="gov02-conflict-badge ${cls}" title="${title}">${label}</span>`;
+  }).join(" ");
+
+  return `<div class="gov02-conflict-strip">${badges}</div>`;
+}
+
 function _getSymbolTrimScore(sym) {
   if (!_lastAnalysisData) return null;
   const profiles = _lastAnalysisData.strategic_profiles || [];
@@ -4089,6 +4885,7 @@ function renderDeploymentQueue(data) {
 
   // Phase 7.5F — Cash deployment summary (only when plan is loaded)
   const cashSummaryHtml = hasPlan ? _daCashSummaryHtml(plan) : "";
+  const dataConfidenceSummaryHtml = _dataConfidenceSummaryStripHtml("Deployment Queue", _queueSummaryLevels(data));
 
   // Phase 7.5F — Action cards for top 10 (only when plan is loaded)
   const actionCardsHtml = hasPlan
@@ -4196,6 +4993,7 @@ function renderDeploymentQueue(data) {
       <span class="dq-advisory-note">Guidance only &#8212; not a trade instruction</span>
     </div>
     ${summaryHtml}
+    ${dataConfidenceSummaryHtml}
     ${cashContextHtml}
     ${cashSummaryHtml}
     <div class="da-action-section">
@@ -4276,6 +5074,7 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
     const sym  = rec.symbol;
     const cand = queue.find(c => c.symbol === sym) || {};
     const ucf  = _ucfBySymbol[sym] || {};
+    const dataConfidence = _getSymbolDataConfidence(sym, "deployment");
 
     const tierShort = _dqTierShort(cand.narrative_tier || "");
     const tierDp    = rec.deployment_tier || "TIER_3";
@@ -4359,8 +5158,12 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
         <span class="da-wt-arrow">→</span>
         <span class="da-wt-proj">${projWt}%</span>
       </div>
+      ${_dataConfidenceBadgeHtml(dataConfidence)}
       <div class="da-card-mv">${curMV} → ${projMV}</div>
       <div class="da-card-reasons">${reasonsHtml}</div>
+      ${_dataConfidenceIssuesHtml(dataConfidence)}
+      ${_signalConflictBadgesHtml(sym)}
+      ${_securityAlphaBadgeHtml(sym)}
       ${_dilBtnHtml}
     </div>`;
   }).join("");
@@ -4429,6 +5232,7 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
 
     // Phase 7.5F — action column: Add $ and Wt% → Proj
     const sym = c.symbol;
+    const dataConfidence = _getSymbolDataConfidence(sym, "deployment");
     const dp  = _dpBySymbol[sym] || null;
     const addAmt    = dp ? parseFloat(dp.suggested_add || 0) : null;
     const curWtDisp = c.current_weight_pct != null ? parseFloat(c.current_weight_pct).toFixed(1) + "%" : "—";
@@ -4460,24 +5264,26 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
                        : (c.current_weight_pct != null ? pct(c.current_weight_pct) + " (cur)" : "—");
     const trim = parseFloat(c.trim_score || 0);
 
-    // Phase 7.5N — native value labels for signal cards
+    // SIGNAL-UX-01 — native translations via centralized registry
     const ac2 = _consBySymbol[sym] || _consBySymbol[(sym || "").toUpperCase()] || null;
     const fs2 = _fidBySymbol2[sym] || _fidBySymbol2[(sym || "").toUpperCase()] || null;
-    const zRank2 = _zacksNativeRank(zacks);
-    const danRaw2 = _danelfinNativeRaw(danelfin);
-    const essNative   = essText !== "—" ? essText.replace(/_/g, " ") : "—";
-    const zacksNative = zRank2 != null
-      ? `#${zRank2} ${_zacksRankLabel(zRank2)}`
-      : (zacks !== "—" ? zacks : "—");
-    const danNative  = danRaw2 != null ? `${danRaw2} / 10` : (danelfin !== "—" ? danelfin : "—");
-    const abrNative2 = ac2 && ac2.abr != null
-      ? `ABR ${parseFloat(ac2.abr).toFixed(2)}${ac2.consensus_label ? " · " + ac2.consensus_label.replace(/_/g, " ") : ""}`
-      : null;
+    const _tZacks    = typeof _sihZacksTranslate    !== "undefined" ? _sihZacksTranslate(zacks) : null;
+    const _tDanelfin = typeof _sihDanelfinTranslate !== "undefined" ? _sihDanelfinTranslate(danelfin) : null;
+    const _tEss      = typeof _sihEssTranslate      !== "undefined" ? _sihEssTranslate(essText) : null;
+    const _tAbr      = (ac2 && typeof _sihAnalystConsensusTranslate !== "undefined")
+                       ? _sihAnalystConsensusTranslate(ac2.abr, ac2.consensus_label) : null;
+    // Backward-compat aliases used by legacy dq-sig-card rendering below
+    const zRank2 = _tZacks ? parseInt(_tZacks.nativeRating.replace("#","")) : null;
+    const danRaw2 = _tDanelfin ? parseInt(_tDanelfin.nativeRating) : null;
+    const essNative   = _tEss ? _tEss.meaning : (essText !== "—" ? essText.replace(/_/g, " ") : "—");
+    const zacksNative = _tZacks ? `${_tZacks.nativeRating} ${_tZacks.meaning}` : (zacks !== "—" ? zacks : "—");
+    const danNative   = _tDanelfin ? _tDanelfin.nativeRating : (danelfin !== "—" ? danelfin : "—");
+    const abrNative2  = _tAbr ? `${_tAbr.nativeRating} · ${_tAbr.meaning}` : null;
 
     return `<tr class="dq-data-row${rankCls}" onclick="_dqToggleBreakdown('${bdId}')">
       <td><span class="dq-rank-num${rankNumCls}">#${c.rank}${c.policy_rank_boost ? '<span title="Preferred Accumulation rank boost" style="font-size:0.7rem;margin-left:2px">⭐</span>' : ''}</span></td>
       <td><span class="dq-sym">${escHtml(c.symbol)}</span>${c.policy_annotation ? `<br><span class="${_policyBadgeClass(c.policy_type)}" style="margin-top:2px">${escHtml(c.policy_annotation)}</span>` : ''}</td>
-      <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span></td>
+      <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span>${dataConfidence ? `<div class="dq-data-confidence-cell">${_dataConfidenceBadgeHtml(dataConfidence)}</div>` : ""}</td>
       <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
       <td style="text-align:right;white-space:nowrap">${wtDisp}</td>
       <td style="text-align:right;font-weight:600">${c.composite_score != null ? parseFloat(c.composite_score).toFixed(2) : "—"}</td>
@@ -4501,28 +5307,32 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-sig-val dq-sig-label">${escHtml(ucfLabelShort)}</div>
             <div class="dq-sig-lbl">UCF Label</div>
           </div>
+          ${dataConfidence ? `<div class="dq-sig-card dq-sig-ucf">
+            <div class="dq-sig-val dq-sig-label">${dataConfidence.level}</div>
+            <div class="dq-sig-lbl">Data Confidence</div>
+          </div>` : ""}
           <div class="dq-sig-card">
             <div class="dq-sig-val">${escHtml(compScore)}</div>
             <div class="dq-sig-lbl">Composite</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(essText)}</div>
-            <div class="dq-sig-sublabel">Primary Signal (55%)</div>
+            <div class="dq-sig-val">${escHtml(essNative)}</div>
+            <div class="dq-sig-sublabel">Primary Signal (55%) · Normalized ${_tEss ? _tEss.normalizedScore : "—"} · <span style="${_tEss ? _sihDirColorStyle(_tEss.dirClass) : ''}">${_tEss ? _tEss.direction : "—"}</span></div>
             <div class="dq-sig-lbl">ESS</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(danNative)}</div>
-            <div class="dq-sig-sublabel">${danRaw2 != null ? "AI Score" : "Normalized 1–5"}</div>
+            <div class="dq-sig-val">${escHtml(_tDanelfin ? _tDanelfin.nativeRating : danNative)}</div>
+            <div class="dq-sig-sublabel">${_tDanelfin ? escHtml(_tDanelfin.meaning) + ' · Normalized ' + _tDanelfin.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tDanelfin.dirClass) + '">' + _tDanelfin.direction + '</span>' : 'Normalized 1–5'}</div>
             <div class="dq-sig-lbl">Danelfin</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(zacksNative)}</div>
-            <div class="dq-sig-sublabel">Normalized ${zacks !== "—" ? parseFloat(zacks).toFixed(1) + " / 5" : "—"}</div>
+            <div class="dq-sig-val">${escHtml(_tZacks ? _tZacks.nativeRating : (zacks !== "—" ? zacks : "—"))}</div>
+            <div class="dq-sig-sublabel">${_tZacks ? escHtml(_tZacks.meaning) + ' · Normalized ' + _tZacks.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tZacks.dirClass) + '">' + _tZacks.direction + '</span>' : 'Normalized ' + (zacks !== "—" ? parseFloat(zacks).toFixed(1) + " / 5" : "—")}</div>
             <div class="dq-sig-lbl">Zacks</div>
           </div>
           ${abrNative2 != null ? `<div class="dq-sig-card">
-            <div class="dq-sig-val" style="font-size:0.80rem">${escHtml(abrNative2)}</div>
-            <div class="dq-sig-sublabel">Not in v1 composite</div>
+            <div class="dq-sig-val" style="font-size:0.80rem">${escHtml(_tAbr ? _tAbr.nativeRating : abrNative2)}</div>
+            <div class="dq-sig-sublabel">${_tAbr ? escHtml(_tAbr.meaning) + ' · Normalized ' + _tAbr.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tAbr.dirClass) + '">' + _tAbr.direction + '</span>' : 'Not in v1 composite'}</div>
             <div class="dq-sig-lbl">Yahoo ABR</div>
           </div>` : ""}
           <div class="dq-sig-card">
@@ -4535,6 +5345,10 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
           </div>
         </div>
         ${ucfSummary ? `<div class="dq-signal-summary">${escHtml(ucfSummary)}</div>` : ""}
+        ${_dataConfidenceProviderGridHtml(dataConfidence, "Deployment Data Confidence")}
+        ${_dataConfidenceIssuesHtml(dataConfidence)}
+        ${_signalConflictBadgesHtml(sym)}
+        ${_securityAlphaInsightHtml(sym)}
         ${_signalAgreementPanelHtml(ov, ac2, fs2)}
         ${_dqAnalystTargetHtml(ac2)}
         <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)} <span style="font-size:0.68rem;color:var(--muted);font-weight:400">(CW-DAS v${escHtml(c.cw_das_version||'1.1')})</span></div>
@@ -4795,10 +5609,21 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
     const zacksSymDate = fsObj.zacks_sourced_date || today_str;
     const zacksSrcType = fsObj.zacks_source_type || "DIRECT_ZACKS";
     const zacksSrcLabel = zacksSrcType === "DIRECT_ZACKS" ? "Zacks Direct" : "Zacks";
-    evidence.push(`Zacks: ${zacks.toFixed(1)} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`);
+    // SIGNAL-UX-01: include native translation in evidence string
+    const _tZev = typeof _sihZacksTranslate !== "undefined" ? _sihZacksTranslate(zacks) : null;
+    const zacksEvStr = _tZev
+      ? `Zacks ${_tZev.nativeRating} (${_tZev.meaning}) · Normalized: ${_tZev.normalizedScore} · Direction: ${_tZev.direction} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`
+      : `Zacks: ${zacks.toFixed(1)} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`;
+    evidence.push(zacksEvStr);
   }
-  if (abr != null)
-    evidence.push(`ABR: ${abr.toFixed(2)} (${escHtml(consLabel)}, ${analystCnt} analysts) [Yahoo, ${escHtml(consRefresh || "—")}]`);
+  if (abr != null) {
+    // SIGNAL-UX-01: include native translation in evidence string
+    const _tAev = typeof _sihAnalystConsensusTranslate !== "undefined" ? _sihAnalystConsensusTranslate(abr, consLabel) : null;
+    const abrEvStr = _tAev
+      ? `Yahoo ABR ${_tAev.nativeRating} (${_tAev.meaning}) · Normalized: ${_tAev.normalizedScore} · Direction: ${_tAev.direction} [Yahoo, ${escHtml(consRefresh || "—")}]`
+      : `ABR: ${abr.toFixed(2)} (${escHtml(consLabel)}, ${analystCnt} analysts) [Yahoo, ${escHtml(consRefresh || "—")}]`;
+    evidence.push(abrEvStr);
+  }
   if (epsSurprise != null)
     evidence.push(`EPS surprise: ${epsSurprise.toFixed(1)}% [FMP, ${escHtml(fmpDate || "—")}]`);
   if (beatRate != null)
@@ -5047,6 +5872,39 @@ const _RQ_CATEGORY_LABELS = {
   LOW_CONVICTION_REDUCTION: "Passive Exposure",
 };
 
+// CRA-EXPLAIN-02 — Source intent metadata
+const _RQ_INTENT_META = {
+  THESIS_EXIT: {
+    badge: "THESIS EXIT",
+    cls: "rq-intent-thesis-exit",
+    explanation: null, // conviction is impaired — no positive-conviction note needed
+  },
+  THESIS_TRIM: {
+    badge: "THESIS TRIM",
+    cls: "rq-intent-thesis-trim",
+    explanation: null,
+  },
+  TAX_FUNDING_SOURCE: {
+    badge: "TAX FUNDING",
+    cls: "rq-intent-tax-funding",
+    explanation: "This position remains a positive-conviction holding. " +
+      "It is selected as a funding source due to tax characteristics rather than " +
+      "deterioration in conviction.",
+  },
+  PORTFOLIO_REALLOCATION: {
+    badge: "REALLOCATION",
+    cls: "rq-intent-reallocation",
+    explanation: "This position is being reduced for portfolio construction efficiency. " +
+      "This is not a negative thesis assessment.",
+  },
+  OVERWEIGHT_REPAIR: {
+    badge: "OVERWEIGHT REPAIR",
+    cls: "rq-intent-ow-repair",
+    explanation: "This position is being reduced to repair an overweight allocation node. " +
+      "This is not necessarily a bearish signal.",
+  },
+};
+
 function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfBySymbol, fidBySymbol) {
   const el = document.getElementById("reductionQueueContainer");
   if (!el) return;
@@ -5080,6 +5938,37 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
   const poolSources = sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
   const poolTotal = totalPool != null ? totalPool : poolSources.reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
   const blockedCount = sources.filter(s => s.blocked_by_policy).length;
+
+  // ── CRA-EXPLAIN-02: Intent Summary Card ──────────────────────────────────
+  // Aggregate by source_intent for the quick-glance breakdown above the queue.
+  const intentBuckets = {};
+  for (const s of poolSources) {
+    const intent = s.source_intent || "PORTFOLIO_REALLOCATION";
+    if (!intentBuckets[intent]) intentBuckets[intent] = { count: 0, capital: 0 };
+    intentBuckets[intent].count++;
+    intentBuckets[intent].capital += (s.estimated_proceeds || 0);
+  }
+  const intentOrder = ["THESIS_EXIT","THESIS_TRIM","TAX_FUNDING_SOURCE","OVERWEIGHT_REPAIR","PORTFOLIO_REALLOCATION"];
+  const intentCardRows = intentOrder
+    .filter(k => intentBuckets[k] && intentBuckets[k].count > 0)
+    .map(k => {
+      const meta = _RQ_INTENT_META[k] || { badge: k, cls: "" };
+      const b = intentBuckets[k];
+      return `<div class="rq-intent-summary-item">
+        <span class="rq-intent-badge ${meta.cls}">${escHtml(meta.badge)}</span>
+        <span class="rq-intent-count">${b.count} position${b.count !== 1 ? "s" : ""}</span>
+        <span class="rq-intent-capital">${formatMV(Math.round(b.capital))}</span>
+      </div>`;
+    }).join("");
+
+  const intentSummaryHtml = intentCardRows ? `<div class="rq-intent-summary-card">
+    <div class="rq-intent-summary-title">Capital Sources Summary</div>
+    <div class="rq-intent-summary-grid">${intentCardRows}</div>
+    <div class="rq-intent-summary-note">
+      Positions labelled TAX FUNDING, OVERWEIGHT REPAIR, or REALLOCATION are not negative thesis assessments —
+      they are being tapped as capital sources for structural or tax reasons.
+    </div>
+  </div>` : "";
 
   const rows = top10.map((s, idx) => {
     const blocked = s.blocked_by_policy;
@@ -5181,20 +6070,37 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const totalPortMV = (_lastAnalysisData && _lastAnalysisData.total_market_value) || 0;
     const suggestedPct = totalPortMV > 0 ? (suggestedMV / totalPortMV * 100).toFixed(2) + "%" : "—";
 
-    // Human rationale: use evidence_summary from CRA source if available, otherwise build one
+    // PAP-EXPLAIN-02 Fix: Use CRA-specific rationale first, UCF signal_summary only as secondary context.
+    // The UCF signal_summary describes conviction stance (e.g. "Hold; do not prioritize for new cash")
+    // which correctly reflects retention intent — but when shown alone as the reduction rationale, it
+    // contradicts the CRA's selection of this position as a funding source.
+    // Resolution: CRA reduction_reason/evidence_summary = WHY it's a source; UCF summary = conviction context.
     let rationale = "";
-    if (sigSummary) {
-      rationale = sigSummary;
+    const craReason = s.reduction_reason || s.evidence_summary || "";
+    if (craReason) {
+      rationale = escHtml(craReason);
+      // If UCF says something different (e.g. Hold), surface it as explicit context — not contradiction
+      if (sigSummary && !sigSummary.toLowerCase().includes("trim") && !sigSummary.toLowerCase().includes("reduce")) {
+        rationale += `<div class="rq-conviction-context">
+          <span class="rq-conv-label">UCF Conviction:</span>
+          <span class="rq-conv-text">${escHtml(sigSummary)}</span>
+          <span class="rq-conv-note">This position has positive conviction. It is selected as a funding source due to its tax characteristics, not signal deterioration. Proceeds fund higher-conviction opportunities.</span>
+        </div>`;
+      }
+    } else if (s.category === "TAX_AWARE_EXIT") {
+      rationale = `${escHtml(sym)} carries an unrealized loss (~${s.unrealized_gain_loss != null ? '$' + Math.abs(s.unrealized_gain_loss).toFixed(0) : 'unknown'}). Tax-loss harvesting improves after-tax returns. Proceeds fund higher-conviction positions.`;
+      if (sigSummary) {
+        rationale += `<div class="rq-conviction-context"><span class="rq-conv-label">UCF Conviction:</span> <span class="rq-conv-text">${escHtml(sigSummary)}</span></div>`;
+      }
     } else if (s.category === "LOW_CONVICTION_REDUCTION") {
       rationale = `${escHtml(sym)} is held as a passive allocation vehicle with no individual ESS signal data. Under the Concentrated Alpha mandate, this position represents an opportunity cost — capital that could fund a higher-conviction direct holding.`;
     } else if (s.category === "OVERWEIGHT_REDUCTION") {
       rationale = `${escHtml(sym)} is in an allocation node that is overweight vs. the mandate target. Partial reduction brings the portfolio back toward strategic alignment.`;
-    } else if (s.category === "TAX_AWARE_EXIT") {
-      rationale = `${escHtml(sym)} has an unrealized loss position. Tax-aware exit may improve after-tax returns.`;
     } else if (s.category === "SIGNAL_DETERIORATION") {
-      rationale = `${escHtml(sym)} shows deteriorating signal quality (${escHtml(essOv || 'BEARISH')}). ESS and conviction scores have weakened. Priority reduction candidate.`;
+      rationale = `${escHtml(sym)} shows deteriorating signal quality. ESS and conviction scores have weakened. Priority reduction candidate.`;
+      if (sigSummary) rationale += ` ${escHtml(sigSummary)}`;
     } else {
-      rationale = s.evidence_summary ? escHtml(s.evidence_summary) : `${escHtml(sym)}: ${catLabel}`;
+      rationale = sigSummary ? escHtml(sigSummary) : (s.evidence_summary ? escHtml(s.evidence_summary) : `${escHtml(sym)}: ${catLabel}`);
     }
 
     // Fidelity deep-link
@@ -5263,6 +6169,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       _pcBySymDIL[symUpper] || null
     );
     const dilPanelHtml = _dilHtml(_dilResult);
+    // DISLOCATION-03: conflict alpha insight for reduction candidates
+    const rqAlphaHtml = _securityAlphaInsightHtml(sym);
 
     // THESIS-EXPLAIN-01: investment thesis for reduction candidates
     const _rqThesis = _buildInvestmentThesis(
@@ -5276,11 +6184,21 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     );
     const rqThesisPanelHtml = _thesisHtml(_rqThesis);
 
+    // ── CRA-EXPLAIN-02: intent badge + explanation ─────────────────────────
+    const intentMeta = _RQ_INTENT_META[s.source_intent] || null;
+    const intentBadgeHtml = intentMeta
+      ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
+      : "";
+    const intentExplanationHtml = (intentMeta && intentMeta.explanation)
+      ? `<div class="rq-intent-explanation">${escHtml(intentMeta.explanation)}</div>`
+      : "";
+
     const mainRow = `<tr class="rq-row${rowClass}">
       <td class="rq-rank">${idx + 1}</td>
       <td>
         <div class="rq-sym">${escHtml(sym)}</div>
-        <div class="rq-cat">${catLabel} ${essText}</div>
+        <div class="rq-cat">${catLabel} ${essText} ${intentBadgeHtml}</div>
+        ${intentExplanationHtml}
         <button class="rq-expand-btn" onclick="(function(){const p=document.getElementById('${profileId}');if(p){p.classList.toggle('rq-open');this.textContent=p.classList.contains('rq-open')?'▲ Less':'▼ Profile';}}).call(this)">▼ Profile</button>
       </td>
       <td>${priBadge}</td>
@@ -5290,7 +6208,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
 
     const profileRow = `<tr class="rq-profile-row" id="${profileId}">
       <td></td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
     </tr>`;
 
     return mainRow + profileRow;
@@ -5307,6 +6225,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       ${blockedNote}
       <span class="rq-advisory">Source capital — guidance only, not trade instructions</span>
     </div>
+    ${intentSummaryHtml}
     <table class="rq-table">
       <thead><tr>
         <th style="width:28px">Rank</th>
@@ -5424,6 +6343,7 @@ function _disRenderRows(all, ovBySymbol) {
       <td colspan="4">
         <div class="dis-expand-header">${tierLabel} — ${escHtml(d.symbol)}</div>
         <ul class="dis-evidence-list">${evList}</ul>
+        ${_securityAlphaInsightHtml(d.symbol)}
       </td>
     </tr>`;
   }).join("");
@@ -5451,7 +6371,853 @@ function _disToggleWatch() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ISSUE-10 — Analyst Target Intelligence block (CII-005 / Layer 1 transparency)
+// PA-006B — Allocation Drift Intelligence Panel
+// Governance: display-only. No changes to CRA, PAP, ESS, CW-DAS, UCF,
+// Replay, governance rules, or allocation targets.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _daiData = null;  // cached intelligence payload
+
+async function loadDriftIntelligence() {
+  const section = document.getElementById("driftIntelligenceSection");
+  const content = document.getElementById("driftIntelligenceContent");
+  const badge   = document.getElementById("daiVersionBadge");
+  const btn     = document.getElementById("daiRefreshBtn");
+  if (!section || !content) return;
+
+  if (btn) btn.disabled = true;
+  section.style.display = "block";
+  content.innerHTML = `<div style="color:var(--muted);padding:12px 0;font-size:0.84rem"><span class="spinner"></span> Loading allocation intelligence…</div>`;
+
+  try {
+    const [sumResp, priResp, chrResp, momResp] = await Promise.all([
+      fetch("/api/drift/intelligence-summary"),
+      fetch("/api/drift/priorities"),
+      fetch("/api/drift/chronic"),
+      fetch("/api/drift/momentum"),
+    ]);
+    const summary     = await sumResp.json();
+    const priorities  = await priResp.json();
+    const chronic     = await chrResp.json();
+    const momentum    = await momResp.json();
+    _daiData = { summary, priorities, chronic, momentum };
+
+    if (badge) {
+      const total = summary.total_nodes || 0;
+      badge.textContent = `${total} nodes`;
+    }
+    content.innerHTML = _renderDriftIntelligence(summary, priorities, chronic, momentum);
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--sev-high);padding:12px 0">Allocation Intelligence unavailable: ${escHtml(String(e))}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _daiTrendBadge(trend) {
+  const meta = {
+    IMPROVING:     { label: "↑ IMPROVING",     cls: "dai-trend-IMPROVING" },
+    DETERIORATING: { label: "↓ DETERIORATING", cls: "dai-trend-DETERIORATING" },
+    OSCILLATING:   { label: "~ OSCILLATING",   cls: "dai-trend-OSCILLATING" },
+    STABLE:        { label: "→ STABLE",         cls: "dai-trend-STABLE" },
+  };
+  const m = meta[trend] || { label: trend, cls: "" };
+  return `<span class="dai-trend-badge ${m.cls}">${m.label}</span>`;
+}
+
+function _daiPersBadge(cls) {
+  return `<span class="dai-pers-badge dai-pers-${cls}">${escHtml(cls)}</span>`;
+}
+
+function _daiSevCls(sev) {
+  return `dai-sev-${sev}`;
+}
+
+function _daiMomentumHtml(score) {
+  if (score == null) return "—";
+  const pct = Math.min(100, Math.abs(score));
+  const half = (pct / 2).toFixed(1);
+  const isPos = score >= 0;
+  const valCls = isPos ? "dai-mom-pos" : "dai-mom-neg";
+  const fillHtml = isPos
+    ? `<div class="dai-mom-fill-pos" style="width:${half}%"></div>`
+    : `<div class="dai-mom-fill-neg" style="width:${half}%"></div>`;
+  return `<div class="dai-mom-wrap">
+    <div class="dai-mom-track">${fillHtml}</div>
+    <span class="dai-mom-val ${valCls}">${score >= 0 ? "+" : ""}${score}</span>
+  </div>`;
+}
+
+function _daiDriftHtml(drift) {
+  if (drift == null) return "—";
+  const cls = drift > 0 ? "dai-drift-pos" : drift < 0 ? "dai-drift-neg" : "";
+  return `<span class="${cls}">${drift >= 0 ? "+" : ""}${parseFloat(drift).toFixed(2)}pp</span>`;
+}
+
+function _renderDriftIntelligence(summary, priorities, chronic, momentum) {
+  const tc = summary.trend_counts || {};
+  const govNote = summary.governance_note || "";
+
+  // ── Trend summary strip ───────────────────────────────────────────────────
+  const trendOrder = [
+    { key: "IMPROVING",     label: "Improving" },
+    { key: "STABLE",        label: "Stable" },
+    { key: "DETERIORATING", label: "Deteriorating" },
+    { key: "OSCILLATING",   label: "Oscillating" },
+  ];
+  const trendStrip = `<div class="dai-trend-strip">
+    ${trendOrder.map(t => `<div class="dai-trend-card dai-trend-${t.key}">
+      <div class="dai-trend-val">${tc[t.key] || 0}</div>
+      <div class="dai-trend-lbl">${t.label}</div>
+    </div>`).join("")}
+    <div class="dai-trend-card">
+      <div class="dai-trend-val">${summary.violation_nodes || 0}</div>
+      <div class="dai-trend-lbl">In Violation</div>
+    </div>
+    ${summary.structural_count ? `<div class="dai-trend-card" style="background:#fdecea">
+      <div class="dai-trend-val" style="color:#880e4f">${summary.structural_count}</div>
+      <div class="dai-trend-lbl">Structural</div>
+    </div>` : ""}
+    <div class="dai-gov-note" style="flex:1 1 240px">${escHtml(govNote)}</div>
+  </div>`;
+
+  // ── Top Allocation Risks (Part D) ─────────────────────────────────────────
+  const top10 = priorities.top10 || [];
+  const priRows = top10.map((p, i) => {
+    const rankCls = i === 0 ? " rank1" : "";
+    return `<tr>
+      <td><span class="dai-rank-num${rankCls}">${p.rank}</span></td>
+      <td style="font-weight:600">${escHtml(p.node_label || p.node_key)}</td>
+      <td>${_daiTrendBadge(p.trend)}</td>
+      <td>${_daiPersBadge(p.persistence_class)}</td>
+      <td><span class="${_daiSevCls(p.severity)}">${escHtml(p.severity)}</span></td>
+      <td>${_daiDriftHtml(p.current_drift_pct)}</td>
+      <td>${_daiMomentumHtml(p.momentum_score)}</td>
+      <td style="font-size:0.76rem;color:var(--muted)">${escHtml(p.primary_reason)}</td>
+      <td style="text-align:right;font-size:0.76rem;color:var(--muted)">${parseFloat(p.priority_score || 0).toFixed(0)}</td>
+    </tr>`;
+  }).join("");
+
+  const prioritiesHtml = `<div>
+    <div class="dai-section-header">Top Allocation Risks — Attention Ranking</div>
+    <div style="overflow-x:auto"><table class="dai-table">
+      <thead><tr>
+        <th>Rank</th><th>Node</th><th>Trend</th><th>Persistence</th><th>Severity</th>
+        <th>Drift</th><th>Momentum</th><th>Reason</th><th style="text-align:right">Score</th>
+      </tr></thead>
+      <tbody>${priRows || '<tr><td colspan="9" style="color:var(--muted);text-align:center;padding:12px">No violation data — run analysis first</td></tr>'}</tbody>
+    </table></div>
+  </div>`;
+
+  // ── Chronic Violations (Part C) ───────────────────────────────────────────
+  const chronicNodes = (chronic.chronic || []).slice(0, 10);
+  const chronRows = chronicNodes.map(c => {
+    const fvDate = c.first_violation_date ? escHtml(c.first_violation_date) : "—";
+    return `<tr>
+      <td style="font-weight:600">${escHtml(c.node_label || c.node_key)}</td>
+      <td>${_daiPersBadge(c.persistence_class)}</td>
+      <td style="text-align:right">${c.violation_count}/${c.dates_available}</td>
+      <td style="text-align:right">${c.persistence_pct != null ? c.persistence_pct + "%" : "—"}</td>
+      <td><span class="${_daiSevCls(c.severity)}">${escHtml(c.severity)}</span></td>
+      <td>${_daiDriftHtml(c.current_drift_pct)}</td>
+      <td style="font-size:0.76rem;color:var(--muted)">${fvDate}</td>
+    </tr>`;
+  }).join("");
+
+  const chronicHtml = `<div>
+    <div class="dai-section-header">Chronic &amp; Structural Violations</div>
+    ${chronicNodes.length ? `<div style="overflow-x:auto"><table class="dai-table">
+      <thead><tr>
+        <th>Node</th><th>Persistence</th><th>Violations</th><th>Rate</th>
+        <th>Severity</th><th>Current Drift</th><th>First Violation</th>
+      </tr></thead>
+      <tbody>${chronRows}</tbody>
+    </table></div>` : `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No chronic violations in available history.</div>`}
+  </div>`;
+
+  // ── Drift Momentum Heatmap (Part B/E) ─────────────────────────────────────
+  const momNodes = (momentum.nodes || []).slice(0, 15);
+  const momItems = momNodes.map(n => {
+    const score = parseFloat(n.momentum_score || 0);
+    const trendCls = n.trend === "IMPROVING" ? "dai-trend-IMPROVING"
+                   : n.trend === "DETERIORATING" ? "dai-trend-DETERIORATING"
+                   : "dai-trend-STABLE";
+    const bgColor = score > 20 ? "#e8f5e9" : score < -20 ? "#fdecea" : "#f5f0e8";
+    return `<div style="background:${bgColor};border-radius:6px;padding:8px 10px;display:flex;align-items:center;gap:10px;min-width:180px">
+      <span style="font-weight:700;font-size:0.82rem;font-family:monospace">${escHtml(n.node_label || n.node_key)}</span>
+      <span class="dai-trend-badge ${trendCls}" style="font-size:0.64rem">${n.trend}</span>
+      ${_daiMomentumHtml(n.momentum_score)}
+    </div>`;
+  }).join("");
+
+  const momentumHtml = `<div>
+    <div class="dai-section-header">Drift Momentum Heatmap</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">${momItems || '<span style="color:var(--muted);font-size:0.82rem">No momentum data available.</span>'}</div>
+    <div style="font-size:0.70rem;color:var(--muted)">
+      Momentum score: +100 = rapid improvement · 0 = stable · −100 = rapid deterioration
+    </div>
+  </div>`;
+
+  // ── Executive highlights ──────────────────────────────────────────────────
+  const highlights = [];
+  if (summary.top_priority) {
+    const tp = summary.top_priority;
+    highlights.push({ cls: "dai-drift-pos", text: `Highest-priority concern: <strong>${escHtml(tp.node_label || tp.node_key)}</strong> — ${escHtml(tp.primary_reason)}` });
+  }
+  if (summary.most_deteriorating) {
+    const md = summary.most_deteriorating;
+    highlights.push({ cls: "dai-drift-pos", text: `Most deteriorating: <strong>${escHtml(md.node_label || md.node_key)}</strong> (momentum ${md.momentum_score})` });
+  }
+  if (summary.most_improving) {
+    const mi = summary.most_improving;
+    highlights.push({ cls: "dai-drift-neg", text: `Fastest improving: <strong>${escHtml(mi.node_label || mi.node_key)}</strong> (momentum +${mi.momentum_score})` });
+  }
+  if (summary.structural_count > 0) {
+    highlights.push({ cls: "dai-drift-pos", text: `${summary.structural_count} structural violation(s) persisting across ≥75% of available history` });
+  }
+
+  const highlightsHtml = highlights.length ? `<div class="dai-section-header">Key Observations</div>
+    <div style="margin-bottom:14px">
+      ${highlights.map(h => `<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:0.82rem">
+        <div class="narrative-dot narrative-dot-act" style="flex-shrink:0"></div>
+        <span>${h.text}</span>
+      </div>`).join("")}
+    </div>` : "";
+
+  return [trendStrip, highlightsHtml, prioritiesHtml, chronicHtml, momentumHtml].join("\n");
+}
+// Governance: display-only, learning/explainability only.
+// No changes to ESS, CW-DAS, UCF, CRA, Replay, PAP, or Governance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _conflictReviewData = null;  // cached API response
+let _securityAlphaCache = null;  // DISLOCATION-03: {symbol → SecurityConflictAlpha}
+let _calibrationCache   = null;   // DISLOCATION-06: {pattern → calibration}
+let _directionalCache   = null;   // DISLOCATION-07: {pattern → directional accuracy}
+
+// Pattern label display mapping
+const _SCR_PATTERN_LABELS = {
+  ESS_BULLISH_ANALYST_MAJORITY_BEARISH: { short: "ESS Buy / Analyst Sell",     cls: "scr-conflict-major" },
+  ESS_BULLISH_ANALYST_SKEPTICAL:        { short: "ESS Buy / Analysts Skeptical", cls: "scr-conflict-moderate" },
+  ESS_BULLISH_ANALYST_FULL_AGREE:       { short: "ESS Buy / All Agree Buy",     cls: "scr-agree-bullish" },
+  ESS_BULLISH_ANALYST_MIXED:            { short: "ESS Buy / Analysts Mixed",    cls: "scr-conflict-minor" },
+  ESS_BEARISH_ANALYST_MAJORITY_BULLISH: { short: "ESS Sell / Analyst Buy",      cls: "scr-conflict-major" },
+  ESS_BEARISH_ANALYST_FULL_AGREE:       { short: "ESS Sell / All Agree Sell",   cls: "scr-agree-bearish" },
+  ESS_BEARISH_ANALYST_MIXED:            { short: "ESS Sell / Analysts Mixed",   cls: "scr-conflict-minor" },
+  ESS_NEUTRAL_ANALYST_BULLISH:          { short: "ESS Neutral / Analysts Buy",  cls: "scr-conflict-minor" },
+  ESS_NEUTRAL_ANALYST_BEARISH:          { short: "ESS Neutral / Analysts Sell", cls: "scr-conflict-minor" },
+  ESS_NEUTRAL_ANALYST_MIXED:            { short: "ESS Neutral / Analysts Mixed",cls: "scr-conflict-minor" },
+};
+
+async function loadConflictReview() {
+  const section  = document.getElementById("conflictReviewSection");
+  const content  = document.getElementById("conflictReviewContent");
+  const badge    = document.getElementById("scrVersionBadge");
+  const refreshBtn = document.getElementById("scrRefreshBtn");
+  if (!section || !content) return;
+
+  if (refreshBtn) refreshBtn.disabled = true;
+  section.style.display = "block";
+  content.innerHTML = `<div style="color:var(--muted);padding:12px 0;font-size:0.84rem"><span class="spinner"></span> Loading signal conflict review…</div>`;
+
+  try {
+    const [summaryResp, outcomesResp, scorecardResp] = await Promise.all([
+      fetch("/api/conflict-review/summary"),
+      fetch("/api/conflict-review/outcomes"),
+      fetch("/api/conflict-review/scorecard"),
+    ]);
+    const summary  = await summaryResp.json();
+    const outcomes = await outcomesResp.json();
+    const scorecard = await scorecardResp.json();
+
+    _conflictReviewData = { summary, outcomes, scorecard };
+
+    if (badge) {
+      const v = summary.meta?.version || "1.0";
+      const rows = summary.meta?.inventory_rows || 0;
+      badge.textContent = `v${v} · ${rows} observations`;
+    }
+
+    content.innerHTML = _renderConflictReview(summary, outcomes, scorecard);
+    // Auto-load alpha attribution after the main review loads
+    loadConflictAlpha();
+    // DISLOCATION-06: load calibration and render
+    if (!_calibrationCache) {
+      _loadCalibrationCache().then(() => _renderCalibrationPanel());
+    } else {
+      _renderCalibrationPanel();
+    }
+    // DISLOCATION-07: load directional accuracy and render
+    if (!_directionalCache) {
+      _loadDirectionalCache().then(() => _renderDirectionalPanel());
+    } else {
+      _renderDirectionalPanel();
+    }
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--sev-high);padding:12px 0">Signal Conflict Review unavailable: ${escHtml(String(e))}</div>`;
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
+function _renderConflictReview(summary, outcomes, scorecard) {
+  const learning = summary.learning || {};
+  const meta     = summary.meta     || {};
+  const patterns = (outcomes.patterns || []);
+  const cards    = (scorecard.scorecard || []);
+
+  // ── Overview strip ────────────────────────────────────────────────────────
+  const conflictObs = meta.conflict_rows || 0;
+  const totalObs    = meta.inventory_rows || 0;
+  const essRate     = learning.ess_conflict_correct_rate_pct;
+
+  const overviewHtml = `<div class="scr-overview-strip">
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${totalObs.toLocaleString()}</div>
+      <div class="scr-ov-lbl">Signal Observations</div>
+    </div>
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${conflictObs.toLocaleString()}</div>
+      <div class="scr-ov-lbl">Conflict Cases</div>
+    </div>
+    ${essRate != null ? `<div class="scr-ov-card scr-ov-accent">
+      <div class="scr-ov-val">${essRate}%</div>
+      <div class="scr-ov-lbl">ESS Correct During Conflicts</div>
+    </div>` : ""}
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${(meta.pattern_count || patterns.length)}</div>
+      <div class="scr-ov-lbl">Conflict Patterns</div>
+    </div>
+    <div class="scr-ov-governance">
+      <span class="scr-gov-badge">ℹ Informational</span>
+      ${escHtml(learning.governance_note || "Display-only — no scoring changes.")}
+    </div>
+  </div>`;
+
+  // ── Part E: Learning highlights ───────────────────────────────────────────
+  const topWinners = (learning.strongest_conflict_winners || []).slice(0, 4);
+  const topLosers  = (learning.strongest_conflict_losers  || []).slice(0, 4);
+  const mostRel    = (learning.most_reliable_patterns     || []);
+  const leastRel   = (learning.least_reliable_patterns    || []);
+
+  const learningHtml = `<div class="scr-learning-section">
+    <div class="scr-section-header">Portfolio Learning Summary</div>
+    <div class="scr-learning-grid">
+      <div class="scr-learn-card">
+        <div class="scr-learn-card-title scr-title-win">Strongest Conflict Winners</div>
+        ${topWinners.length ? topWinners.map(w =>
+          `<div class="scr-learn-item"><span class="scr-sym">${escHtml(w.symbol)}</span><span class="scr-count">${w.winner_count}× above median</span></div>`
+        ).join("") : '<div class="scr-learn-empty">Insufficient data</div>'}
+      </div>
+      <div class="scr-learn-card">
+        <div class="scr-learn-card-title scr-title-lose">Strongest Conflict Losers</div>
+        ${topLosers.length ? topLosers.map(l =>
+          `<div class="scr-learn-item"><span class="scr-sym">${escHtml(l.symbol)}</span><span class="scr-count">${l.loser_count}× below median</span></div>`
+        ).join("") : '<div class="scr-learn-empty">Insufficient data</div>'}
+      </div>
+      <div class="scr-learn-card">
+        <div class="scr-learn-card-title scr-title-rel">Most Reliable Conflict Patterns</div>
+        ${mostRel.length ? mostRel.map(p => {
+          const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: p.pattern.replace(/_/g," "), cls: "" };
+          return `<div class="scr-learn-item">
+            <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
+            <span class="scr-count">${p.winner_rate_pct != null ? p.winner_rate_pct + "% win" : "—"}</span>
+          </div>`;
+        }).join("") : '<div class="scr-learn-empty">Insufficient data (need ≥5 cases)</div>'}
+      </div>
+      <div class="scr-learn-card">
+        <div class="scr-learn-card-title scr-title-norel">Least Reliable Conflict Patterns</div>
+        ${leastRel.length ? leastRel.map(p => {
+          const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: p.pattern.replace(/_/g," "), cls: "" };
+          return `<div class="scr-learn-item">
+            <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
+            <span class="scr-count">${p.winner_rate_pct != null ? p.winner_rate_pct + "% win" : "—"}</span>
+          </div>`;
+        }).join("") : '<div class="scr-learn-empty">Insufficient data (need ≥5 cases)</div>'}
+      </div>
+    </div>
+  </div>`;
+
+  // ── Part B: Pattern outcomes table ───────────────────────────────────────
+  const conflictPatterns = patterns.filter(p => !p.signal_pattern.includes("FULL_AGREE"));
+  const baselinePatterns = patterns.filter(p => p.signal_pattern.includes("FULL_AGREE"));
+
+  const patternRowHtml = (p) => {
+    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: p.signal_pattern.replace(/_/g," "), cls: "" };
+    const winCls = (p.winner_rate_pct != null && p.winner_rate_pct >= 60) ? "scr-pct-good"
+                 : (p.winner_rate_pct != null && p.winner_rate_pct <= 40) ? "scr-pct-bad"
+                 : "";
+    const retCls = (p.avg_return_30d_pct != null && p.avg_return_30d_pct > 0) ? "scr-ret-pos" : "scr-ret-neg";
+    const essCorrect = p.ess_correct_rate_pct != null
+      ? `<span class="scr-ess-rate ${p.ess_correct_rate_pct >= 55 ? "scr-pct-good" : "scr-pct-bad"}">${p.ess_correct_rate_pct}%</span>`
+      : "—";
+    const topSyms = (p.top_symbols || []).slice(0, 4).map(s => `<span class="scr-sym-chip">${escHtml(s)}</span>`).join("");
+    return `<tr>
+      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
+      <td style="text-align:right">${p.occurrences}</td>
+      <td style="text-align:right"><span class="${winCls}">${p.winner_rate_pct != null ? p.winner_rate_pct + "%" : "—"}</span></td>
+      <td style="text-align:right">${p.loser_rate_pct != null ? p.loser_rate_pct + "%" : "—"}</td>
+      <td style="text-align:right"><span class="${retCls}">${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</span></td>
+      <td style="text-align:right">${p.median_return_30d_pct != null ? (p.median_return_30d_pct >= 0 ? "+" : "") + p.median_return_30d_pct + "%" : "—"}</td>
+      <td style="text-align:right">${p.best_return_30d_pct != null ? "+" + p.best_return_30d_pct + "%" : "—"}</td>
+      <td style="text-align:right">${p.worst_return_30d_pct != null ? p.worst_return_30d_pct + "%" : "—"}</td>
+      <td>${essCorrect}</td>
+      <td style="font-size:0.72rem">${topSyms}</td>
+    </tr>`;
+  };
+
+  const outcomesHtml = `<div class="scr-outcomes-section">
+    <div class="scr-section-header">
+      Part B — Conflict Pattern Outcomes
+      <span style="font-size:0.74rem;color:var(--muted);font-weight:400;margin-left:8px">30-day forward return vs. snapshot median. WINNER = above median, LOSER = below median.</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="scr-table">
+        <thead><tr>
+          <th>Signal Pattern</th>
+          <th style="text-align:right">Cases</th>
+          <th style="text-align:right">Win %</th>
+          <th style="text-align:right">Lose %</th>
+          <th style="text-align:right">Avg Ret</th>
+          <th style="text-align:right">Median Ret</th>
+          <th style="text-align:right">Best</th>
+          <th style="text-align:right">Worst</th>
+          <th style="text-align:right">ESS Correct</th>
+          <th>Top Winners</th>
+        </tr></thead>
+        <tbody>
+          ${conflictPatterns.length ? conflictPatterns.map(patternRowHtml).join("") : '<tr><td colspan="10" style="color:var(--muted);padding:12px;text-align:center">Insufficient data — need price history overlap with ESS archive</td></tr>'}
+          ${baselinePatterns.length ? `<tr><td colspan="10" style="font-size:0.72rem;color:var(--muted);padding:6px 4px;background:#f5f0e8">Baseline (no conflict)</td></tr>` + baselinePatterns.map(patternRowHtml).join("") : ""}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  // ── Part C: Signal reliability scorecard ─────────────────────────────────
+  const scorecardHtml = `<div class="scr-scorecard-section">
+    <div class="scr-section-header">Part C — Signal Reliability Scorecard</div>
+    <div class="scr-scorecard-grid">
+      ${cards.map(c => {
+        const dirIcon = c.direction === "BULLISH" ? "↑" : "↓";
+        const dirCls  = c.direction === "BULLISH" ? "scr-dir-bull" : "scr-dir-bear";
+        const allWin  = c.winner_rate_pct;
+        const confWin = c.conflict_winner_rate_pct;
+        const allRet  = c.avg_return_pct;
+        return `<div class="scr-scorecard-card">
+          <div class="scr-sc-header">
+            <span class="scr-sc-signal">${escHtml(c.signal_name)}</span>
+            <span class="scr-sc-dir ${dirCls}">${dirIcon} ${c.direction}</span>
+          </div>
+          <div class="scr-sc-metrics">
+            <div class="scr-sc-metric">
+              <div class="scr-sc-val ${allWin != null && allWin >= 55 ? "scr-pct-good" : allWin != null && allWin <= 45 ? "scr-pct-bad" : ""}">${allWin != null ? allWin + "%" : "—"}</div>
+              <div class="scr-sc-lbl">Overall Win Rate</div>
+            </div>
+            <div class="scr-sc-metric">
+              <div class="scr-sc-val ${confWin != null && confWin >= 55 ? "scr-pct-good" : confWin != null && confWin <= 45 ? "scr-pct-bad" : ""}">${confWin != null ? confWin + "%" : "—"}</div>
+              <div class="scr-sc-lbl">Conflict Win Rate</div>
+            </div>
+            <div class="scr-sc-metric">
+              <div class="scr-sc-val ${allRet != null && allRet > 0 ? "scr-ret-pos" : allRet != null ? "scr-ret-neg" : ""}">${allRet != null ? (allRet >= 0 ? "+" : "") + allRet + "%" : "—"}</div>
+              <div class="scr-sc-lbl">Avg 30d Return</div>
+            </div>
+            <div class="scr-sc-metric">
+              <div class="scr-sc-val">${c.conflict_cases || 0}</div>
+              <div class="scr-sc-lbl">Conflict Cases</div>
+            </div>
+          </div>
+          <div class="scr-sc-interp">${escHtml(c.interpretation || "")}</div>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>`;
+
+  // ── DISLOCATION-02: Alpha Attribution section ─────────────────────────────
+  const alphaHtml = `<div class="scr-alpha-section" id="scrAlphaSection">
+    <div class="scr-section-header">
+      DISLOCATION-02 — Conflict Alpha Attribution
+      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
+        Excess return vs. universe median by disagreement pattern · Research only
+      </span>
+      <button class="cra-refresh-btn" onclick="loadConflictAlpha()" style="margin-left:8px;font-size:0.70rem">&#8634;</button>
+    </div>
+    <div id="scrAlphaContent"><div style="color:var(--muted);font-size:0.82rem">Loading alpha analysis…</div></div>
+  </div>`;
+
+  // ── Part D: Symbol deep dive (MSFT default) ───────────────────────────────
+  const deepDiveHtml = `<div class="scr-deepdive-section">
+    <div class="scr-section-header">
+      Part D — Symbol Deep Dive
+      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
+        See historical signal conflicts and outcomes for any position
+      </span>
+    </div>
+    <div class="scr-deepdive-row">
+      <input id="scrSymbolInput" class="pap-se-input" type="text" placeholder="Enter symbol (e.g. MSFT)" maxlength="12"
+        style="width:140px"
+        onkeydown="if(event.key==='Enter')loadConflictDeepDive(document.getElementById('scrSymbolInput').value)">
+      <button class="pap-se-btn" onclick="loadConflictDeepDive(document.getElementById('scrSymbolInput').value)">Deep Dive</button>
+    </div>
+    <div id="scrDeepDiveContent" style="margin-top:12px"></div>
+  </div>`;
+
+  // ── DISLOCATION-06: Calibration panel placeholder ────────────────────────
+  const calibrationHtml = `<div class="scr-alpha-section" id="scrCalibrationSection">
+    <div class="scr-section-header">
+      DISLOCATION-06 — Predictive Confidence Calibration
+      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
+        How well do DISLOCATION-05 estimates match realized returns?
+      </span>
+    </div>
+    <div id="scrCalibrationContent"><div style="color:var(--muted);font-size:0.82rem">Loading calibration…</div></div>
+  </div>`;
+
+  // ── DISLOCATION-07: Directional accuracy panel placeholder ───────────────
+  const directionalHtml = `<div class="scr-alpha-section" id="scrDirectionalSection">
+    <div class="scr-section-header">
+      DISLOCATION-07 — Directional Intelligence
+      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
+        Can conflict patterns predict direction even when magnitude forecasts are unreliable?
+      </span>
+      <button class="cra-refresh-btn" onclick="_refreshDirectional()" style="margin-left:8px;font-size:0.70rem">&#8634;</button>
+    </div>
+    <div id="scrDirectionalContent"><div style="color:var(--muted);font-size:0.82rem">Loading directional analysis…</div></div>
+  </div>`;
+
+  return [overviewHtml, learningHtml, outcomesHtml, scorecardHtml, alphaHtml, calibrationHtml, directionalHtml, deepDiveHtml].join("\n");
+}
+
+// ── DISLOCATION-02 Alpha loader ────────────────────────────────────────────────
+
+async function loadConflictAlpha() {
+  const content = document.getElementById("scrAlphaContent");
+  if (!content) return;
+  content.innerHTML = `<div style="color:var(--muted);font-size:0.82rem"><span class="spinner"></span> Computing alpha attribution…</div>`;
+  try {
+    const resp = await fetch("/api/conflict-review/alpha");
+    const data = await resp.json();
+    if (data.error) {
+      content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">${escHtml(data.error)}</div>`;
+      return;
+    }
+    content.innerHTML = _renderConflictAlpha(data);
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">Alpha unavailable: ${escHtml(String(e))}</div>`;
+  }
+}
+
+function _alphaClassBadge(cls) {
+  const map = {
+    ALPHA_LEADER:  { label: "↑ ALPHA LEADER",  cls: "scr-alpha-leader" },
+    ALPHA_LAGGARD: { label: "↓ ALPHA LAGGARD", cls: "scr-alpha-laggard" },
+    ALPHA_NEUTRAL: { label: "→ NEUTRAL",        cls: "scr-alpha-neutral" },
+  };
+  const m = map[cls] || { label: cls, cls: "" };
+  return `<span class="scr-alpha-badge ${m.cls}">${m.label}</span>`;
+}
+
+function _sigLabel(sig) {
+  const map = {
+    NOTEWORTHY: { label: "NOTEWORTHY", cls: "scr-sig-noteworthy" },
+    SUGGESTIVE: { label: "SUGGESTIVE", cls: "scr-sig-suggestive" },
+    WEAK:       { label: "WEAK",       cls: "scr-sig-weak" },
+    INSUFFICIENT_DATA: { label: "—",  cls: "" },
+  };
+  const m = map[sig] || { label: sig, cls: "" };
+  return `<span class="scr-sig-badge ${m.cls}">${m.label}</span>`;
+}
+
+function _renderConflictAlpha(data) {
+  if (data.status === "NO_DATA" || !data.patterns || data.patterns.length === 0) {
+    return `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No alpha data — run conflict inventory first.</div>`;
+  }
+
+  const univMedian = data.universe_median_return_pct;
+  const conflictAvgExcess = data.conflict_avg_excess_pct;
+  const baselineAvg = data.baseline_avg_return_pct;
+
+  // ── Overview strip ────────────────────────────────────────────────────────
+  const ovHtml = `<div class="scr-alpha-overview">
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${univMedian != null ? (univMedian >= 0 ? "+" : "") + univMedian + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Universe Median Return (30d)</div>
+    </div>
+    <div class="scr-ov-card ${conflictAvgExcess > 0 ? "scr-ov-accent" : ""}">
+      <div class="scr-ov-val ${conflictAvgExcess > 0 ? "scr-pct-good" : conflictAvgExcess < 0 ? "scr-pct-bad" : ""}">${conflictAvgExcess != null ? (conflictAvgExcess >= 0 ? "+" : "") + conflictAvgExcess + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Avg Conflict Pattern Excess</div>
+    </div>
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${baselineAvg != null ? (baselineAvg >= 0 ? "+" : "") + baselineAvg + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Baseline (No Conflict) Return</div>
+    </div>
+    <div class="scr-ov-governance" style="flex:1 1 220px">
+      ${escHtml(data.governance_note || "")}
+    </div>
+  </div>`;
+
+  // ── Leaders / Laggards ────────────────────────────────────────────────────
+  const leaderCard = (p, isLeader) => {
+    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: (p.pattern_label || p.signal_pattern).replace(/_/g," "), cls: "" };
+    const exRet = p.excess_return_pct;
+    const retCls = exRet > 0 ? "scr-ret-pos" : exRet < 0 ? "scr-ret-neg" : "";
+    const topSyms = (p.top_symbols || []).map(s => `<span class="scr-sym-chip">${escHtml(s)}</span>`).join(" ");
+    return `<div class="scr-alpha-card ${isLeader ? "scr-alpha-leader-card" : "scr-alpha-laggard-card"}">
+      <div class="scr-alpha-card-header">
+        <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
+        ${_alphaClassBadge(p.alpha_class)}
+        ${_sigLabel(p.significance)}
+      </div>
+      <div class="scr-alpha-card-metrics">
+        <div><span class="scr-sc-lbl">Excess Return</span> <span class="${retCls}" style="font-weight:800;font-size:1.1rem">${exRet != null ? (exRet >= 0 ? "+" : "") + exRet + "%" : "—"}</span></div>
+        <div><span class="scr-sc-lbl">Avg Return</span> <span>${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</span></div>
+        <div><span class="scr-sc-lbl">Win Rate</span> <span>${p.win_rate_pct != null ? p.win_rate_pct + "%" : "—"}</span></div>
+        <div><span class="scr-sc-lbl">Cases</span> <span>${p.observations}</span></div>
+        <div><span class="scr-sc-lbl">T-Stat</span> <span style="font-size:0.78rem">${p.t_statistic != null ? p.t_statistic : "—"}</span></div>
+      </div>
+      ${topSyms ? `<div style="margin-top:6px;font-size:0.72rem;color:var(--muted)">Top winners: ${topSyms}</div>` : ""}
+      <div class="scr-dd-conclusion" style="margin-top:8px">${escHtml(p.insight || "")}</div>
+    </div>`;
+  };
+
+  const leaders  = data.leaders  || [];
+  const laggards = data.laggards || [];
+
+  const llHtml = `<div class="scr-alpha-ll-grid">
+    <div>
+      <div class="scr-learn-card-title scr-title-win" style="margin-bottom:8px">Alpha Leaders — Conflict Patterns with Positive Excess Return</div>
+      ${leaders.length ? leaders.map(p => leaderCard(p, true)).join("") : '<div class="scr-learn-empty">No alpha leaders identified.</div>'}
+    </div>
+    <div>
+      <div class="scr-learn-card-title scr-title-lose" style="margin-bottom:8px">Alpha Laggards — Conflict Patterns with Negative Excess Return</div>
+      ${laggards.length ? laggards.map(p => leaderCard(p, false)).join("") : '<div class="scr-learn-empty">No alpha laggards identified.</div>'}
+    </div>
+  </div>`;
+
+  // ── Full alpha table ──────────────────────────────────────────────────────
+  const conflictPatterns = (data.patterns || []).filter(p => p.is_conflict_pattern);
+  const tableRows = conflictPatterns.map(p => {
+    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: (p.pattern_label || p.signal_pattern).replace(/_/g," "), cls: "" };
+    const exRet = p.excess_return_pct;
+    const retCls = exRet > 0 ? "scr-ret-pos" : exRet < 0 ? "scr-ret-neg" : "";
+    return `<tr>
+      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
+      <td style="text-align:right">${p.observations}</td>
+      <td style="text-align:right">${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</td>
+      <td style="text-align:right"><span class="${retCls}" style="font-weight:700">${exRet != null ? (exRet >= 0 ? "+" : "") + exRet + "%" : "—"}</span></td>
+      <td style="text-align:right">${p.win_rate_pct != null ? p.win_rate_pct + "%" : "—"}</td>
+      <td style="text-align:right">${p.consistency_score != null ? (p.consistency_score * 100).toFixed(0) + "%" : "—"}</td>
+      <td style="text-align:right;font-size:0.76rem">${p.t_statistic != null ? p.t_statistic : "—"}</td>
+      <td>${_sigLabel(p.significance)}</td>
+      <td>${_alphaClassBadge(p.alpha_class)}</td>
+    </tr>`;
+  }).join("");
+
+  const tableHtml = `<div style="margin-top:14px">
+    <div class="scr-section-header" style="font-size:0.72rem">Full Alpha Table — Conflict Patterns</div>
+    <div style="overflow-x:auto"><table class="scr-table">
+      <thead><tr>
+        <th>Pattern</th><th style="text-align:right">N</th>
+        <th style="text-align:right">Avg Ret</th><th style="text-align:right">Excess Return</th>
+        <th style="text-align:right">Win %</th><th style="text-align:right">Consistency</th>
+        <th style="text-align:right">T-Stat</th><th>Significance</th><th>Classification</th>
+      </tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table></div>
+    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
+      Excess Return = Avg Pattern Return − Universe Median (${univMedian != null ? (univMedian >= 0 ? "+" : "") + univMedian + "%" : "—"}).
+      Consistency = fraction of observations that beat universe median.
+      T-Statistic = one-sample test vs. universe median (|t|≥2.0 = Noteworthy, ≥1.5 = Suggestive).
+      Research only — no scoring changes.
+    </div>
+  </div>`;
+
+  return [ovHtml, llHtml, tableHtml].join("\n");
+}
+
+// ── DISLOCATION-06: Calibration panel renderer ────────────────────────────────
+
+function _renderCalibrationPanel() {
+  const el = document.getElementById("scrCalibrationContent");
+  if (!el || !_calibrationCache) return;
+
+  const cals = Object.values(_calibrationCache);
+  if (!cals.length) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No calibration data — run refresh to compute.</div>`;
+    return;
+  }
+
+  // Sort by confidence then n
+  const confOrder = { VERY_HIGH: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INSUFFICIENT_DATA: 4 };
+  const sorted = [...cals].sort((a, b) =>
+    (confOrder[a.confidence] ?? 4) - (confOrder[b.confidence] ?? 4) || (b.n || 0) - (a.n || 0)
+  );
+
+  const confCounts = {};
+  for (const c of sorted) { confCounts[c.confidence] = (confCounts[c.confidence] || 0) + 1; }
+
+  // Overview
+  const ovHtml = `<div class="scr-alpha-overview" style="margin-bottom:12px">
+    ${Object.entries(confCounts).map(([conf, n]) => {
+      const cfgMap = { VERY_HIGH: "diso6-very-high", HIGH: "diso6-high", MEDIUM: "diso6-medium", LOW: "diso6-low" };
+      const cls = cfgMap[conf] || "";
+      return `<div class="scr-ov-card">
+        <div class="scr-ov-val" style="font-size:1.2rem">${n}</div>
+        <div class="scr-ov-lbl">${n === 1 ? "" : ""}<span class="diso6-badge ${cls}">${conf}</span></div>
+      </div>`;
+    }).join("")}
+    <div class="scr-ov-governance" style="flex:1 1 220px;font-size:0.74rem;color:#666">
+      Calibration validates whether DISLOCATION-05 forward estimates match realized returns.
+      Confidence level = function of sample size, MAE, and bias direction.
+    </div>
+  </div>`;
+
+  // Pattern accuracy table
+  const rows = sorted.map(c => {
+    const band2 = (c.accuracy_bands || {})["within_2pp"];
+    const band5 = (c.accuracy_bands || {})["within_5pp"];
+    const meta2 = _SCR_PATTERN_LABELS[c.pattern] || { short: (c.pattern || "").replace(/_/g," "), cls: "" };
+    const confBadge = c.confidence ? `<span class="diso6-badge ${
+      c.confidence === "VERY_HIGH" ? "diso6-very-high" :
+      c.confidence === "HIGH" ? "diso6-high" :
+      c.confidence === "MEDIUM" ? "diso6-medium" : "diso6-low"
+    }">${c.confidence}</span>` : "—";
+    const maeCls = c.mae_pp != null && c.mae_pp <= 2 ? "scr-pct-good" : c.mae_pp != null && c.mae_pp <= 5 ? "" : "scr-pct-bad";
+    return `<tr>
+      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
+      <td style="text-align:right">${c.n || 0}</td>
+      <td style="text-align:right"><span class="${maeCls}">${c.mae_pp != null ? "±" + c.mae_pp + "pp" : "—"}</span></td>
+      <td style="text-align:right">${band2 != null ? band2 + "%" : "—"}</td>
+      <td style="text-align:right">${band5 != null ? band5 + "%" : "—"}</td>
+      <td style="font-size:0.74rem">${escHtml(c.bias_direction || "—")}</td>
+      <td>${confBadge}</td>
+    </tr>`;
+  }).join("");
+
+  const tableHtml = `<div style="overflow-x:auto">
+    <table class="scr-table">
+      <thead><tr>
+        <th>Pattern</th><th style="text-align:right">N</th>
+        <th style="text-align:right">MAE</th>
+        <th style="text-align:right">Within ±2pp</th>
+        <th style="text-align:right">Within ±5pp</th>
+        <th>Bias</th><th>Confidence</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
+      MAE = Mean Absolute Error between predicted excess return and realized excess return.
+      Confidence = function of sample size, MAE, and prediction bias.
+      Research only — no scoring changes.
+    </div>
+  </div>`;
+
+  el.innerHTML = ovHtml + tableHtml;
+}
+
+async function loadConflictDeepDive(symbol) {
+  const content = document.getElementById("scrDeepDiveContent");
+  if (!content) return;
+  const sym = (symbol || "").trim().toUpperCase();
+  if (!sym || !/^[A-Z0-9]{1,12}$/.test(sym)) {
+    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">Enter a valid symbol.</div>`;
+    return;
+  }
+  content.innerHTML = `<div style="color:var(--muted);font-size:0.84rem"><span class="spinner"></span> Loading ${escHtml(sym)}…</div>`;
+  try {
+    const resp = await fetch(`/api/conflict-review/symbol/${encodeURIComponent(sym)}`);
+    const data = await resp.json();
+    if (data.error) {
+      content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">${escHtml(data.error)}</div>`;
+      return;
+    }
+    content.innerHTML = _renderDeepDive(data);
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">Error: ${escHtml(String(e))}</div>`;
+  }
+}
+
+function _renderDeepDive(d) {
+  if (!d || !d.symbol) return `<div style="color:var(--muted)">No data.</div>`;
+
+  const precedents = d.universe_precedents || {};
+  const records = (d.historical_records || []).slice().reverse();  // newest first
+
+  // Pattern frequency chips
+  const freqChips = Object.entries(d.pattern_frequency || {}).slice(0, 5).map(([p, n]) => {
+    const meta2 = _SCR_PATTERN_LABELS[p] || { short: p.replace(/_/g," "), cls: "" };
+    return `<span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)} ×${n}</span>`;
+  }).join(" ");
+
+  // Historical records table
+  const recRows = records.map(r => {
+    const retStr = r.forward_return_30d != null
+      ? `<span class="${r.forward_return_30d >= 0 ? "scr-ret-pos" : "scr-ret-neg"}">${(r.forward_return_30d * 100).toFixed(1)}%</span>`
+      : "—";
+    const wl = r.winner_loser || "NO_DATA";
+    const wlCls = wl === "WINNER" ? "scr-wl-win" : wl === "LOSER" ? "scr-wl-lose" : "scr-wl-neutral";
+    const meta2 = _SCR_PATTERN_LABELS[r.signal_pattern] || { short: (r.signal_pattern || "").replace(/_/g," "), cls: "" };
+    const ess = r.ess_direction || "—";
+    const essCls = ess === "BULLISH" ? "ess-BULLISH" : ess === "BEARISH" ? "ess-BEARISH" : "";
+    return `<tr>
+      <td style="font-family:monospace;font-size:0.78rem">${escHtml(r.snapshot_date || "")}</td>
+      <td><span class="ess-badge ${essCls}" style="font-size:0.72rem">${escHtml(ess)}</span></td>
+      <td style="font-size:0.74rem;color:var(--muted)">${escHtml(r.zacks_direction || "—")}</td>
+      <td><span class="scr-pattern-chip ${meta2.cls}" style="font-size:0.70rem">${escHtml(meta2.short)}</span></td>
+      <td style="text-align:right">${retStr}</td>
+      <td><span class="${wlCls}">${wl.replace(/_/g," ")}</span></td>
+    </tr>`;
+  }).join("");
+
+  const hasCurrent = d.current_pattern && d.current_pattern !== "UNKNOWN";
+  const currentMeta = hasCurrent
+    ? (_SCR_PATTERN_LABELS[d.current_pattern] || { short: d.current_pattern.replace(/_/g," "), cls: "" })
+    : null;
+
+  return `<div class="scr-deepdive-result">
+    <div class="scr-dd-header">
+      <span class="scr-dd-sym">${escHtml(d.symbol)}</span>
+      <span class="scr-dd-stats">${d.total_observations} observations · ${d.conflict_observations} conflict cases</span>
+      ${d.ess_correct_rate_pct != null
+        ? `<span class="scr-dd-ess-rate">ESS historically correct: <strong>${d.ess_correct_rate_pct}%</strong></span>`
+        : ""}
+    </div>
+
+    ${hasCurrent ? `<div class="scr-dd-current">
+      <div class="scr-dd-current-label">Current Signal Pattern</div>
+      <span class="scr-pattern-chip ${currentMeta.cls}">${escHtml(currentMeta.short)}</span>
+      <span style="font-size:0.78rem;color:var(--muted);margin-left:8px">as of ${escHtml(d.current_snapshot_date || "—")}</span>
+    </div>` : ""}
+
+    ${freqChips ? `<div style="margin:8px 0;font-size:0.76rem;color:var(--muted)">Historical pattern frequency:</div>
+    <div style="margin-bottom:10px">${freqChips}</div>` : ""}
+
+    ${precedents.total_occurrences ? `<div class="scr-dd-precedents">
+      <span class="scr-prec-label">Universe precedents for current pattern:</span>
+      <span><strong>${precedents.total_occurrences}</strong> cases</span>
+      <span>Winner rate: <strong>${precedents.winner_rate_pct != null ? precedents.winner_rate_pct + "%" : "—"}</strong></span>
+      <span>Avg return: <strong>${precedents.avg_return_30d_pct != null ? (precedents.avg_return_30d_pct >= 0 ? "+" : "") + precedents.avg_return_30d_pct + "%" : "—"}</strong></span>
+    </div>` : ""}
+
+    ${d.conclusion ? `<div class="scr-dd-conclusion">${escHtml(d.conclusion)}</div>` : ""}
+
+    ${records.length ? `<div class="scr-dd-table-label">Historical Signal States &amp; Outcomes</div>
+    <div style="overflow-x:auto">
+      <table class="scr-table scr-dd-table">
+        <thead><tr>
+          <th>Date</th><th>ESS</th><th>Zacks</th>
+          <th>Pattern</th><th>30d Return</th><th>vs Median</th>
+        </tr></thead>
+        <tbody>${recRows}</tbody>
+      </table>
+    </div>` : `<div style="color:var(--muted);font-size:0.82rem">No historical records for ${escHtml(d.symbol)} in the ESS archive.</div>`}
+
+    <div style="font-size:0.70rem;color:var(--muted);margin-top:10px;border-top:1px solid var(--border);padding-top:6px">
+      Data source: ESS archive (StarMine scores) + independent analyst ratings + price history.
+      Forward returns computed from closing prices. WINNER/LOSER = above/below ±2pp of snapshot median.
+      This is informational only — no scoring influence.
+    </div>
+  </div>`;
+}
 // Governance: display-only. No scoring, CW-DAS, CRA, or ranking influence.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -6546,6 +8312,8 @@ function _renderCRAProposal(p) {
 
   content.innerHTML = `
     ${_craBuildRotationObjectiveBanner(p)}
+    ${_craBuildRotationSummaryPanel(p)}
+    ${_dataConfidenceSummaryStripHtml("CRA", _craSummaryLevels(p))}
     <div class="cra-columns">
       ${_craBuildSourcesCol(p)}
       ${_craBuildRotationMapCol(p)}
@@ -6624,6 +8392,64 @@ function _craBuildRotationObjectiveBanner(p) {
   </div>`;
 }
 
+// ── PAP-EXPLAIN-01: Rotation Summary Panel (Source vs Target Clarity) ────────
+// Display-only. No changes to CRA, PAP, UCF, CW-DAS, or ESS algorithms.
+// Addresses operator confusion between rotation sources (SELL) and targets (BUY).
+function _craBuildRotationSummaryPanel(p) {
+  const sources = (p.sources || []).filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
+  const deployments = (p.deployments || []);
+  if (!sources.length && !deployments.length) return "";
+
+  const totalSell = sources.reduce((s, x) => s + (x.estimated_proceeds || 0), 0);
+  const totalBuy  = deployments.reduce((s, x) => s + (x.suggested_amount  || 0), 0);
+
+  const sellItems = sources.slice(0, 6).map(s =>
+    `<div class="cra-rs-item cra-rs-sell">
+      <span class="cra-rs-sym">${escHtml(s.symbol)}</span>
+      <span class="cra-rs-amt">${_craFmt(s.estimated_proceeds)}</span>
+      <span class="cra-rs-cat">${escHtml((s.category || "").replace(/_/g, " "))}</span>
+    </div>`
+  ).join("") + (sources.length > 6 ? `<div class="cra-rs-more">+${sources.length - 6} more</div>` : "");
+
+  const buyItems = deployments.slice(0, 6).map(t =>
+    `<div class="cra-rs-item cra-rs-buy">
+      <span class="cra-rs-sym">${escHtml(t.symbol)}</span>
+      <span class="cra-rs-amt">${_craFmt(t.suggested_amount)}</span>
+      <span class="cra-rs-tier">${escHtml((t.narrative_tier || "").replace(/_/g, " "))}</span>
+    </div>`
+  ).join("") + (deployments.length > 6 ? `<div class="cra-rs-more">+${deployments.length - 6} more</div>` : "");
+
+  const net = totalBuy - totalSell;
+  const netStr = `${net >= 0 ? "+" : ""}${_craFmt(Math.abs(net))} ${net >= 0 ? "net buy" : "net sell"}`;
+
+  return `<div class="cra-rotation-summary-panel">
+    <div class="cra-rs-header">
+      <span class="cra-rs-title">Rotation Summary</span>
+      <span class="cra-rs-hint">Capital flows at a glance — sources are SOLD, targets are BOUGHT</span>
+    </div>
+    <div class="cra-rs-body">
+      <div class="cra-rs-col">
+        <div class="cra-rs-col-header cra-rs-sell-header">
+          SELL <span class="cra-rs-col-total">${_craFmt(totalSell)}</span>
+          <span class="cra-rs-col-count">${sources.length} position${sources.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div class="cra-rs-items">${sellItems || '<span class="cra-rs-empty">No sell candidates</span>'}</div>
+      </div>
+      <div class="cra-rs-arrow-col">
+        <div class="cra-rs-arrow">→</div>
+        <div class="cra-rs-net">${escHtml(netStr)}</div>
+      </div>
+      <div class="cra-rs-col">
+        <div class="cra-rs-col-header cra-rs-buy-header">
+          BUY <span class="cra-rs-col-total">${_craFmt(totalBuy)}</span>
+          <span class="cra-rs-col-count">${deployments.length} position${deployments.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div class="cra-rs-items">${buyItems || '<span class="cra-rs-empty">No buy targets</span>'}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 // ── Column 1: Capital Sources ────────────────────────────────────────────────
 
 function _craBuildSourcesCol(p) {
@@ -6642,6 +8468,33 @@ function _craBuildSourcesCol(p) {
       <div class="cra-pool-lbl">Portfolio MV</div>
     </div>
   </div>`;
+
+  // ── CRA-EXPLAIN-02: Intent-based capital metrics ──────────────────────────
+  const intentSummary = p.source_intent_summary || {};
+  const intentMetricOrder = [
+    ["THESIS_EXIT",           "Thesis Exit Capital"],
+    ["THESIS_TRIM",           "Thesis Trim Capital"],
+    ["TAX_FUNDING_SOURCE",    "Tax Funding Capital"],
+    ["OVERWEIGHT_REPAIR",     "Overweight Repair Capital"],
+    ["PORTFOLIO_REALLOCATION","Reallocation Capital"],
+  ];
+  const intentMetricItems = intentMetricOrder
+    .filter(([k]) => intentSummary[k] && intentSummary[k].count > 0)
+    .map(([k, label]) => {
+      const meta = _RQ_INTENT_META[k] || { badge: k, cls: "" };
+      const b = intentSummary[k];
+      return `<div class="cra-intent-metric">
+        <span class="rq-intent-badge ${meta.cls}">${escHtml(meta.badge)}</span>
+        <span class="cra-intent-metric-val">${_craFmt(b.capital)}</span>
+        <span class="cra-intent-metric-count">${b.count} pos.</span>
+      </div>`;
+    }).join("");
+  const intentMetricsHtml = intentMetricItems
+    ? `<div class="cra-intent-metrics-strip">
+        <div class="cra-intent-metrics-title">Capital by Reduction Intent</div>
+        ${intentMetricItems}
+      </div>`
+    : "";
 
   const catGroupsHtml = _CRA_CATEGORIES.map(cat => {
     const catSources = sources.filter(s => s.category === cat.key);
@@ -6664,9 +8517,14 @@ function _craBuildSourcesCol(p) {
   }).join("");
 
   return `<div>
-    <div class="cra-col-header">Capital Sources — What to Sell</div>
+    <div class="cra-col-header">
+      <span class="cra-col-header-role cra-role-source-hdr">SELL</span>
+      Capital Sources — Positions to Reduce
+    </div>
+    <div class="cra-col-sub-hint">These positions are being REDUCED to raise capital. Their signal intelligence appears below for context but does not affect their source classification.</div>
     <div class="cra-col-body">
       ${poolHtml}
+      ${intentMetricsHtml}
       ${catGroupsHtml}
     </div>
   </div>`;
@@ -6675,6 +8533,19 @@ function _craBuildSourcesCol(p) {
 function _craBuildSourceCard(s) {
   const blocked = s.blocked_by_policy;
   const cardClass = blocked ? "cra-source-card cra-blocked" : "cra-source-card";
+  const dataConfidence = _getSymbolDataConfidence(s.symbol, "recommendation");
+
+  // PAP-EXPLAIN-01: Explicit ROTATION_SOURCE role badge
+  const roleBadge = `<span class="cra-role-badge cra-role-source" title="This position is being REDUCED to fund higher-conviction purchases">SELL ↑ SOURCE</span>`;
+
+  // CRA-EXPLAIN-02: Source intent badge and explanatory note
+  const intentMeta = _RQ_INTENT_META[s.source_intent] || null;
+  const intentBadge = intentMeta
+    ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
+    : "";
+  const intentNote = (intentMeta && intentMeta.explanation)
+    ? `<div class="cra-intent-note">${escHtml(intentMeta.explanation)}</div>`
+    : "";
 
   // Priority badge
   const priClass = `cra-pri-${s.priority || "LOW"}`;
@@ -6745,15 +8616,20 @@ function _craBuildSourceCard(s) {
 
   return `<div class="${cardClass}" id="cra-src-${escHtml(s.symbol)}">
     <div class="cra-source-row1">
+      ${roleBadge}
       <span class="cra-sym">${escHtml(s.symbol)}</span>
+      ${_dataConfidenceBadgeHtml(dataConfidence)}
       ${priBadge}
       ${taxBadge}
+      ${intentBadge}
       ${policyBadge}
       ${monitorBadge}
       ${reviewHtml}
     </div>
     <div class="cra-source-row2">${proceedsHtml}</div>
     ${reductionMeta}
+    ${_dataConfidenceIssuesHtml(dataConfidence)}
+    ${intentNote}
     <div class="cra-source-evidence">${escHtml(s.evidence_summary || "")}</div>
     ${taxNote}
     <div class="cra-source-actions">${checkboxHtml}</div>
@@ -6824,7 +8700,11 @@ function _craBuildRotationMapCol(p) {
     : "";
 
   return `<div>
-    <div class="cra-col-header">Rotation Map — Proceeds → Targets</div>
+    <div class="cra-col-header">
+      <span class="cra-col-header-role cra-role-target-hdr">BUY</span>
+      Rotation Map — Proceeds → Targets
+    </div>
+    <div class="cra-col-sub-hint">These positions are being PURCHASED with proceeds from capital sources.</div>
     <div class="cra-col-body">
       ${poolSummaryHtml}
       ${arrowHtml}
@@ -6835,6 +8715,7 @@ function _craBuildRotationMapCol(p) {
 }
 
 function _craBuildTargetCard(t) {
+  const dataConfidence = _getSymbolDataConfidence(t.symbol, "deployment");
   const tierShort = t.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL"
     : t.narrative_tier === "HIGH_CONVICTION_ANCHOR" ? "HCA"
     : (t.narrative_tier || "—").replace(/_/g, " ");
@@ -6847,22 +8728,27 @@ function _craBuildTargetCard(t) {
   const curWt  = t.current_weight_pct  != null ? parseFloat(t.current_weight_pct).toFixed(2)  + "%" : "—";
   const projWt = t.projected_weight_pct != null ? parseFloat(t.projected_weight_pct).toFixed(2) + "%" : "—";
 
+  // PAP-EXPLAIN-01: Explicit ROTATION_TARGET role badge + funding clarity
+  const roleBadge = `<span class="cra-role-badge cra-role-target" title="This position is being PURCHASED using proceeds from capital sources">BUY ↓ TARGET</span>`;
+
   const fundingHtml = t.funding_source_symbol
-    ? `<div style="font-size:0.71rem;color:#5b4f36;margin-top:4px">
-         Funding: <strong>${escHtml(t.funding_source_symbol)}</strong>
-         (${escHtml((t.funding_source_category || "").replace(/_/g, " "))}, score ${Number(t.funding_source_score || 0).toFixed(1)})
+    ? `<div class="cra-target-funding">
+         <span class="cra-target-funding-label">Funded by selling:</span>
+         <strong class="cra-target-funding-sym">${escHtml(t.funding_source_symbol)}</strong>
+         <span class="cra-target-funding-cat">(${escHtml((t.funding_source_category || "").replace(/_/g, " "))})</span>
+         ${Array.isArray(t.funding_source_alternatives) && t.funding_source_alternatives.length
+           ? `<span class="cra-target-funding-alt"> · Alternatives: ${escHtml(t.funding_source_alternatives.slice(0, 3).map(a => a.split(" ")[0]).join(", "))}</span>`
+           : ""}
        </div>
-       ${t.funding_source_reason ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">${escHtml(t.funding_source_reason)}</div>` : ""}
-       ${Array.isArray(t.funding_source_alternatives) && t.funding_source_alternatives.length
-         ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">Alternatives: ${escHtml(t.funding_source_alternatives.join("; "))}</div>`
-         : ""}
-       ${t.funding_policy_alignment_reason ? `<div style="font-size:0.70rem;color:#5b4f36;margin-top:2px">Policy: ${escHtml(t.funding_policy_alignment_reason)}</div>` : ""}`
+       ${t.funding_source_reason ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">${escHtml(t.funding_source_reason)}</div>` : ""}`
     : "";
 
   return `<div class="cra-target-card">
     <div class="cra-target-row1">
+      ${roleBadge}
       <span class="${rankClass}">#${t.rank}</span>
       <span class="cra-target-sym">${escHtml(t.symbol)}</span>
+      ${_dataConfidenceBadgeHtml(dataConfidence)}
       <span class="${tierClass}">${tierShort}</span>
       <span class="cra-das-score">DAS ${dasScore}</span>
     </div>
@@ -6873,6 +8759,7 @@ function _craBuildTargetCard(t) {
       &nbsp;·&nbsp;
       <span style="font-size:0.7rem">${escHtml(t.allocation_node || "")}</span>
     </div>
+    ${_dataConfidenceIssuesHtml(dataConfidence)}
     ${t.allocation_note ? `<div style="font-size:0.71rem;color:var(--muted);margin-top:2px">${escHtml(t.allocation_note)}</div>` : ""}
     ${fundingHtml}
   </div>`;
@@ -7033,4 +8920,174 @@ function formatMV(v) {
   if (n >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
   if (n >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
   return "$" + n.toFixed(0);
+}
+
+// ══ DISLOCATION-07: Directional Accuracy ══════════════════════════════════════
+
+async function _loadDirectionalCache() {
+  try {
+    const resp = await fetch("/api/predictive/directional-accuracy");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.patterns) {
+      _directionalCache = { _meta: data };
+      for (const p of data.patterns) {
+        if (p.pattern) _directionalCache[p.pattern] = p;
+      }
+    }
+  } catch (_) { /* non-blocking */ }
+}
+
+async function _refreshDirectional() {
+  const content = document.getElementById("scrDirectionalContent");
+  if (content) content.innerHTML = `<div style="color:var(--muted);font-size:0.82rem"><span class="spinner"></span> Refreshing directional analysis…</div>`;
+  try {
+    await fetch("/api/predictive/directional-refresh", { method: "POST" });
+    _directionalCache = null;
+    await _loadDirectionalCache();
+    _renderDirectionalPanel();
+  } catch (e) {
+    if (content) content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">Refresh failed: ${escHtml(String(e))}</div>`;
+  }
+}
+
+function _reliabilityBadge(cls) {
+  const map = {
+    VERY_STRONG:       "diso7-very-strong",
+    STRONG:            "diso7-strong",
+    MODERATE:          "diso7-moderate",
+    WEAK:              "diso7-weak",
+    INSUFFICIENT_DATA: "diso7-insufficient",
+  };
+  return `<span class="diso7-badge ${map[cls] || ""}">${cls.replace(/_/g, " ")}</span>`;
+}
+
+function _renderDirectionalPanel() {
+  const el = document.getElementById("scrDirectionalContent");
+  if (!el || !_directionalCache) return;
+
+  const meta    = _directionalCache._meta || {};
+  const overall = meta.overall || {};
+  const comp    = meta.comparative || {};
+  const patterns = (meta.patterns || []).filter(p => p.n > 0);
+
+  if (!patterns.length) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No directional data — run refresh to compute.</div>`;
+    return;
+  }
+
+  // ── Overview strip ─────────────────────────────────────────────────────────
+  const hitRate = overall.hit_rate;
+  const bal     = overall.balanced_accuracy;
+  const verdict = comp.verdict || "";
+  const verdictCls = verdict === "DIRECTIONAL" ? "diso7-verdict-strong"
+                   : verdict === "DIRECTIONAL_MARGINAL" ? "diso7-verdict-moderate"
+                   : "diso7-verdict-weak";
+
+  const ovHtml = `<div class="scr-alpha-overview" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
+    <div class="scr-ov-card ${hitRate != null && hitRate >= 60 ? "scr-ov-accent" : ""}">
+      <div class="scr-ov-val" style="font-size:1.4rem">${hitRate != null ? hitRate + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Overall Hit Rate</div>
+    </div>
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${bal != null ? bal + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Balanced Accuracy</div>
+    </div>
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${overall.precision != null ? overall.precision + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Precision</div>
+    </div>
+    <div class="scr-ov-card">
+      <div class="scr-ov-val">${overall.recall != null ? overall.recall + "%" : "—"}</div>
+      <div class="scr-ov-lbl">Recall</div>
+    </div>
+    <div class="scr-ov-card" style="flex:1 1 260px">
+      <div class="diso7-verdict-box ${verdictCls}">
+        <div class="diso7-verdict-label">Verdict: ${escHtml(verdict.replace(/_/g, " "))}</div>
+        <div class="diso7-verdict-text">${escHtml(comp.verdict_label || "")}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── Rel distribution ───────────────────────────────────────────────────────
+  const relDist = meta.reliability_distribution || {};
+  const relOrder = ["VERY_STRONG", "STRONG", "MODERATE", "WEAK", "INSUFFICIENT_DATA"];
+  const relStripHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+    ${relOrder.filter(r => relDist[r]).map(r =>
+      `<div style="display:flex;align-items:center;gap:4px">
+        ${_reliabilityBadge(r)}
+        <span style="font-size:0.76rem;color:var(--muted)">${relDist[r]} pattern${relDist[r] > 1 ? "s" : ""}</span>
+      </div>`
+    ).join("")}
+  </div>`;
+
+  // ── Pattern table ──────────────────────────────────────────────────────────
+  const tableRows = patterns.map(p => {
+    const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: (p.pattern || "").replace(/_/g, " "), cls: "" };
+    const hrCls = p.hit_rate != null && p.hit_rate >= 60 ? "scr-pct-good"
+                : p.hit_rate != null && p.hit_rate < 50  ? "scr-pct-bad" : "";
+    const cm = p.confusion_matrix || {};
+    const dirBadge = p.predicted_direction === "POSITIVE"
+      ? `<span style="color:#1a7f37;font-weight:700">▲ POS</span>`
+      : p.predicted_direction === "NEGATIVE"
+      ? `<span style="color:#d1242f;font-weight:700">▼ NEG</span>`
+      : `<span style="color:#636c76">→ NEU</span>`;
+    return `<tr>
+      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
+      <td style="text-align:right">${p.n || 0}</td>
+      <td style="text-align:center">${dirBadge}</td>
+      <td style="text-align:right"><span class="${hrCls}" style="font-weight:700">${p.hit_rate != null ? p.hit_rate + "%" : "—"}</span></td>
+      <td style="text-align:right">${p.precision != null ? p.precision + "%" : "—"}</td>
+      <td style="text-align:right">${p.recall != null ? p.recall + "%" : "—"}</td>
+      <td style="text-align:right">${p.balanced_accuracy != null ? p.balanced_accuracy + "%" : "—"}</td>
+      <td style="text-align:right;font-size:0.72rem">${p.false_positive_rate != null ? p.false_positive_rate + "%" : "—"}</td>
+      <td style="text-align:right;font-size:0.72rem">${p.false_negative_rate != null ? p.false_negative_rate + "%" : "—"}</td>
+      <td style="text-align:right;font-size:0.72rem">${cm.tp || 0}/${cm.fp || 0}/${cm.tn || 0}/${cm.fn || 0}</td>
+      <td>${_reliabilityBadge(p.reliability || "INSUFFICIENT_DATA")}</td>
+    </tr>`;
+  }).join("");
+
+  const tableHtml = `<div style="overflow-x:auto">
+    <table class="scr-table">
+      <thead><tr>
+        <th>Pattern</th><th style="text-align:right">N</th>
+        <th style="text-align:center">Pred Dir</th>
+        <th style="text-align:right">Hit Rate</th>
+        <th style="text-align:right">Precision</th>
+        <th style="text-align:right">Recall</th>
+        <th style="text-align:right">Bal Acc</th>
+        <th style="text-align:right">FPR</th>
+        <th style="text-align:right">FNR</th>
+        <th style="text-align:right">TP/FP/TN/FN</th>
+        <th>Reliability</th>
+      </tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
+      Hit Rate = predicted direction matches actual direction.
+      Positive class = excess return &gt; +0.5pp vs universe median.
+      Balanced Accuracy = (TPR + TNR) / 2. Research only.
+    </div>
+  </div>`;
+
+  // ── Part G: Comparative box ────────────────────────────────────────────────
+  const avgHR  = comp.avg_directional_hit_rate;
+  const avgMAE = comp.avg_magnitude_mae_pp;
+  const compHtml = `<div class="diso7-compare-box" style="margin-top:14px">
+    <div class="scr-section-header" style="font-size:0.76rem;margin-bottom:8px">Part G — Magnitude vs Directional Accuracy</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div class="diso7-compare-card">
+        <div class="diso7-compare-label">Magnitude Forecasting</div>
+        <div class="diso7-compare-val diso7-compare-bad">MAE ${avgMAE != null ? avgMAE + "pp" : "—"}</div>
+        <div class="diso7-compare-note">Return magnitude predictions are unreliable (DISLOCATION-06)</div>
+      </div>
+      <div class="diso7-compare-card ${avgHR != null && avgHR >= 60 ? "diso7-compare-good-box" : ""}">
+        <div class="diso7-compare-label">Directional Forecasting</div>
+        <div class="diso7-compare-val ${avgHR != null && avgHR >= 60 ? "diso7-compare-good" : avgHR != null && avgHR >= 55 ? "" : "diso7-compare-bad"}">${avgHR != null ? avgHR + "% hit rate" : "—"}</div>
+        <div class="diso7-compare-note">${escHtml(comp.verdict_label || "")}</div>
+      </div>
+    </div>
+  </div>`;
+
+  el.innerHTML = ovHtml + relStripHtml + tableHtml + compHtml;
 }

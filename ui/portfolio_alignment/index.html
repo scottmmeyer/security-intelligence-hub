@@ -210,6 +210,58 @@
         font-size: 0.7rem; padding: 2px 8px; border-radius: 20px;
         background: #f0f0f0; color: #555;
       }
+      .dc-badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 0.7rem; font-weight: 700; padding: 2px 8px;
+        border-radius: 20px; border: 1px solid transparent;
+      }
+      .dc-HIGH { background: #e6f9ef; color: #1a7c4f; border-color: #a3d9b8; }
+      .dc-MEDIUM { background: #fff3cd; color: #856404; border-color: #ffe082; }
+      .dc-LOW { background: #fdecea; color: #c0392b; border-color: #f5c6c0; }
+      .dc-summary-strip {
+        display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+        margin: 0 0 12px; padding: 10px 12px; border-radius: 10px;
+        background: #f7f2e8; border: 1px solid var(--border);
+      }
+      .dc-summary-title {
+        font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--muted);
+      }
+      .dc-summary-chip {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 84px; font-size: 0.72rem; font-weight: 700;
+        padding: 4px 10px; border-radius: 999px; border: 1px solid transparent;
+      }
+      .dc-detail-block {
+        margin-top: 8px; padding: 10px 12px; background: #fcfaf6;
+        border: 1px solid var(--border); border-radius: 10px;
+      }
+      .dc-detail-title, .dc-issues-title {
+        font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
+        text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+      }
+      .dc-provider-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;
+      }
+      .dc-provider-item {
+        display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+        border-radius: 8px; border: 1px solid #ede3d4; background: #fff;
+      }
+      .dc-provider-name { font-size: 0.74rem; font-weight: 700; color: var(--text); }
+      .dc-provider-state { font-size: 0.78rem; font-weight: 700; }
+      .dc-state-fresh { color: var(--green); }
+      .dc-state-stale { color: var(--yellow); }
+      .dc-state-missing { color: var(--red); }
+      .dc-provider-date { font-size: 0.72rem; color: var(--muted); }
+      .dc-issues-block {
+        margin-top: 8px; padding: 8px 10px; background: #fff8ef;
+        border: 1px solid #f1dcc2; border-radius: 8px;
+      }
+      .dc-issues-list {
+        margin: 0; padding-left: 18px; font-size: 0.78rem; color: var(--muted);
+      }
+      .dc-issues-list li { margin: 3px 0; }
+      .dq-data-confidence-cell { margin-top: 4px; }
       .rec-symbols { display: flex; gap: 4px; flex-wrap: wrap; }
       .rec-symbol {
         font-size: 0.72rem; font-weight: 700; padding: 2px 7px;
@@ -1812,6 +1864,26 @@
       .badge-divergence { background: #fdecea; color: #991111; border: 1px solid #f5b8b8; }
       .badge-neutral    { background: #f3f3f3; color: #777;    border: 1px solid #ddd; }
 
+      /* ── SIGNAL-GOV-02A: Advisory conflict badges ────────────── */
+      .gov02-conflict-strip {
+        display: flex; flex-wrap: wrap; gap: 5px;
+        margin: 6px 0 2px 0;
+      }
+      .gov02-conflict-badge {
+        display: inline-block; font-size: 0.62rem; font-weight: 700;
+        padding: 2px 7px; border-radius: 10px; cursor: default;
+        text-transform: uppercase; letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      .gov02-badge-warn {
+        background: #fff3e0; color: #92400e;
+        border: 1px solid #f6ad55;
+      }
+      .gov02-badge-info {
+        background: #e8f4fd; color: #1a5c8a;
+        border: 1px solid #90c7e8;
+      }
+
       /* ── Phase 7.5K — Fidelity Analyst Panel ─────────────────── */
       .fidelity-panel {
         margin-top: 10px; padding: 10px 12px; border-radius: 6px;
@@ -1871,6 +1943,117 @@
         font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
         color: var(--muted); margin-bottom: 3px;
       }
+
+      /* ── AI-006C: Signal Intelligence Panel ──────────────────────────── */
+
+      .si-panel {
+        margin: 12px 0 4px;
+        border: 1px solid #c5cae9; border-radius: 8px; overflow: hidden;
+      }
+      .si-panel-summary {
+        padding: 8px 14px; cursor: pointer; user-select: none;
+        background: linear-gradient(135deg, #e8eaf6, #f3f0ff);
+        display: flex; align-items: center; gap: 10px;
+        list-style: none;
+      }
+      .si-panel-summary::-webkit-details-marker { display: none; }
+      .si-panel-title { font-weight: 700; font-size: 0.82rem; color: #3949ab; }
+      .si-panel-sub { font-size: 0.72rem; color: #5c6bc0; }
+      .si-panel-body {
+        padding: 10px 14px 12px;
+        background: #fafafe;
+        display: flex; flex-direction: column; gap: 12px;
+      }
+      .si-section { }
+      .si-section-title {
+        font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #5c6bc0; margin-bottom: 6px;
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      }
+      .si-section-sub {
+        font-size: 0.72rem; font-weight: 400; text-transform: none;
+        letter-spacing: 0; color: #888;
+      }
+      .si-summary-text {
+        font-size: 0.80rem; color: #444; margin-bottom: 6px;
+        padding: 6px 10px; background: #fff; border-radius: 5px;
+        border: 1px solid #e0e0e0;
+      }
+      .si-notes {
+        font-size: 0.74rem; color: #888; margin-top: 4px; font-style: italic;
+      }
+
+      /* CW-DAS bar chart */
+      .si-bd-grid { display: flex; flex-direction: column; gap: 3px; }
+      .si-bd-row {
+        display: grid; grid-template-columns: 90px 1fr 48px;
+        align-items: center; gap: 8px; cursor: default;
+      }
+      .si-bd-lbl { font-size: 0.76rem; color: #555; font-weight: 600; }
+      .si-bd-bar-wrap {
+        height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;
+      }
+      .si-bd-bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
+      .si-bd-val { font-size: 0.76rem; font-weight: 700; text-align: right; }
+
+      /* UCF driver table */
+      .si-driver-table {
+        border-collapse: collapse; width: 100%; font-size: 0.78rem;
+      }
+      .si-driver-table tbody tr:nth-child(even) { background: #f5f5ff; }
+      .si-conflict-flags { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+      /* Driver Summary */
+      .si-drivers-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 8px;
+      }
+      .si-driver-col { }
+      .si-driver-col-header {
+        font-size: 0.70rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.04em; padding: 4px 8px; border-radius: 4px 4px 0 0;
+        margin-bottom: 4px;
+      }
+      .si-col-bullish { background: #e8f5e9; color: #2e7d32; }
+      .si-col-bearish { background: #ffebee; color: #c62828; }
+      .si-col-neutral { background: #f5f5f5; color: #666; }
+      .si-driver-item {
+        display: grid; grid-template-columns: 18px 1fr auto;
+        align-items: center; gap: 5px;
+        padding: 3px 6px; border-radius: 3px; font-size: 0.76rem;
+      }
+      .si-driver-bullish { background: #f9fff9; }
+      .si-driver-bearish { background: #fff9f9; }
+      .si-driver-neutral { background: #f9f9f9; }
+      .si-driver-icon { font-weight: 700; font-size: 0.88rem; }
+      .si-driver-label { color: #333; }
+      .si-driver-strength { font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+
+      /* Conflict Analysis */
+      .si-section-conflict { }
+      .si-conflict-grid {
+        display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;
+      }
+      .si-conflict-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 5px 10px; background: #fff; border: 1px solid #e0e0e0;
+        border-radius: 6px; font-size: 0.78rem; min-width: 180px;
+      }
+      .si-conflict-name { font-weight: 700; min-width: 110px; }
+      .si-conflict-native { font-size: 0.72rem; }
+      .si-conflict-source {
+        font-size: 0.76rem; color: #555; padding: 6px 10px;
+        background: #fff8e1; border: 1px solid #ffe082; border-radius: 5px;
+      }
+
+      /* Shared badges */
+      .si-badge {
+        font-size: 0.66rem; font-weight: 700; padding: 2px 7px;
+        border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em;
+      }
+      .si-badge-green  { background: #e8f5e9; color: #2e7d32; }
+      .si-badge-warn   { background: #fff3e0; color: #e65100; }
+      .si-badge-neutral{ background: #f5f5f5; color: #666; }
 
       /* ── Phase 7.5N: Signal Agreement, Freshness & Provenance ──────── */
 
@@ -2745,6 +2928,111 @@
       }
 
       /* ── UI Clarity Sprint — Problem 3: CRA Rotation Objective Banner ────── */
+      /* ── PAP-EXPLAIN-02: Rationale Conviction Context ───────────────── */
+      .rq-conviction-context {
+        margin-top: 7px; padding: 7px 10px;
+        background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 5px;
+        font-size: 0.76rem;
+      }
+      .rq-conv-label {
+        font-weight: 700; color: #2e7d32; margin-right: 4px; font-size: 0.72rem;
+        text-transform: uppercase; letter-spacing: 0.03em;
+      }
+      .rq-conv-text { color: #1b5e20; font-style: italic; }
+      .rq-conv-note {
+        display: block; margin-top: 4px; color: #555; font-size: 0.70rem;
+        font-style: normal;
+      }
+
+      /* ── PAP-EXPLAIN-01: Rotation Source vs Target Clarity ─────────── */
+
+      /* Role badges on source and target cards */
+      .cra-role-badge {
+        display: inline-block; font-size: 0.64rem; font-weight: 800;
+        padding: 2px 8px; border-radius: 3px; letter-spacing: 0.06em;
+        text-transform: uppercase; margin-right: 6px; flex-shrink: 0;
+      }
+      .cra-role-source {
+        background: #fff3e0; color: #e65100; border: 1px solid #ffb74d;
+      }
+      .cra-role-target {
+        background: #e8f5e9; color: #2e7d32; border: 1px solid #81c784;
+      }
+
+      /* Column header role chips */
+      .cra-col-header-role {
+        display: inline-block; font-size: 0.72rem; font-weight: 800;
+        padding: 2px 10px; border-radius: 4px; margin-right: 8px;
+        letter-spacing: 0.05em;
+      }
+      .cra-role-source-hdr { background: #e65100; color: #fff; }
+      .cra-role-target-hdr { background: #2e7d32; color: #fff; }
+      .cra-col-sub-hint {
+        font-size: 0.72rem; color: #888; padding: 4px 14px 8px;
+        font-style: italic; border-bottom: 1px solid var(--border);
+        margin-bottom: 4px;
+      }
+
+      /* Rotation Summary Panel */
+      .cra-rotation-summary-panel {
+        margin-bottom: 14px;
+        border: 1px solid #c5cae9; border-radius: 7px; overflow: hidden;
+      }
+      .cra-rs-header {
+        background: linear-gradient(135deg, #e8eaf6, #f3f0ff);
+        padding: 8px 14px; display: flex; align-items: center; gap: 12px;
+      }
+      .cra-rs-title {
+        font-weight: 800; font-size: 0.82rem; color: #3949ab;
+        text-transform: uppercase; letter-spacing: 0.05em;
+      }
+      .cra-rs-hint { font-size: 0.72rem; color: #5c6bc0; }
+      .cra-rs-body {
+        display: grid; grid-template-columns: 1fr 60px 1fr;
+        gap: 0; background: #fafafe;
+      }
+      .cra-rs-col { padding: 10px 12px; }
+      .cra-rs-col-header {
+        font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+        letter-spacing: 0.05em; padding: 4px 8px; border-radius: 4px;
+        margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+      }
+      .cra-rs-sell-header { background: #fff3e0; color: #e65100; }
+      .cra-rs-buy-header  { background: #e8f5e9; color: #2e7d32; }
+      .cra-rs-col-total { font-size: 0.82rem; font-weight: 700; }
+      .cra-rs-col-count { font-size: 0.70rem; color: #888; font-weight: 400; margin-left: auto; }
+      .cra-rs-items { display: flex; flex-direction: column; gap: 3px; }
+      .cra-rs-item {
+        display: grid; grid-template-columns: 48px 60px 1fr;
+        align-items: center; gap: 6px; padding: 2px 6px;
+        border-radius: 3px; font-size: 0.76rem;
+      }
+      .cra-rs-sell { background: #fff8f5; border-left: 3px solid #ff8a65; }
+      .cra-rs-buy  { background: #f5fff7; border-left: 3px solid #66bb6a; }
+      .cra-rs-sym  { font-weight: 700; font-family: monospace; }
+      .cra-rs-amt  { font-weight: 600; color: #444; }
+      .cra-rs-cat  { font-size: 0.68rem; color: #888; }
+      .cra-rs-tier { font-size: 0.68rem; color: #5c6bc0; }
+      .cra-rs-more { font-size: 0.68rem; color: #888; padding: 2px 6px; }
+      .cra-rs-empty { font-size: 0.72rem; color: #aaa; font-style: italic; padding: 4px 6px; }
+      .cra-rs-arrow-col {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; background: #f0f0f8; gap: 4px;
+      }
+      .cra-rs-arrow { font-size: 1.4rem; color: #3949ab; font-weight: 700; }
+      .cra-rs-net { font-size: 0.64rem; color: #5c6bc0; font-weight: 600; text-align: center; }
+
+      /* Target card funding clarity */
+      .cra-target-funding {
+        margin-top: 5px; padding: 5px 8px;
+        background: #f9f5e7; border: 1px solid #ffe082; border-radius: 4px;
+        font-size: 0.76rem;
+      }
+      .cra-target-funding-label { color: #888; margin-right: 4px; }
+      .cra-target-funding-sym { color: #e65100; font-family: monospace; }
+      .cra-target-funding-cat { color: #888; font-size: 0.70rem; }
+      .cra-target-funding-alt { color: #aaa; font-size: 0.68rem; }
+
       .cra-rotation-objective-banner {
         display: flex;
         align-items: stretch;
@@ -3179,6 +3467,231 @@
         white-space: nowrap;
       }
       .dil-accuracy-note { color: #aaa; font-style: italic; font-size: 0.61rem; }
+
+      /* ── PA-006B: Allocation Drift Intelligence ──────────────────────────── */
+      .dai-panel { padding: 20px; }
+      /* Trend summary strip */
+      .dai-trend-strip { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+      .dai-trend-card { background: #f5f0e8; border-radius: 8px; padding: 10px 16px; min-width: 120px; text-align: center; }
+      .dai-trend-val  { font-size: 1.5rem; font-weight: 800; }
+      .dai-trend-lbl  { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .dai-trend-IMPROVING    .dai-trend-val { color: #1a7c4f; }
+      .dai-trend-DETERIORATING .dai-trend-val { color: #c0392b; }
+      .dai-trend-OSCILLATING  .dai-trend-val { color: #856404; }
+      .dai-trend-STABLE       .dai-trend-val { color: #555; }
+      /* Governance note */
+      .dai-gov-note { font-size: 0.75rem; color: var(--muted); background: #f9f6ef; border-left: 3px solid #c5d8ef; border-radius: 0 6px 6px 0; padding: 6px 10px; margin-bottom: 16px; }
+      /* Section header */
+      .dai-section-header { font-weight: 700; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 16px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+      /* Priority table */
+      .dai-table { border-collapse: collapse; width: 100%; font-size: 0.80rem; }
+      .dai-table th { text-align: left; padding: 6px 8px; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 2px solid var(--border); background: #f9f6ef; white-space: nowrap; }
+      .dai-table td { padding: 6px 8px; border-bottom: 1px solid #ece8e0; vertical-align: middle; }
+      .dai-table tr:last-child td { border-bottom: none; }
+      .dai-table tr:hover td { background: #f5f0e8; }
+      /* Trend badges */
+      .dai-trend-badge { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.70rem; font-weight: 700; }
+      .dai-trend-IMPROVING     { background: #e8f5e9; color: #1a7c4f; border: 1px solid #b2dfdb; }
+      .dai-trend-DETERIORATING { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .dai-trend-OSCILLATING   { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .dai-trend-STABLE        { background: #f0f4f8; color: #555; border: 1px solid #c5d8ef; }
+      /* Persistence badges */
+      .dai-pers-badge { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.70rem; font-weight: 600; }
+      .dai-pers-STRUCTURAL { background: #fdecea; color: #880e4f; border: 1px solid #f48fb1; }
+      .dai-pers-CHRONIC    { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .dai-pers-RECURRING  { background: #fff8e1; color: #b8860b; border: 1px solid #ffe082; }
+      .dai-pers-TEMPORARY  { background: #f0f4f8; color: #555; border: 1px solid #c5d8ef; }
+      .dai-pers-NONE       { background: #e8f5e9; color: #1a7c4f; border: 1px solid #b2dfdb; }
+      /* Severity badges */
+      .dai-sev-CRITICAL    { color: #880e4f; font-weight: 800; }
+      .dai-sev-SIGNIFICANT { color: #c0392b; font-weight: 700; }
+      .dai-sev-MODERATE    { color: #856404; font-weight: 600; }
+      .dai-sev-MINOR       { color: #b8860b; }
+      .dai-sev-NONE        { color: var(--muted); }
+      /* Momentum bar */
+      .dai-mom-wrap { display: flex; align-items: center; gap: 6px; }
+      .dai-mom-track { width: 80px; height: 8px; background: #e8e0d4; border-radius: 4px; position: relative; }
+      .dai-mom-fill-pos { position: absolute; left: 50%; height: 100%; background: #1a7c4f; border-radius: 0 4px 4px 0; }
+      .dai-mom-fill-neg { position: absolute; right: 50%; height: 100%; background: #c0392b; border-radius: 4px 0 0 4px; }
+      .dai-mom-val { font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+      .dai-mom-pos { color: #1a7c4f; }
+      .dai-mom-neg { color: #c0392b; }
+      /* Drift values */
+      .dai-drift-pos { color: #c0392b; }
+      .dai-drift-neg { color: #1a7c4f; }
+      .dai-rank-num  { display: inline-block; background: var(--accent); color: #fff; border-radius: 4px; width: 22px; text-align: center; font-size: 0.74rem; font-weight: 700; }
+      .dai-rank-num.rank1 { background: #856404; }
+
+      /* ── ISSUE-12D: Signal Conflict Review ───────────────────────────────── */
+      .scr-panel { padding: 20px; }
+      .scr-overview-strip { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; margin-bottom: 18px; }
+      .scr-ov-card { background: #f5f0e8; border-radius: 8px; padding: 10px 14px; min-width: 110px; text-align: center; }
+      .scr-ov-val { font-size: 1.4rem; font-weight: 800; color: var(--accent); }
+      .scr-ov-lbl { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .scr-ov-accent .scr-ov-val { color: #1a6ea8; }
+      .scr-ov-governance { flex: 1 1 280px; font-size: 0.76rem; color: var(--muted); padding: 8px 12px; background: #f9f6ef; border-radius: 8px; border-left: 3px solid #c5d8ef; }
+      .scr-gov-badge { display: inline-block; background: #e8f0fa; color: #1a5c8a; border-radius: 4px; padding: 1px 6px; font-size: 0.70rem; font-weight: 700; margin-right: 6px; }
+
+      .scr-section-header { font-weight: 700; font-size: 0.84rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 18px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+
+      /* Learning grid */
+      .scr-learning-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+      .scr-learn-card { background: #f9f6ef; border-radius: 8px; padding: 12px 14px; }
+      .scr-learn-card-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+      .scr-title-win  { color: #1a7c4f; }
+      .scr-title-lose { color: #c0392b; }
+      .scr-title-rel  { color: #1a5c8a; }
+      .scr-title-norel { color: #856404; }
+      .scr-learn-item { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 0.80rem; border-bottom: 1px solid #ece8e0; }
+      .scr-learn-item:last-child { border-bottom: none; }
+      .scr-learn-empty { color: var(--muted); font-size: 0.76rem; font-style: italic; }
+      .scr-sym { font-family: monospace; font-weight: 700; font-size: 0.84rem; }
+      .scr-sym-chip { display: inline-block; background: #e8f0fa; color: #1a5c8a; border-radius: 3px; padding: 0 5px; font-size: 0.70rem; font-family: monospace; margin: 1px; }
+      .scr-count { font-size: 0.74rem; color: var(--muted); }
+
+      /* Pattern chips */
+      .scr-pattern-chip { display: inline-block; border-radius: 4px; padding: 1px 8px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+      .scr-conflict-major    { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .scr-conflict-moderate { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .scr-conflict-minor    { background: #f0f4f8; color: #555; border: 1px solid #c5d8ef; }
+      .scr-agree-bullish     { background: #e8f5e9; color: #1a7c4f; border: 1px solid #b2dfdb; }
+      .scr-agree-bearish     { background: #fce4ec; color: #880e4f; border: 1px solid #f48fb1; }
+
+      /* Outcome table */
+      .scr-outcomes-section { margin-bottom: 20px; }
+      .scr-table { border-collapse: collapse; width: 100%; font-size: 0.80rem; }
+      .scr-table th { text-align: left; padding: 6px 8px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 2px solid var(--border); white-space: nowrap; background: #f9f6ef; }
+      .scr-table td { padding: 6px 8px; border-bottom: 1px solid #ece8e0; vertical-align: middle; }
+      .scr-table tr:last-child td { border-bottom: none; }
+      .scr-table tr:hover td { background: #f5f0e8; }
+      .scr-pct-good { color: #1a7c4f; font-weight: 700; }
+      .scr-pct-bad  { color: #c0392b; font-weight: 700; }
+      .scr-ret-pos  { color: #1a7c4f; font-weight: 600; }
+      .scr-ret-neg  { color: #c0392b; font-weight: 600; }
+      .scr-ess-rate { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 0.74rem; font-weight: 700; }
+
+      /* Scorecard grid */
+      .scr-scorecard-section { margin-bottom: 20px; }
+      .scr-scorecard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+      .scr-scorecard-card { background: #f9f6ef; border-radius: 8px; padding: 12px 14px; }
+      .scr-sc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .scr-sc-signal { font-weight: 700; font-size: 0.82rem; }
+      .scr-sc-dir { font-size: 0.74rem; font-weight: 700; padding: 1px 6px; border-radius: 3px; }
+      .scr-dir-bull { background: #e8f5e9; color: #1a7c4f; }
+      .scr-dir-bear { background: #fdecea; color: #c0392b; }
+      .scr-sc-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+      .scr-sc-metric { text-align: center; }
+      .scr-sc-val { font-size: 1.1rem; font-weight: 800; color: var(--accent); }
+      .scr-sc-lbl { font-size: 0.64rem; color: var(--muted); text-transform: uppercase; }
+      .scr-sc-interp { font-size: 0.74rem; color: var(--muted); line-height: 1.4; border-top: 1px solid #ece8e0; padding-top: 6px; }
+
+      /* Deep dive */
+      .scr-deepdive-section { margin-top: 20px; }
+      .scr-deepdive-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .scr-deepdive-result { background: #f9f6ef; border-radius: 8px; padding: 14px; }
+      .scr-dd-header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .scr-dd-sym { font-family: monospace; font-size: 1.3rem; font-weight: 800; color: var(--accent); }
+      .scr-dd-stats { font-size: 0.78rem; color: var(--muted); }
+      .scr-dd-ess-rate { font-size: 0.78rem; background: #e8f0fa; border-radius: 4px; padding: 2px 8px; }
+      .scr-dd-current { margin: 8px 0; }
+      .scr-dd-current-label { font-size: 0.68rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em; margin-bottom: 4px; }
+      .scr-dd-precedents { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 8px 0; font-size: 0.80rem; border-top: 1px solid #ece8e0; border-bottom: 1px solid #ece8e0; margin: 8px 0; }
+      .scr-prec-label { font-weight: 600; color: var(--muted); font-size: 0.74rem; }
+      .scr-dd-conclusion { background: #f0f4f8; border-left: 3px solid #1a5c8a; border-radius: 0 6px 6px 0; padding: 8px 12px; font-size: 0.82rem; color: #222; line-height: 1.5; margin: 10px 0; }
+      .scr-dd-table-label { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; color: var(--muted); margin: 10px 0 5px; }
+      .scr-dd-table { font-size: 0.78rem; }
+      .scr-wl-win  { color: #1a7c4f; font-weight: 700; }
+      .scr-wl-lose { color: #c0392b; font-weight: 700; }
+      .scr-wl-neutral { color: var(--muted); }
+
+      /* ── DISLOCATION-02: Conflict Alpha Attribution ───────────────────────── */
+      .scr-alpha-section { margin-top: 20px; }
+      .scr-alpha-overview { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+      .scr-alpha-ll-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 12px; }
+      .scr-alpha-card { background: #f9f6ef; border-radius: 8px; padding: 12px 14px; border-left: 4px solid transparent; }
+      .scr-alpha-leader-card { border-left-color: #1a7c4f; }
+      .scr-alpha-laggard-card { border-left-color: #c0392b; }
+      .scr-alpha-card-header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .scr-alpha-card-metrics { display: grid; grid-template-columns: repeat(5, auto); gap: 8px 14px; font-size: 0.80rem; margin-bottom: 6px; }
+      /* Alpha class badges */
+      .scr-alpha-badge { display: inline-block; border-radius: 4px; padding: 1px 8px; font-size: 0.70rem; font-weight: 700; }
+      .scr-alpha-leader  { background: #e8f5e9; color: #1a7c4f; border: 1px solid #b2dfdb; }
+      .scr-alpha-laggard { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .scr-alpha-neutral { background: #f0f4f8; color: #555; border: 1px solid #c5d8ef; }
+      /* Significance badges */
+      .scr-sig-badge { display: inline-block; border-radius: 3px; padding: 1px 6px; font-size: 0.68rem; font-weight: 600; }
+      .scr-sig-noteworthy { background: #e8f0fa; color: #1a5c8a; border: 1px solid #90caf9; }
+      .scr-sig-suggestive { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .scr-sig-weak { background: #f5f0e8; color: var(--muted); border: 1px solid #ddd; }
+
+      /* ── DISLOCATION-03: Security-Level Conflict Alpha Badges ─────────────── */
+      .diso3-badge { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+      .diso3-leader  { background: #e8f5e9; color: #1a7c4f; border: 1px solid #b2dfdb; }
+      .diso3-laggard { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .diso3-neutral { background: #f0f4f8; color: #555; border: 1px solid #c5d8ef; }
+      /* Insight card */
+      .diso3-insight { border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 0.78rem; border-left: 3px solid transparent; }
+      .diso3-leader-card  { background: #f0faf2; border-left-color: #1a7c4f; }
+      .diso3-laggard-card { background: #fff5f5; border-left-color: #c0392b; }
+      .diso3-neutral-card { background: #f5f0e8; border-left-color: #c5d8ef; }
+      .diso3-no-conflict  { background: #f9f6ef; border-left-color: #c5d8ef; }
+      .diso3-insight-header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+      .diso3-insight-label  { font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+      .diso3-insight-pattern { font-weight: 600; font-size: 0.76rem; color: #333; margin-bottom: 5px; }
+      .diso3-insight-metrics { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.76rem; margin-bottom: 5px; }
+      .diso3-met-lbl { color: var(--muted); font-size: 0.70rem; margin-right: 3px; }
+      .diso3-insight-text { font-size: 0.76rem; color: #333; line-height: 1.45; margin-bottom: 4px; }
+      .diso3-insight-gov  { font-size: 0.66rem; color: var(--muted); font-style: italic; }
+
+      /* ── DISLOCATION-06: Confidence Calibration Badges ───────────────────── */
+      .diso6-badge { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+      .diso6-very-high { background: #e8f5e9; color: #1a5c1a; border: 1px solid #81c784; }
+      .diso6-high      { background: #e8f0fa; color: #1a5c8a; border: 1px solid #90caf9; }
+      .diso6-medium    { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .diso6-low       { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .diso6-cal-meta  { font-size: 0.70rem; color: var(--muted); margin-top: 3px; margin-bottom: 3px; }
+
+      /* ── DISLOCATION-07: Directional Accuracy Badges ─────────────────────── */
+      .diso7-badge { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+      .diso7-very-strong  { background: #e8f5e9; color: #1a5c1a; border: 1px solid #66bb6a; }
+      .diso7-strong       { background: #e8f0fa; color: #1565c0; border: 1px solid #90caf9; }
+      .diso7-moderate     { background: #fff3cd; color: #856404; border: 1px solid #ffd06e; }
+      .diso7-weak         { background: #fdecea; color: #c0392b; border: 1px solid #f5c6c0; }
+      .diso7-insufficient { background: #f5f5f5; color: #888; border: 1px solid #ccc; }
+      .diso7-verdict-box  { border-radius: 6px; padding: 8px 12px; }
+      .diso7-verdict-strong   { background: #e8f5e9; border: 1px solid #66bb6a; }
+      .diso7-verdict-moderate { background: #fff3cd; border: 1px solid #ffd06e; }
+      .diso7-verdict-weak     { background: #fdecea; border: 1px solid #f5c6c0; }
+      .diso7-verdict-label { font-weight: 700; font-size: 0.78rem; margin-bottom: 4px; }
+      .diso7-verdict-text  { font-size: 0.74rem; color: #444; }
+      .diso7-compare-box  { background: #fafafa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 14px; }
+      .diso7-compare-card { flex: 1 1 200px; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 12px; }
+      .diso7-compare-good-box { border-color: #66bb6a !important; background: #f1f8e9 !important; }
+      .diso7-compare-label { font-size: 0.72rem; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+      .diso7-compare-val   { font-size: 1.1rem; font-weight: 800; margin-bottom: 4px; }
+      .diso7-compare-good  { color: #1a5c1a; }
+      .diso7-compare-bad   { color: #c0392b; }
+      .diso7-compare-note  { font-size: 0.70rem; color: var(--muted); }
+
+      /* SIGNAL-UX-01 — Native Provider Translation Layer styles */
+      .nt-native  { font-family: monospace; font-weight: 700; }
+      .nt-meaning { font-style: italic; }
+      .nt-norm    { color: var(--muted); font-size: 0.88em; }
+      .nt-sep     { color: var(--muted); padding: 0 1px; }
+      .nt-dir     { font-weight: 600; }
+
+      .nt-detail-block    { margin: 6px 0; padding: 6px 8px; background: #f9f9fb; border-left: 3px solid #c5cae9; border-radius: 3px; font-size: 0.78rem; }
+      .nt-detail-provider { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; font-weight: 700; }
+      .nt-detail-row      { display: flex; justify-content: space-between; gap: 8px; line-height: 1.6; }
+      .nt-detail-lbl      { color: var(--muted); white-space: nowrap; }
+      .nt-detail-val      { font-weight: 600; text-align: right; }
+
+      /* Signal profile grid: 5-column layout (Part B) */
+      .nt-sig-profile-table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 0.77rem; }
+      .nt-sig-profile-table th { text-align: left; padding: 4px 8px; font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 2px solid #c5cae9; background: #f5f5fa; }
+      .nt-sig-profile-table td { padding: 5px 8px; border-bottom: 1px solid #eee; vertical-align: middle; }
+      .nt-sig-profile-table tr:last-child td { border-bottom: none; }
+      .nt-prov-label { font-weight: 700; font-family: monospace; white-space: nowrap; }
     </style>
   </head>
   <body>
@@ -3471,6 +3984,21 @@
         <!-- ISSUE-04C — Dislocation Watchlist Panel -->
         <div id="dislocationWatchlistContainer" class="dq-section" style="display:none"></div>
 
+        <!-- ISSUE-12D — Signal Conflict Review Panel -->
+        <div id="conflictReviewSection" class="dq-section" style="display:none">
+          <div class="dq-panel scr-panel">
+            <div class="dq-section-header">
+              <span class="dq-section-title">Signal Conflict Review</span>
+              <span class="dq-version-badge" id="scrVersionBadge"></span>
+              <span class="dq-advisory-note">Historical learning — informational only, no scoring changes</span>
+              <button class="cra-refresh-btn" id="scrRefreshBtn" onclick="loadConflictReview()" style="margin-left:8px">&#8634; Refresh</button>
+            </div>
+            <div id="conflictReviewContent">
+              <div style="color:var(--muted);padding:16px 0;font-size:0.84rem">Loading signal conflict review…</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Row 1: Allocation Map + Concentration -->
         <div class="two-col section-gap">
           <div class="panel" id="allocationPanel">
@@ -3480,6 +4008,21 @@
           <div class="panel" id="concentrationPanel">
             <p class="panel-title">Concentration Risk</p>
             <div id="concentrationContent"></div>
+          </div>
+        </div>
+
+        <!-- PA-006B: Allocation Drift Intelligence Panel -->
+        <div id="driftIntelligenceSection" class="dq-section section-gap" style="display:none">
+          <div class="dq-panel dai-panel">
+            <div class="dq-section-header">
+              <span class="dq-section-title">Allocation Intelligence</span>
+              <span class="dq-version-badge" id="daiVersionBadge"></span>
+              <span class="dq-advisory-note">Informational — no scoring or recommendation changes</span>
+              <button class="cra-refresh-btn" id="daiRefreshBtn" onclick="loadDriftIntelligence()" style="margin-left:8px">&#8634; Refresh</button>
+            </div>
+            <div id="driftIntelligenceContent">
+              <div style="color:var(--muted);padding:12px 0;font-size:0.84rem">Loading allocation intelligence…</div>
+            </div>
           </div>
         </div>
 
@@ -3551,6 +4094,7 @@
       </div><!-- /resultsArea -->
     </div><!-- /shell -->
 
-    <script src="app.js?v=25"></script>
+    <script src="../signal_translation_registry.js?v=1"></script>
+    <script src="app.js?v=28"></script>
   </body>
 </html>
