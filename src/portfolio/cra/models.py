@@ -22,6 +22,16 @@ CATEGORY_LOW_CONVICTION         = "LOW_CONVICTION_REDUCTION"
 # Priority ordering (lower index = higher priority)
 PRIORITY_ORDER = ["URGENT", "HIGH", "MODERATE", "LOW", "DEFER"]
 
+# ── Source intent vocabulary (CRA-EXPLAIN-02) ─────────────────────────────────
+# Operator-facing classification that explains WHY a position is in the queue.
+# Distinct from `category` which describes HOW it was detected.
+
+SOURCE_INTENT_THESIS_EXIT         = "THESIS_EXIT"
+SOURCE_INTENT_THESIS_TRIM         = "THESIS_TRIM"
+SOURCE_INTENT_TAX_FUNDING_SOURCE  = "TAX_FUNDING_SOURCE"
+SOURCE_INTENT_PORTFOLIO_REALLOCATION = "PORTFOLIO_REALLOCATION"
+SOURCE_INTENT_OVERWEIGHT_REPAIR   = "OVERWEIGHT_REPAIR"
+
 # ── Tax bucket vocabulary (from Phase 23.0A) ─────────────────────────────────
 
 TAX_BUCKET_A = "A"   # Loss harvest candidate
@@ -74,6 +84,7 @@ class CapitalSourceRecord:
     reduction_reason:     str = ""
     reduction_score:      float = 0.0
     policy_alignment_reason: str = ""
+    source_intent:        str = ""  # CRA-EXPLAIN-02: THESIS_EXIT|THESIS_TRIM|TAX_FUNDING_SOURCE|PORTFOLIO_REALLOCATION|OVERWEIGHT_REPAIR
 
 
 @dataclass(frozen=True)
@@ -199,6 +210,7 @@ class RotationProposal:
                 "reduction_reason":        s.reduction_reason,
                 "reduction_score":         s.reduction_score,
                 "policy_alignment_reason": s.policy_alignment_reason,
+                "source_intent":           s.source_intent,
             }
 
         def _target_dict(t: RotationDeploymentTarget) -> Dict[str, Any]:
@@ -224,6 +236,24 @@ class RotationProposal:
                 "funding_policy_alignment_reason": t.funding_policy_alignment_reason,
             }
 
+        def _source_intent_summary(sources: List[CapitalSourceRecord]) -> Dict[str, Any]:
+            """Aggregate capital and count by source_intent for the API response."""
+            buckets: Dict[str, Any] = {
+                SOURCE_INTENT_THESIS_EXIT:             {"count": 0, "capital": 0.0},
+                SOURCE_INTENT_THESIS_TRIM:             {"count": 0, "capital": 0.0},
+                SOURCE_INTENT_TAX_FUNDING_SOURCE:      {"count": 0, "capital": 0.0},
+                SOURCE_INTENT_PORTFOLIO_REALLOCATION:  {"count": 0, "capital": 0.0},
+                SOURCE_INTENT_OVERWEIGHT_REPAIR:       {"count": 0, "capital": 0.0},
+            }
+            for s in sources:
+                intent = s.source_intent or SOURCE_INTENT_PORTFOLIO_REALLOCATION
+                if intent in buckets:
+                    buckets[intent]["count"] += 1
+                    buckets[intent]["capital"] = round(
+                        buckets[intent]["capital"] + (s.estimated_proceeds or 0.0), 2
+                    )
+            return {k: v for k, v in buckets.items() if v["count"] > 0}
+
         return {
             "proposal_id":              self.proposal_id,
             "run_id":                   self.run_id,
@@ -241,4 +271,5 @@ class RotationProposal:
             "deployments":              [_target_dict(t) for t in self.deployments],
             "suppressed_sources":       [_source_dict(s) for s in self.suppressed_sources],
             "impact":                   self.impact.to_dict(),
+            "source_intent_summary":    _source_intent_summary(self.sources),
         }

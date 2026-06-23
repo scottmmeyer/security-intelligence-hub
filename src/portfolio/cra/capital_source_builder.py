@@ -32,6 +32,11 @@ from .models import (
     CATEGORY_SIGNAL_DETERIORATION,
     CATEGORY_STRATEGIC_EXIT,
     CATEGORY_TAX_AWARE_EXIT,
+    SOURCE_INTENT_OVERWEIGHT_REPAIR,
+    SOURCE_INTENT_PORTFOLIO_REALLOCATION,
+    SOURCE_INTENT_TAX_FUNDING_SOURCE,
+    SOURCE_INTENT_THESIS_EXIT,
+    SOURCE_INTENT_THESIS_TRIM,
     TAX_BUCKET_A,
     TAX_BUCKET_B,
     TAX_BUCKET_C,
@@ -81,6 +86,53 @@ _VERY_BEARISH_ESS = frozenset({"VERY_BEARISH"})
 
 
 # ── Internal record type (pre-dedup) ─────────────────────────────────────────
+
+def _compute_source_intent(
+    category: str,
+    ess_score_text: Optional[str],
+    signal_direction: Optional[str],
+    sizing_pct: float,
+) -> str:
+    """Derive operator-visible source_intent from category + signal context.
+
+    CRA-EXPLAIN-02: Distinguishes WHY a position is in the queue from HOW it
+    was detected.  The key insight is that OVERWEIGHT_REDUCTION positions that
+    still carry bullish conviction are being used as *funding sources* (not
+    because SIH has turned bearish on them), whereas positions without positive
+    conviction signals are being reduced for *allocation repair*.
+
+    Mapping:
+      STRATEGIC_EXIT                         → THESIS_EXIT
+      SIGNAL_DETERIORATION (VERY_BEARISH or full-exit sizing) → THESIS_EXIT
+      SIGNAL_DETERIORATION (otherwise)       → THESIS_TRIM
+      OVERWEIGHT_REDUCTION + bullish signals → TAX_FUNDING_SOURCE
+      OVERWEIGHT_REDUCTION (neutral/bearish) → OVERWEIGHT_REPAIR
+      TAX_AWARE_EXIT                         → TAX_FUNDING_SOURCE
+      LOW_CONVICTION_REDUCTION               → PORTFOLIO_REALLOCATION
+    """
+    ess = (ess_score_text or "").upper()
+    sig = (signal_direction or "").upper()
+
+    if category == CATEGORY_STRATEGIC_EXIT:
+        return SOURCE_INTENT_THESIS_EXIT
+
+    if category == CATEGORY_SIGNAL_DETERIORATION:
+        if ess == "VERY_BEARISH" or sizing_pct >= 1.0:
+            return SOURCE_INTENT_THESIS_EXIT
+        return SOURCE_INTENT_THESIS_TRIM
+
+    if category == CATEGORY_OVERWEIGHT_REDUCTION:
+        # Still positive conviction → being tapped as funding, not a bearish call
+        if ess in ("BULLISH", "VERY_BULLISH") or sig == "BULLISH":
+            return SOURCE_INTENT_TAX_FUNDING_SOURCE
+        return SOURCE_INTENT_OVERWEIGHT_REPAIR
+
+    if category == CATEGORY_TAX_AWARE_EXIT:
+        return SOURCE_INTENT_TAX_FUNDING_SOURCE
+
+    # LOW_CONVICTION_REDUCTION and any unrecognised categories
+    return SOURCE_INTENT_PORTFOLIO_REALLOCATION
+
 
 class _CandidateRecord:
     """Mutable staging record before CapitalSourceRecord construction."""
@@ -152,6 +204,12 @@ class _CandidateRecord:
             drift_pct=self.drift_pct,
             cost_basis=self.cost_basis,
             unrealized_gain_loss=self.unrealized_gain_loss,
+            source_intent=_compute_source_intent(
+                self.category,
+                self.ess_score_text,
+                self.signal_direction,
+                self.sizing_pct,
+            ),
         )
 
 
@@ -483,6 +541,12 @@ def build_capital_sources(
 
         evidence = [f"overweight allocation node | drift +{max_drift:.1f}%"]
 
+        # Capture ESS and signal so _compute_source_intent can distinguish
+        # bullish-conviction overweights (TAX_FUNDING_SOURCE) from neutral/bearish
+        # overweights that are being reduced for allocation repair (OVERWEIGHT_REPAIR).
+        ow_ess = (ov.get("ess_score_text") or "").upper() or None
+        ow_sig = (ov.get("signal_direction") or "").upper() or None
+
         _merge_or_add(_CandidateRecord(
             symbol=sym,
             current_value_usd=mv,
@@ -495,6 +559,8 @@ def build_capital_sources(
             operator_review_required=needs_review,
             is_overweight=True,
             drift_pct=max_drift,
+            ess_score_text=ow_ess,
+            signal_direction=ow_sig,
         ))
 
     # ── Category 4: Tax-Aware Exit ───────────────────────────────────────────
