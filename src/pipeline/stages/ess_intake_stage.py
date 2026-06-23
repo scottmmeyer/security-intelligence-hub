@@ -21,6 +21,7 @@ from src.history.signal_snapshot_manager import (
 from src.models.pipeline_models import ArtifactRecord, PipelineStatus
 from src.normalize.provider_normalizer import normalize_fidelity_ess_file
 from src.portfolio.ess_coverage import build_ess_coverage_gap_warning, write_ess_coverage_warning
+from src.portfolio.fidelity_signal import load_fidelity_signals
 from src.pipeline.stage_registry import StageContext, StageExecutionOutput
 from src.validation.intake_readiness_validator import (
     INTAKE_OPERATOR_GUIDANCE,
@@ -95,18 +96,6 @@ def _to_validation_summary(
     if unmapped_columns:
         summary["unmapped_column_list"] = "|".join(unmapped_columns)
     return summary
-
-
-def _incoming_ess_symbols(normalized_signal_records: List[Dict[str, object]]) -> set[str]:
-    """Return symbols present in the latest incoming StarMine ESS coverage."""
-    symbols: set[str] = set()
-    for row in normalized_signal_records:
-        domain = str(row.get("coverage_domain") or "").strip().upper()
-        ess_text = str(row.get("starmine_ess_text") or "").strip().upper()
-        symbol = str(row.get("symbol") or "").strip().upper()
-        if symbol and domain == "STARMINE_COVERED" and ess_text:
-            symbols.add(symbol)
-    return symbols
 
 
 def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
@@ -207,11 +196,11 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
         errors = []
 
     now = datetime.now(timezone.utc)
-    ess_warning = build_ess_coverage_gap_warning(
-        incoming_ess_symbols=_incoming_ess_symbols(normalized_signal_records),
-        snapshot_date=context.snapshot_date,
-        signal_snapshot_path=Path("data/current/signal_snapshot.csv"),
-        analysis_runs_root=Path("data/portfolio_ingestion/analysis_runs"),
+    pre_merge_signal_path = Path("data/current/signal_snapshot.csv")
+    pre_merge_signals = (
+        load_fidelity_signals(pre_merge_signal_path)
+        if pre_merge_signal_path.exists()
+        else {}
     )
     finalized_artifacts = [
         ArtifactRecord(
@@ -258,6 +247,39 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
             index_path="data/history/universe_index.csv",
         )
 
+        # Regenerate warning from merged current signal state immediately after append.
+        # This keeps warning freshness coupled to merge completion even if
+        # persistence validation later reports errors.
+        ess_warning = build_ess_coverage_gap_warning(
+            snapshot_date=context.snapshot_date,
+            signal_snapshot_path=Path("data/current/signal_snapshot.csv"),
+            analysis_runs_root=Path("data/portfolio_ingestion/analysis_runs"),
+            base_universe_csv=Path("data/current/base_equity_universe.csv"),
+            prior_signals=pre_merge_signals,
+        )
+        ess_warning_path = Path("data/current/ess_coverage_warning.json")
+        write_ess_coverage_warning(
+            output_path=ess_warning_path,
+            snapshot_date=context.snapshot_date,
+            warning=ess_warning,
+        )
+        if ess_warning is not None:
+            warnings.append(ess_warning.summary_message)
+        finalized_artifacts.append(
+            ArtifactRecord(
+                artifact_name="ess_coverage_warning.json",
+                artifact_path=str(ess_warning_path),
+                artifact_type="DERIVED_JSON",
+                created_at=now,
+                producing_stage="ess_intake",
+                checksum_placeholder="TODO",
+                lineage_notes=(
+                    "Structured ESS coverage-drop warning artifact for held positions. "
+                    f"count={ess_warning.warning_count if ess_warning else 0}"
+                ),
+            )
+        )
+
         persistence_result = validate_ess_stage_persistence(
             run_id=context.run_id,
             snapshot_date=context.snapshot_date.isoformat(),
@@ -282,6 +304,11 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
             failure_summary.update(
                 {
                     "persistence_verification": "FAILED",
+                    "ess_coverage_gap_count": str(ess_warning.warning_count if ess_warning else 0),
+                    "ess_coverage_gap_examples": "|".join(ess_warning.example_symbols) if ess_warning else "",
+                    "ess_coverage_true_missing_count": str(ess_warning.true_missing_count if ess_warning else 0),
+                    "ess_coverage_stale_count": str(ess_warning.stale_coverage_count if ess_warning else 0),
+                    "ess_coverage_no_fresh_starmine_count": str(ess_warning.no_fresh_starmine_count if ess_warning else 0),
                     "persisted_signal_rows": str(persistence_result.signal_rows_persisted),
                     "persisted_base_universe_rows": str(persistence_result.base_universe_rows_persisted),
                     "artifact.current_signal_snapshot.path": str(
@@ -304,6 +331,7 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
                     ),
                     "artifact.signal_index.path": str(signal_storage_paths.index_path),
                     "artifact.universe_index.path": str(universe_storage_paths.index_path),
+                    "artifact.ess_coverage_warning.path": str(ess_warning_path),
                     "artifact.current_signal_snapshot.rows": str(
                         persistence_result.signal_rows_persisted
                     ),
@@ -331,15 +359,6 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
                 artifacts_created=tuple(finalized_artifacts),
                 validation_summary=failure_summary,
             )
-
-        ess_warning_path = Path("data/current/ess_coverage_warning.json")
-        write_ess_coverage_warning(
-            output_path=ess_warning_path,
-            snapshot_date=context.snapshot_date,
-            warning=ess_warning,
-        )
-        if ess_warning is not None:
-            warnings.append(ess_warning.summary_message)
 
         finalized_artifacts.extend(
             [
@@ -433,18 +452,6 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
                     checksum_placeholder="TODO",
                     lineage_notes="Append-only universe index updated with run partition pointer.",
                 ),
-                ArtifactRecord(
-                    artifact_name="ess_coverage_warning.json",
-                    artifact_path=str(ess_warning_path),
-                    artifact_type="DERIVED_JSON",
-                    created_at=now,
-                    producing_stage="ess_intake",
-                    checksum_placeholder="TODO",
-                    lineage_notes=(
-                        "Structured ESS coverage-drop warning artifact for held positions. "
-                        f"count={ess_warning.warning_count if ess_warning else 0}"
-                    ),
-                ),
             ]
         )
 
@@ -470,6 +477,9 @@ def execute_ess_intake_stage(context: StageContext) -> StageExecutionOutput:
                     "persistence_verification": "PASSED",
                     "ess_coverage_gap_count": str(ess_warning.warning_count if ess_warning else 0),
                     "ess_coverage_gap_examples": "|".join(ess_warning.example_symbols) if ess_warning else "",
+                    "ess_coverage_true_missing_count": str(ess_warning.true_missing_count if ess_warning else 0),
+                    "ess_coverage_stale_count": str(ess_warning.stale_coverage_count if ess_warning else 0),
+                    "ess_coverage_no_fresh_starmine_count": str(ess_warning.no_fresh_starmine_count if ess_warning else 0),
                     "intake_files_cleaned": str(len(cleaned_files)),
                     "intake_files_cleanup_failed": str(len(failed_cleanups)),
                     "persisted_signal_rows": str(persistence_result.signal_rows_persisted),

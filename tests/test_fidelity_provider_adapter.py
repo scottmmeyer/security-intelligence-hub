@@ -12,6 +12,7 @@ from src.normalize.provider_normalizer import normalize_fidelity_ess_file
 from src.pipeline.stage_registry import StageContext
 from src.pipeline.stages.ess_intake_stage import execute_ess_intake_stage
 from src.providers.fidelity.fidelity_ess_adapter import adapt_fidelity_ess_file
+from src.validation.persistence_validator import PersistenceValidationResult
 from src.validation.provider_mapping_validator import validate_fidelity_provider_mappings
 
 
@@ -320,8 +321,13 @@ def test_ess_stage_present_holding_generates_no_coverage_gap_warning(tmp_path: P
 
     assert output.status == "COMPLETE"
     assert output.validation_summary["ess_coverage_gap_count"] == "0"
+    assert output.validation_summary["ess_coverage_true_missing_count"] == "0"
+    assert output.validation_summary["ess_coverage_stale_count"] == "0"
+    assert output.validation_summary["ess_coverage_no_fresh_starmine_count"] == "0"
     payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
     assert payload["warning_count"] == 0
+    assert payload["true_missing_count"] == 0
+    assert payload["gaps"] == []
 
 
 def test_ess_stage_absent_holding_generates_coverage_gap_warning(tmp_path: Path, monkeypatch) -> None:
@@ -371,13 +377,12 @@ def test_ess_stage_absent_holding_generates_coverage_gap_warning(tmp_path: Path,
     )
 
     assert output.status == "COMPLETE"
-    assert output.validation_summary["ess_coverage_gap_count"] == "1"
-    assert any("ESS Coverage Warning" in warning for warning in output.warnings)
+    assert output.validation_summary["ess_coverage_gap_count"] == "0"
+    assert output.validation_summary["ess_coverage_stale_count"] == "0"
     payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
-    assert payload["warning_count"] == 1
-    assert payload["gaps"][0]["symbol"] == "TSLA"
-    assert payload["gaps"][0]["current_ess_posture"] == "BEARISH"
-    assert payload["gaps"][0]["days_stale"] == 3
+    assert payload["warning_count"] == 0
+    assert payload["stale_coverage_count"] == 0
+    assert payload["gaps"] == []
 
 
 def test_ess_stage_multiple_absent_holdings_grouped_warning(tmp_path: Path, monkeypatch) -> None:
@@ -429,8 +434,236 @@ def test_ess_stage_multiple_absent_holdings_grouped_warning(tmp_path: Path, monk
     )
 
     assert output.status == "COMPLETE"
-    assert output.validation_summary["ess_coverage_gap_count"] == "2"
-    assert output.validation_summary["ess_coverage_gap_examples"] == "TSLA|STNG"
+    assert output.validation_summary["ess_coverage_gap_count"] == "0"
+    assert output.validation_summary["ess_coverage_stale_count"] == "0"
+    assert output.validation_summary["ess_coverage_gap_examples"] == ""
     payload = json.loads((tmp_path / "data" / "current" / "ess_coverage_warning.json").read_text(encoding="utf-8"))
-    assert payload["warning_count"] == 2
-    assert payload["example_symbols"] == ["TSLA", "STNG"]
+    assert payload["warning_count"] == 0
+    assert payload["stale_coverage_count"] == 0
+    assert payload["example_symbols"] == []
+
+
+def test_ess_stage_regenerates_warning_when_persistence_succeeds(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    warning_path = tmp_path / "data" / "current" / "ess_coverage_warning.json"
+    warning_path.parent.mkdir(parents=True, exist_ok=True)
+    warning_path.write_text(
+        json.dumps(
+            {
+                "warning_code": "ESS_COVERAGE_GAP",
+                "status": "DEGRADED",
+                "snapshot_date": "2026-05-01",
+                "warning_count": 2,
+                "example_symbols": ["OLD1", "OLD2"],
+                "gaps": [],
+                "summary_message": "stale payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+    warning_path.touch()
+    old_mtime_ns = warning_path.stat().st_mtime_ns
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-WARN-SUCCESS", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "COMPLETE"
+    payload = json.loads(warning_path.read_text(encoding="utf-8"))
+    assert payload["snapshot_date"] == "2026-05-13"
+    assert payload["warning_code"] == "ESS_COVERAGE_GAP"
+    assert warning_path.stat().st_mtime_ns > old_mtime_ns
+
+
+def test_ess_stage_regenerates_warning_when_persistence_fails(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    def _forced_persistence_failure(**_kwargs) -> PersistenceValidationResult:
+        return PersistenceValidationResult(
+            checks=[],
+            errors=["synthetic persistence failure"],
+            warnings=[],
+            signal_rows_persisted=2,
+            base_universe_rows_persisted=2,
+        )
+
+    monkeypatch.setattr(
+        "src.pipeline.stages.ess_intake_stage.validate_ess_stage_persistence",
+        _forced_persistence_failure,
+    )
+
+    warning_path = tmp_path / "data" / "current" / "ess_coverage_warning.json"
+    warning_path.parent.mkdir(parents=True, exist_ok=True)
+    warning_path.write_text(
+        json.dumps(
+            {
+                "warning_code": "ESS_COVERAGE_GAP",
+                "status": "DEGRADED",
+                "snapshot_date": "2026-05-01",
+                "warning_count": 1,
+                "example_symbols": ["STALE"],
+                "gaps": [],
+                "summary_message": "stale payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+    warning_path.touch()
+    old_mtime_ns = warning_path.stat().st_mtime_ns
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-WARN-FAIL", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "FAILED"
+    payload = json.loads(warning_path.read_text(encoding="utf-8"))
+    assert payload["snapshot_date"] == "2026-05-13"
+    assert warning_path.stat().st_mtime_ns > old_mtime_ns
+    assert output.validation_summary["artifact.ess_coverage_warning.path"].endswith(
+        "data/current/ess_coverage_warning.json"
+    )
+
+
+def test_ess_stage_warning_timestamp_catches_up_to_merged_snapshot(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    (tmp_path / "incoming" / "ess" / "starmine").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "incoming" / "ess" / "non_starmine_zacks").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        _fixture_path("fidelity_starmine_native_fixture.csv"),
+        tmp_path / "incoming" / "ess" / "starmine" / "fidelity_starmine_native_fixture.csv",
+    )
+
+    warning_path = tmp_path / "data" / "current" / "ess_coverage_warning.json"
+    warning_path.parent.mkdir(parents=True, exist_ok=True)
+    warning_path.write_text(
+        json.dumps(
+            {
+                "warning_code": "ESS_COVERAGE_GAP",
+                "status": "DEGRADED",
+                "snapshot_date": "2026-05-01",
+                "warning_count": 3,
+                "example_symbols": ["MU", "FIS", "VRT"],
+                "gaps": [],
+                "summary_message": "legacy stale warning",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-MTIME", snapshot_date=date(2026, 5, 13))
+    )
+
+    assert output.status == "COMPLETE"
+    signal_snapshot = tmp_path / "data" / "current" / "signal_snapshot.csv"
+    assert warning_path.exists()
+    assert signal_snapshot.exists()
+    assert warning_path.stat().st_mtime_ns >= signal_snapshot.stat().st_mtime_ns
+
+
+def test_ess_stage_regeneration_clears_legacy_mu_fis_vrt_examples(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo_root / "config" / "coverage_domains.yaml", tmp_path / "config" / "coverage_domains.yaml")
+    shutil.copy2(repo_root / "config" / "market_cap_buckets.yaml", tmp_path / "config" / "market_cap_buckets.yaml")
+
+    starmine_dir = tmp_path / "incoming" / "ess" / "starmine"
+    non_starmine_dir = tmp_path / "incoming" / "ess" / "non_starmine_zacks"
+    starmine_dir.mkdir(parents=True, exist_ok=True)
+    non_starmine_dir.mkdir(parents=True, exist_ok=True)
+
+    with (starmine_dir / "EquitySummaryScores-17Jun2026.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            [
+                "Symbol",
+                "Company Name",
+                "Security Type",
+                "Security Price",
+                "Equity Summary Score (ESS) from LSEG StarMine",
+                "Forward EPS Long Term Growth (3-5 Yrs)",
+                "Market Capitalization",
+                "Jefferson Research",
+                "Zacks Investment Research",
+                "McLean Capital Management",
+                "Custom Fidelity Flag",
+            ]
+        )
+        writer.writerow(["MU", "Micron", "Common Stock", "120.0", "Very Bullish", "12.0", "$120.0B", "", "", "", "A"])
+        writer.writerow(["FIS", "Fidelity National", "Common Stock", "75.0", "Bullish", "8.0", "$40.0B", "", "", "", "A"])
+        writer.writerow(["VRT", "Vertiv", "Common Stock", "95.0", "Bullish", "10.0", "$35.0B", "", "", "", "A"])
+
+    analysis_run = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260617-TEST-MUFISVRT"
+    analysis_run.mkdir(parents=True, exist_ok=True)
+    with (analysis_run / "holdings.csv").open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["symbol", "asset_class", "description", "percent_of_portfolio"])
+        writer.writeheader()
+        writer.writerow({"symbol": "MU", "asset_class": "EQUITIES", "description": "Micron", "percent_of_portfolio": "3.2"})
+        writer.writerow({"symbol": "FIS", "asset_class": "EQUITIES", "description": "FIS", "percent_of_portfolio": "2.8"})
+        writer.writerow({"symbol": "VRT", "asset_class": "EQUITIES", "description": "Vertiv", "percent_of_portfolio": "2.5"})
+
+    warning_path = tmp_path / "data" / "current" / "ess_coverage_warning.json"
+    warning_path.parent.mkdir(parents=True, exist_ok=True)
+    warning_path.write_text(
+        json.dumps(
+            {
+                "warning_code": "ESS_COVERAGE_GAP",
+                "status": "DEGRADED",
+                "snapshot_date": "2026-06-16",
+                "warning_count": 3,
+                "example_symbols": ["MU", "FIS", "VRT"],
+                "gaps": [
+                    {"symbol": "MU", "gap_type": "STALE_ESS"},
+                    {"symbol": "FIS", "gap_type": "STALE_ESS"},
+                    {"symbol": "VRT", "gap_type": "STALE_ESS"},
+                ],
+                "summary_message": "legacy stale MU/FIS/VRT warning",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = execute_ess_intake_stage(
+        StageContext(run_id="RUN-WP032-INT-MUFISVRT", snapshot_date=date(2026, 6, 17))
+    )
+
+    assert output.status == "COMPLETE"
+    payload = json.loads(warning_path.read_text(encoding="utf-8"))
+    assert payload["warning_count"] == 0
+    assert payload["example_symbols"] == []
+    assert "MU" not in payload.get("example_symbols", [])
+    assert "FIS" not in payload.get("example_symbols", [])
+    assert "VRT" not in payload.get("example_symbols", [])

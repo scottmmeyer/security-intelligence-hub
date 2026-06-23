@@ -49,6 +49,7 @@ class _ArtifactSpec:
     artifact_path: Path
     expected_manifest_count: int
     require_partition_run_isolation: bool
+    enforce_manifest_count_match: bool = True
 
 
 def _read_csv_rows(path: Path) -> tuple[List[Dict[str, str]], int]:
@@ -229,6 +230,7 @@ def validate_ess_stage_persistence(
             artifact_path=signal_paths.current_signal_snapshot_path,
             expected_manifest_count=expected_signal_rows,
             require_partition_run_isolation=False,
+            enforce_manifest_count_match=False,
         ),
         _ArtifactSpec(
             artifact_name="current/base_equity_universe.csv",
@@ -287,7 +289,14 @@ def validate_ess_stage_persistence(
                 f"{spec.artifact_name}: malformed CSV rows detected (count={malformed_rows}); overflow columns found."
             )
 
-        match = exists and physical_row_count == spec.expected_manifest_count and run_row_count == spec.expected_manifest_count
+        if spec.enforce_manifest_count_match:
+            match = (
+                exists
+                and physical_row_count == spec.expected_manifest_count
+                and run_row_count == spec.expected_manifest_count
+            )
+        else:
+            match = exists and run_row_count > 0
 
         checks.append(
             ArtifactPersistenceCheck(
@@ -306,13 +315,13 @@ def validate_ess_stage_persistence(
         if spec.artifact_name == "partition/base_equity_universe.csv":
             base_rows_persisted = run_row_count
 
-        if exists and physical_row_count != spec.expected_manifest_count:
+        if exists and spec.enforce_manifest_count_match and physical_row_count != spec.expected_manifest_count:
             errors.append(
                 f"{spec.artifact_name}: persisted physical-row count mismatch: "
                 f"manifest={spec.expected_manifest_count}, persisted={physical_row_count}."
             )
 
-        if exists and run_row_count != spec.expected_manifest_count:
+        if exists and spec.enforce_manifest_count_match and run_row_count != spec.expected_manifest_count:
             errors.append(
                 f"{spec.artifact_name}: persisted run-row count mismatch: "
                 f"manifest={spec.expected_manifest_count}, persisted={run_row_count}."

@@ -64,7 +64,11 @@ def _discover_eligible_csv_files(intake_dir: str | Path) -> List[Path]:
     path = Path(intake_dir)
     if not path.exists():
         return []
-    return sorted(item for item in path.glob("*.csv") if item.is_file())
+    return sorted(
+        item
+        for item in path.iterdir()
+        if item.is_file() and item.suffix.lower() == ".csv"
+    )
 
 
 def validate_intake_readiness(

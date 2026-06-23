@@ -221,3 +221,63 @@ def test_persistence_validator_detects_missing_lineage_fields(tmp_path: Path) ->
     )
 
     assert any("missing required lineage fields" in err for err in result.errors)
+
+
+def test_persistence_validator_allows_merged_current_signal_row_count(tmp_path: Path) -> None:
+    current_root = tmp_path / "data" / "current"
+    signal_history_root = tmp_path / "data" / "history" / "signals"
+    universe_history_root = tmp_path / "data" / "history" / "universe"
+    signal_index_path = tmp_path / "data" / "history" / "signal_index.csv"
+    universe_index_path = tmp_path / "data" / "history" / "universe_index.csv"
+    run_id = "RUN-PERSIST-MERGE-001"
+
+    # Same symbol appears in two coverage domains; partition row count is 2,
+    # but current merged snapshot keeps only the preferred STARMINE_COVERED row.
+    records = [
+        _sample_signal_record(),
+        {
+            **_sample_signal_record(),
+            "coverage_domain": "NON_STARMINE_ANALYST",
+            "signal_coverage_status": "NON_COVERED",
+            "starmine_ess_text": "",
+            "starmine_ess_numeric": "",
+            "starmine_ess_numeric_estimated": False,
+            "starmine_ess_source_type": "UNKNOWN",
+        },
+    ]
+
+    append_signal_snapshots(
+        normalized_records=records,
+        run_id=run_id,
+        current_root=current_root,
+        history_root=signal_history_root,
+        index_path=signal_index_path,
+    )
+    append_base_universe_rows(
+        base_rows=[
+            _sample_base_universe_row(run_id),
+            {
+                **_sample_base_universe_row(run_id),
+                "coverage_domain": "NON_STARMINE_ANALYST",
+            },
+        ],
+        run_id=run_id,
+        current_root=current_root,
+        history_root=universe_history_root,
+        index_path=universe_index_path,
+    )
+
+    result = validate_ess_stage_persistence(
+        run_id=run_id,
+        snapshot_date=date(2026, 5, 13).isoformat(),
+        expected_signal_rows=2,
+        expected_base_universe_rows=2,
+        current_root=current_root,
+        signal_history_root=signal_history_root,
+        universe_history_root=universe_history_root,
+        signal_index_path=signal_index_path,
+        universe_index_path=universe_index_path,
+    )
+
+    assert result.errors == []
+    assert result.signal_rows_persisted == 2
