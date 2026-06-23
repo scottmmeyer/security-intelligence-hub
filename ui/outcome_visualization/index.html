@@ -545,6 +545,7 @@
 
       /* SI-REFRESH-02: coverage detail */
       .signal-pill-partial { border-color: #f28f3b; }
+      .signal-pill-refreshing { border-color: #6ea8d4; background: #f0f7ff; }
       .pill-body { display: flex; flex-direction: column; gap: 2px; }
       .pill-main-row { display: flex; align-items: center; gap: 6px; }
       .pill-detail-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 1px; }
@@ -573,6 +574,367 @@
       .signal-refresh-btn:hover { background: #0a4a50; }
       .signal-refresh-btn:disabled { background: #aaa; cursor: not-allowed; }
 
+      .refresh-controls {
+        display: flex;
+        gap: 10px;
+        align-items: end;
+        flex-wrap: wrap;
+      }
+
+      .refresh-mode-field {
+        min-width: 220px;
+      }
+
+      .refresh-mode-field label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .refresh-mode-field select {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 10px;
+        font-size: 0.95rem;
+        background: #fff;
+        color: var(--text);
+      }
+
+      .refresh-insight-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .refresh-state-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .refresh-state-line {
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .refresh-state-line strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .universe-tag {
+        display: inline-block;
+        border: 1px solid #d7c7ab;
+        border-radius: 999px;
+        padding: 1px 7px;
+        margin-right: 4px;
+        background: #f8f0e3;
+        color: #5d4c2f;
+        font-size: 0.67rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .candidate-readiness-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .candidate-metric-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+      }
+
+      .candidate-metric-title {
+        color: var(--muted);
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .candidate-metric-value {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: var(--text);
+        margin-top: 4px;
+      }
+
+      .candidate-metric-meta {
+        margin-top: 3px;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .candidate-status-badge {
+        display: inline-block;
+        margin-top: 6px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        border: 1px solid var(--border);
+      }
+
+      .candidate-status-high {
+        color: #1f7f73;
+        border-color: #7bc7bd;
+        background: #e8f6f4;
+      }
+
+      .candidate-status-medium {
+        color: #8c5f00;
+        border-color: #f1ce80;
+        background: #fff7e3;
+      }
+
+      .candidate-status-low {
+        color: #a53c24;
+        border-color: #ebb09f;
+        background: #fdeee9;
+      }
+
+      .refresh-filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .refresh-filter-chip {
+        border: 1px solid #d7c7ab;
+        border-radius: 999px;
+        background: #fff;
+        color: var(--text);
+        font-size: 0.74rem;
+        padding: 4px 9px;
+        cursor: pointer;
+      }
+
+      .refresh-filter-chip.active {
+        background: #f8f0e3;
+        border-color: #bda16f;
+      }
+
+      .freshness-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      .freshness-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 860px;
+      }
+
+      .freshness-table th,
+      .freshness-table td {
+        border-bottom: 1px solid #efe6d6;
+        text-align: left;
+        padding: 8px 9px;
+        font-size: 0.78rem;
+      }
+
+      .freshness-table th {
+        background: #f8f5ee;
+        color: #544c3f;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .provider-state-fresh { color: #1f7f73; font-weight: 600; }
+      .provider-state-stale { color: #a53c24; font-weight: 600; }
+      .provider-state-missing { color: #6b655a; font-weight: 600; }
+
+      .completion-banner {
+        margin-top: 10px;
+        border: 1px solid #c4dcbf;
+        background: #edf8ea;
+        color: #2d5b2a;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 0.82rem;
+        display: none;
+      }
+
+      @media (max-width: 1100px) {
+        .refresh-state-grid { grid-template-columns: 1fr; }
+        .candidate-readiness-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+
+      .refresh-insight-card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        background: #fff;
+      }
+
+      .refresh-insight-title {
+        margin: 0 0 8px;
+        font-size: 0.9rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .refresh-insight-summary {
+        font-size: 0.88rem;
+        color: var(--text);
+        line-height: 1.45;
+      }
+
+      .refresh-insight-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .refresh-insight-pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 0.75rem;
+        background: #f7f3ea;
+        border: 1px solid #e2d7c4;
+        color: var(--muted);
+      }
+
+      .refresh-mode-definition-panel {
+        margin-top: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #f8f5ee;
+        padding: 12px;
+      }
+
+      .refresh-mode-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+
+      .refresh-mode-title {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .refresh-mode-purpose {
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .refresh-mode-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .refresh-mode-card {
+        border: 1px solid #e2d7c4;
+        border-radius: 10px;
+        background: #fff;
+        padding: 10px;
+      }
+
+      .refresh-mode-card h5 {
+        margin: 0 0 6px;
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .refresh-mode-detail {
+        font-size: 0.82rem;
+        color: var(--text);
+        line-height: 1.45;
+      }
+
+      .refresh-mode-list {
+        margin: 0;
+        padding-left: 16px;
+      }
+
+      .refresh-mode-list li {
+        font-size: 0.8rem;
+        color: var(--text);
+        margin: 3px 0;
+      }
+
+      .refresh-mode-list li.not-updated {
+        color: #9b4f40;
+      }
+
+      .impact-matrix {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .impact-row {
+        font-size: 0.79rem;
+        color: var(--text);
+      }
+
+      .impact-high { color: #1f7f73; font-weight: 700; }
+      .impact-medium { color: #9c6a00; font-weight: 700; }
+      .impact-none { color: #6b655a; font-weight: 700; }
+
+      .investment-guidance {
+        margin-top: 10px;
+        border: 1px solid #7fbc8c;
+        border-radius: 10px;
+        background: #edf8ea;
+        padding: 10px;
+      }
+
+      .investment-guidance h5 {
+        margin: 0 0 6px;
+        font-size: 0.82rem;
+        color: #2f6b3e;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .investment-guidance p {
+        margin: 0;
+        font-size: 0.8rem;
+        color: #2b5435;
+      }
+
+      .investment-guidance ul {
+        margin: 6px 0 0;
+        padding-left: 16px;
+      }
+
+      .investment-guidance li {
+        font-size: 0.79rem;
+        color: #2b5435;
+        margin: 2px 0;
+      }
+
+      .universe-count-value {
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .readiness-high { color: #2a9d8f; font-weight: 700; }
+      .readiness-medium { color: #f28f3b; font-weight: 700; }
+      .readiness-low { color: #e76f51; font-weight: 700; }
+
       .coverage-block {
         margin-top: 12px;
         padding-top: 12px;
@@ -591,6 +953,11 @@
         margin-bottom: 10px;
         font-size: 0.82rem;
         color: var(--muted);
+      }
+
+      @media (max-width: 900px) {
+        .refresh-mode-grid { grid-template-columns: 1fr; }
+        .impact-matrix { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -698,15 +1065,93 @@
           <div id="signalStatusPills" class="signal-status-row">
             <span style="color: var(--muted); font-size: 0.83rem;">Loading…</span>
           </div>
-          <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Stale</button>
+          <div class="refresh-controls">
+            <div class="refresh-mode-field">
+              <label for="signalRefreshMode">Next Refresh Intent</label>
+              <select id="signalRefreshMode">
+                <option value="stale_only">Refresh Stale Only</option>
+                <option value="portfolio_signals" selected>Refresh Portfolio Signals</option>
+                <option value="rebuild_research_universe">Rebuild Research Universe</option>
+                <option value="prepare_portfolio_review">Prepare Portfolio Review</option>
+              </select>
+            </div>
+            <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Portfolio Signals</button>
+          </div>
         </div>
         <div id="signalRefreshMsg" style="margin-top: 8px; font-size: 0.82rem; color: var(--muted); display: none;"></div>
+        <div id="refreshModeDefinitionPanel" class="refresh-mode-definition-panel">
+          <div class="refresh-mode-purpose">Loading refresh mode guidance...</div>
+        </div>
+        <div class="refresh-state-grid">
+          <div class="refresh-insight-card">
+            <h4 class="refresh-insight-title">Active Job</h4>
+            <div id="refreshActiveStateSummary" class="refresh-insight-summary">No active refresh job.</div>
+            <div id="refreshActiveStateDetails" class="refresh-insight-row"></div>
+          </div>
+          <div class="refresh-insight-card">
+            <h4 class="refresh-insight-title">Next Refresh Intent</h4>
+            <div id="refreshNextIntentSummary" class="refresh-insight-summary">Loading...</div>
+            <div class="refresh-state-line">Selected mode applies only to the next run.</div>
+          </div>
+          <div class="refresh-insight-card">
+            <h4 class="refresh-insight-title">Last Completed Refresh</h4>
+            <div id="refreshBatchSummary" class="refresh-insight-summary">No refresh has run yet.</div>
+            <div id="refreshBatchPills" class="refresh-insight-row"></div>
+          </div>
+        </div>
+        <div id="refreshCompletionBanner" class="completion-banner"></div>
+        <div class="refresh-insight-grid">
+          <div class="refresh-insight-card">
+            <h4 class="refresh-insight-title">Decision Readiness</h4>
+            <div id="decisionReadinessSummary" class="refresh-insight-summary">Loading…</div>
+            <div id="decisionReadinessPills" class="refresh-insight-row"></div>
+          </div>
+          <div class="refresh-insight-card">
+            <h4 class="refresh-insight-title">Refresh Progress Semantics</h4>
+            <div id="refreshProgressSemantics" class="refresh-insight-summary">Provider-stage progress is shown separately from overall refresh completion.</div>
+            <div id="refreshProgressUniverseTags" class="refresh-insight-row">
+              <span class="refresh-insight-pill"><span class="universe-tag">Provider Batch</span>Stage progress only</span>
+              <span class="refresh-insight-pill"><span class="universe-tag">Holdings</span>Coverage uses active holdings baseline</span>
+              <span class="refresh-insight-pill"><span class="universe-tag">Provider Today Rows</span>Provider cache row coverage</span>
+            </div>
+          </div>
+        </div>
         <div class="coverage-block">
           <div class="coverage-block-header">Portfolio Holdings Coverage</div>
           <div id="holdingsCoverageSummary" class="coverage-summary">Loading…</div>
           <div id="holdingsCoveragePills" class="signal-status-row">
             <span style="color: var(--muted); font-size: 0.83rem;">Loading…</span>
           </div>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top: 14px;">
+        <h3 style="margin: 0 0 12px; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Candidate Readiness</h3>
+        <div id="candidateReadinessGrid" class="candidate-readiness-grid">
+          <div class="candidate-metric-card">Loading...</div>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top: 14px;">
+        <h3 style="margin: 0 0 12px; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Recommendation Freshness</h3>
+        <div id="recommendationFreshnessFilters" class="refresh-filter-row"></div>
+        <div class="freshness-table-wrap">
+          <table class="freshness-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Zacks</th>
+                <th>Danelfin</th>
+                <th>Yahoo</th>
+                <th>ESS</th>
+                <th>FMP</th>
+                <th>Freshness</th>
+              </tr>
+            </thead>
+            <tbody id="recommendationFreshnessBody">
+              <tr><td colspan="7" style="color: var(--muted);">Loading...</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -744,7 +1189,7 @@
       </section>
     </div>
 
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=13"></script>
     <script>
       document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("lookupInput").addEventListener("keydown", function (e) {

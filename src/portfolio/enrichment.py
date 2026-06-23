@@ -108,6 +108,7 @@ _ETF_OVERRIDES: dict[str, dict] = {
     "BSVN":  dict(asset_class="EQUITIES", geography="US",            market_cap_bucket="MICRO",  mega_subtier="N/A", sector="FINANCIAL SERVICES", industry="Banks - Regional"),   # Bank7 Corp, Oklahoma City, US; ~$300M market cap
     "STNG":  dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="SMALL",  mega_subtier="N/A", sector="ENERGY",            industry="Oil & Gas Midstream"), # Scorpio Tankers Inc., Monaco-domiciled, NYSE-listed; ~$1.3B market cap
     "SIMO":  dict(asset_class="EQUITIES", geography="INTERNATIONAL", market_cap_bucket="SMALL",  mega_subtier="N/A", sector="TECHNOLOGY",        industry="Semiconductors"),      # Silicon Motion Technology ADR, Hong Kong; ~$1.4B market cap
+    "SPCX":  dict(asset_class="EQUITIES", geography="US",            market_cap_bucket="SMALL",  mega_subtier="N/A", sector="Technology",        industry="Aerospace & Defense"), # Procure Space ETF (NYSE: SPCX) — US-listed space technology equity ETF; RC-02 fix 2026-06-16
     # ── Zero-value contra entries ─────────────────────────────────────────────
     # M26CNT069 is a Fidelity-internal identifier for a CyberArk contra lot.
     # Market value is $0.00; included here to prevent UNKNOWN classification.
