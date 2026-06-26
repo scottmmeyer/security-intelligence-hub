@@ -99,3 +99,23 @@ def test_fully_acted_recommendation_suppresses_escalation() -> None:
     )
     assert out["status"] == "NONE"
     assert "already observed" in out["message"].lower()
+
+
+def test_partial_follow_through_surfaces_partial_review_state() -> None:
+    out = evaluate_action_latency_state(
+        ActionLatencyInput(
+            symbol="PRIM",
+            snapshot_date="2026-06-24",
+            active_reduction_intent=True,
+            conviction_protected=False,
+            first_trim_signal_date="2026-06-10",
+            last_action_status="PARTIALLY_FOLLOWED",
+            acted_after_signal=False,
+            return_1d=-12.0,
+            return_5d=-10.5,
+            return_1m=-21.0,
+            action_window_days=7,
+        )
+    )
+    assert out["status"] == "PARTIAL_ACTION_REVIEW"
+    assert "partial trim action" in out["message"].lower()

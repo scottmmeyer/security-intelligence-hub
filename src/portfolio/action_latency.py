@@ -18,7 +18,7 @@ from src.pis.action_attribution import pis_action_attribution_recommendations
 from src.pis.recommendation_lineage import build_recommendation_candidates
 
 _REDUCE_SOURCES = frozenset({"REDUCTION_QUEUE", "CRA", "DIL"})
-_ACTED_STATUSES = frozenset({"FOLLOWED", "PARTIALLY_FOLLOWED"})
+_ACTED_STATUSES = frozenset({"FOLLOWED"})
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,14 @@ def evaluate_action_latency_state(inp: ActionLatencyInput) -> dict:
         out["message"] = "Conviction-protected holding; missed-action escalation suppressed."
         return out
 
+    if str(inp.last_action_status or "").upper() == "PARTIALLY_FOLLOWED":
+        out["status"] = "PARTIAL_ACTION_REVIEW"
+        out["message"] = (
+            "Partial trim action was observed after signal generation. "
+            "Review whether remaining reduction intent is still appropriate before reissuing full-size trim guidance."
+        )
+        return out
+
     if inp.acted_after_signal:
         out["message"] = "Trim/exit action already observed after signal generation."
         return out
@@ -143,19 +151,12 @@ def _is_active_reduction_intent(
         return True
 
     opportunity_flag = str(overlay.get("opportunity_flag") or "").upper()
-    if opportunity_flag in {"TRIM", "WATCH"}:
+    if opportunity_flag == "TRIM":
         return True
 
     ess_text = str(fidelity.get("ess_text") or overlay.get("ess_score_text") or "").upper()
     fid_rating = str(fidelity.get("fidelity_rating") or "").upper()
     if "BEARISH" in ess_text or fid_rating in {"SELL", "STRONG_SELL"}:
-        return True
-
-    try:
-        zacks = float(overlay.get("zacks_rating") or 0)
-    except (TypeError, ValueError):
-        zacks = 0.0
-    if zacks >= 3.5:
         return True
 
     return False

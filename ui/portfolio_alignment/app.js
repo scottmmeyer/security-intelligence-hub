@@ -5565,7 +5565,10 @@ function _dqToggleBlocked() {
 // Every output cites its signal source and date. Operator remains decision maker.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function _actionLatencyBadgeHtml(actionLatency) {
+function _actionLatencyBadgeHtml(actionLatency, sourceIntent) {
+  const intent = String(sourceIntent || "").toUpperCase();
+  if (intent && intent !== "THESIS_TRIM" && intent !== "THESIS_EXIT") return "";
+
   const status = (actionLatency && actionLatency.status) || "NONE";
   if (status === "MISSED_ACTION_REVIEW") {
     return `<span class="rq-intent-badge rq-intent-thesis-exit" title="Prior trim signal aged without action and adverse move thresholds were breached.">MISSED ACTION REVIEW</span>`;
@@ -5573,13 +5576,19 @@ function _actionLatencyBadgeHtml(actionLatency) {
   if (status === "TRIM_SIGNAL_AGING") {
     return `<span class="rq-intent-badge rq-intent-thesis-trim" title="Trim signal is aging without observed action.">TRIM SIGNAL AGING</span>`;
   }
+  if (status === "PARTIAL_ACTION_REVIEW") {
+    return `<span class="rq-intent-badge rq-intent-ow-repair" title="Partial trim action was observed. Review remaining reduction intent before reissuing full-size trim guidance.">PARTIAL FOLLOW-THROUGH</span>`;
+  }
   if (status === "ACTION_DUE") {
     return `<span class="rq-intent-badge rq-intent-reallocation" title="Active trim intent detected. Operator review due.">ACTION DUE</span>`;
   }
   return "";
 }
 
-function _actionLatencyPanelHtml(actionLatency) {
+function _actionLatencyPanelHtml(actionLatency, sourceIntent) {
+  const intent = String(sourceIntent || "").toUpperCase();
+  if (intent && intent !== "THESIS_TRIM" && intent !== "THESIS_EXIT") return "";
+
   const status = (actionLatency && actionLatency.status) || "NONE";
   if (status === "NONE") return "";
 
@@ -6260,12 +6269,20 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     // which correctly reflects retention intent — but when shown alone as the reduction rationale, it
     // contradicts the CRA's selection of this position as a funding source.
     // Resolution: CRA reduction_reason/evidence_summary = WHY it's a source; UCF summary = conviction context.
+    const _normalizeReason = (value) => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
     let rationale = "";
-    const craReason = s.reduction_reason || s.evidence_summary || "";
+    const craReason = String(s.reduction_reason || s.evidence_summary || "").trim();
+    const normalizedCraReason = _normalizeReason(craReason);
+    const normalizedSigSummary = _normalizeReason(sigSummary);
     if (craReason) {
       rationale = escHtml(craReason);
       // If UCF says something different (e.g. Hold), surface it as explicit context — not contradiction
-      if (sigSummary && !sigSummary.toLowerCase().includes("trim") && !sigSummary.toLowerCase().includes("reduce")) {
+      if (
+        sigSummary &&
+        normalizedSigSummary !== normalizedCraReason &&
+        !sigSummary.toLowerCase().includes("trim") &&
+        !sigSummary.toLowerCase().includes("reduce")
+      ) {
         rationale += `<div class="rq-conviction-context">
           <span class="rq-conv-label">UCF Conviction:</span>
           <span class="rq-conv-text">${escHtml(sigSummary)}</span>
@@ -6351,7 +6368,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       ucfBySymbol[symUpper] || {},
       overlayBySymbol[symUpper] || {},
       { isReduction: true, isDeployment: false, category: s.category || "" },
-      _pcBySymDIL[symUpper] || null
+      _pcBySymDIL[symUpper] || null,
+      actionLatency
     );
     const dilPanelHtml = _dilHtml(_dilResult);
     // DISLOCATION-03: conflict alpha insight for reduction candidates
@@ -9237,6 +9255,7 @@ function _renderDirectionalPanel() {
       <td style="text-align:right;font-size:0.72rem">${p.false_negative_rate != null ? p.false_negative_rate + "%" : "—"}</td>
       <td style="text-align:right;font-size:0.72rem">${cm.tp || 0}/${cm.fp || 0}/${cm.tn || 0}/${cm.fn || 0}</td>
       <td>${_reliabilityBadge(p.reliability || "INSUFFICIENT_DATA")}</td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${actionLatencyPanelHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
     </tr>`;
   }).join("");
 
