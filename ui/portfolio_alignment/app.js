@@ -5565,7 +5565,51 @@ function _dqToggleBlocked() {
 // Every output cites its signal source and date. Operator remains decision maker.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
+function _actionLatencyBadgeHtml(actionLatency) {
+  const status = (actionLatency && actionLatency.status) || "NONE";
+  if (status === "MISSED_ACTION_REVIEW") {
+    return `<span class="rq-intent-badge rq-intent-thesis-exit" title="Prior trim signal aged without action and adverse move thresholds were breached.">MISSED ACTION REVIEW</span>`;
+  }
+  if (status === "TRIM_SIGNAL_AGING") {
+    return `<span class="rq-intent-badge rq-intent-thesis-trim" title="Trim signal is aging without observed action.">TRIM SIGNAL AGING</span>`;
+  }
+  if (status === "ACTION_DUE") {
+    return `<span class="rq-intent-badge rq-intent-reallocation" title="Active trim intent detected. Operator review due.">ACTION DUE</span>`;
+  }
+  return "";
+}
+
+function _actionLatencyPanelHtml(actionLatency) {
+  const status = (actionLatency && actionLatency.status) || "NONE";
+  if (status === "NONE") return "";
+
+  const msg = actionLatency.message || "";
+  const firstSeen = actionLatency.first_trim_signal_date || "—";
+  const age = actionLatency.signal_age_days != null ? `${actionLatency.signal_age_days} day(s)` : "—";
+  const lastStatus = actionLatency.last_action_status || "NO_ACTION_RECORDED";
+  const triggers = Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : [];
+
+  const triggerHtml = triggers.length
+    ? `<ul class="dil-key-points">${triggers.map(t => `<li>${escHtml(t)}</li>`).join("")}</ul>`
+    : "";
+
+  return `<div class="dil-section">
+    <div class="dil-section-title">Action Latency Review <span class="dil-price-ctx-note">display-only</span></div>
+    <div class="dil-posture dil-conflict">${escHtml(status.replace(/_/g, " "))}</div>
+    <div class="dil-rationale-text">${escHtml(msg)}</div>
+    <div class="dil-price-context">
+      <div class="dil-price-ctx-grid">
+        <div class="dil-price-ctx-cell"><span class="dil-pc-label">First Trim Signal</span><span class="dil-pc-val">${escHtml(firstSeen)}</span></div>
+        <div class="dil-price-ctx-cell"><span class="dil-pc-label">Signal Age</span><span class="dil-pc-val">${escHtml(age)}</span></div>
+        <div class="dil-price-ctx-cell"><span class="dil-pc-label">Last Action Status</span><span class="dil-pc-val">${escHtml(lastStatus)}</span></div>
+      </div>
+      ${triggerHtml}
+    </div>
+    <div class="dil-advisory">Missed-action states are advisory only. No automatic trade execution is performed.</div>
+  </div>`;
+}
+
+function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx, actionLatency) {
   // context = { isReduction: bool, isDeployment: bool, category: string }
   // priceCtx = { return_1d, return_5d, return_1m, pct_52w_range, next_earnings_date, ... } (optional, display-only)
   const today_str = new Date().toISOString().split("T")[0];
@@ -5598,6 +5642,7 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
   const ucfSummary = ucfObj.signal_summary || "";
 
   const category = context.category || "";
+  const alStatus = ((actionLatency && actionLatency.status) || "NONE").toUpperCase();
 
   // FMP fundamentals
   const epsSurprise = fmpObj.latest_eps_surprise_pct != null ? parseFloat(fmpObj.latest_eps_surprise_pct) : null;
@@ -5639,6 +5684,31 @@ function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx) {
   let posture, postureClass, rationale, keyPoints = [], evidence = [];
 
   if (context.isReduction) {
+    if (alStatus === "MISSED_ACTION_REVIEW") {
+      posture = "MISSED ACTION REVIEW"; postureClass = "dil-conflict";
+      rationale = `${escHtml(sym)} had an active trim signal prior to a material adverse move, and no follow-through action is recorded. Review trim, hold override, or exit now.`;
+      keyPoints = [
+        `First trim signal: ${actionLatency.first_trim_signal_date || "unknown"}`,
+        `Signal age: ${actionLatency.signal_age_days != null ? actionLatency.signal_age_days + " day(s)" : "unknown"}`,
+        ...(Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : []),
+      ];
+    }
+    else if (alStatus === "TRIM_SIGNAL_AGING") {
+      posture = "ACTION DUE"; postureClass = "dil-investigate";
+      rationale = `${escHtml(sym)} has an aging trim signal with no observed action completion. Operator review is due.`;
+      keyPoints = [
+        `First trim signal: ${actionLatency.first_trim_signal_date || "unknown"}`,
+        `Signal age: ${actionLatency.signal_age_days != null ? actionLatency.signal_age_days + " day(s)" : "unknown"}`,
+      ];
+    }
+    else if (alStatus === "ACTION_DUE") {
+      posture = "ACTION DUE"; postureClass = "dil-investigate";
+      rationale = `${escHtml(sym)} has an active trim intent and requires operator review before deterioration risk compounds.`;
+      keyPoints = [
+        ...(Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : []),
+      ];
+    }
+    else
     // --- PASSIVE REDUCTION (ETF / no ESS signal)
     if (isETFNoSignal) {
       posture = "PASSIVE REDUCTION"; postureClass = "dil-passive";
@@ -6046,6 +6116,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
   });
 
   const top10 = sorted.slice(0, 10);
+  const _actionLatencyBySym = (_lastAnalysisData && _lastAnalysisData.action_latency_by_symbol) || {};
 
   // Pool summary (exclude BLOCKED + DEFER from pool)
   const poolSources = sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
@@ -6125,6 +6196,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const profileId = `rq-profile-${idx}`;
     const sym = s.symbol || "";
     const symUpper = sym.toUpperCase();
+    const actionLatency = _actionLatencyBySym[symUpper] || null;
 
     // Overlay signals (security_overlays)
     const ov  = overlayBySymbol[symUpper] || {};
@@ -6302,6 +6374,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const intentBadgeHtml = intentMeta
       ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
       : "";
+    const actionLatencyBadge = _actionLatencyBadgeHtml(actionLatency);
+    const actionLatencyPanelHtml = _actionLatencyPanelHtml(actionLatency);
     const intentExplanationHtml = (intentMeta && intentMeta.explanation)
       ? `<div class="rq-intent-explanation">${escHtml(intentMeta.explanation)}</div>`
       : "";
@@ -6310,7 +6384,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
       <td class="rq-rank">${idx + 1}</td>
       <td>
         <div class="rq-sym">${escHtml(sym)}</div>
-        <div class="rq-cat">${catLabel} ${essText} ${intentBadgeHtml}</div>
+        <div class="rq-cat">${catLabel} ${essText} ${intentBadgeHtml} ${actionLatencyBadge}</div>
         ${intentExplanationHtml}
         <button class="rq-expand-btn" onclick="(function(){const p=document.getElementById('${profileId}');if(p){p.classList.toggle('rq-open');this.textContent=p.classList.contains('rq-open')?'▲ Less':'▼ Profile';}}).call(this)">▼ Profile</button>
       </td>
@@ -6321,7 +6395,7 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
 
     const profileRow = `<tr class="rq-profile-row" id="${profileId}">
       <td></td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
+      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${actionLatencyPanelHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
     </tr>`;
 
     return mainRow + profileRow;
@@ -9140,6 +9214,12 @@ function _renderDirectionalPanel() {
     const hrCls = p.hit_rate != null && p.hit_rate >= 60 ? "scr-pct-good"
                 : p.hit_rate != null && p.hit_rate < 50  ? "scr-pct-bad" : "";
     const cm = p.confusion_matrix || {};
+    // Directional rows are pattern-level aggregates; optional symbol panels are unavailable here.
+    const profileHtml = "";
+    const rqAlphaHtml = "";
+    const actionLatencyPanelHtml = "";
+    const dilPanelHtml = "";
+    const rqThesisPanelHtml = "";
     const dirBadge = p.predicted_direction === "POSITIVE"
       ? `<span style="color:#1a7f37;font-weight:700">▲ POS</span>`
       : p.predicted_direction === "NEGATIVE"

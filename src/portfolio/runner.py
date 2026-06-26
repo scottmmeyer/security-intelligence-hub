@@ -61,6 +61,7 @@ from .recommendations import build_security_overlays, generate_recommendations, 
 from .scoring import compute_multi_dimensional_score, detect_intentional_asymmetry
 from .trim_intelligence import build_strategic_profiles, validate_trim_intelligence_consistency
 from .fvi_loader import load_fvi_registry, build_fvi_data_for_holdings
+from .action_latency import build_action_latency_by_symbol
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INGESTION_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion"
@@ -194,6 +195,7 @@ def _compute_typed_rec_counts(recs: list[dict]) -> dict[str, int]:
                 action += 1
         else:
             observation += 1
+
     return {
         "action_count": action,
         "blocked_action_count": blocked,
@@ -1206,6 +1208,23 @@ def run_analysis(
         portfolio_content, encoding="utf-8"
     )
 
+    _held_symbols = [h.symbol for h in investable]
+    _consensus_payload = _build_consensus_payload()
+    _fidelity_payload = _build_fidelity_payload()
+    _fmp_payload = _build_fmp_payload(_held_symbols)
+    _price_payload = _build_price_context_payload(_held_symbols)
+    _ucf_by_symbol = {v["symbol"]: v for v in ucf_payload["verdicts"]}
+    _ov_by_symbol = {o.symbol.upper(): dataclasses.asdict(o) for o in overlays}
+    _action_latency_payload = build_action_latency_by_symbol(
+        repo_root=_REPO_ROOT,
+        symbols=_held_symbols,
+        snapshot_date=snapshot_date,
+        overlays_by_symbol=_ov_by_symbol,
+        fidelity_by_symbol=_fidelity_payload,
+        ucf_by_symbol=_ucf_by_symbol,
+        price_context_by_symbol=_price_payload,
+    )
+
     return {
         "status": "COMPLETE",
         "run_id": run_id,
@@ -1223,7 +1242,7 @@ def run_analysis(
         # PRA-IMPL-03 — Additive typed lane counts (client can also compute locally)
         **_compute_typed_rec_counts(recs_with_drilldown),
         # PRA-IMPL-05 — FVI advisory data (additive; advisory-only; no scoring impact)
-        "fvi_data": _build_fvi_payload([h.symbol for h in investable]),
+        "fvi_data": _build_fvi_payload(_held_symbols),
         # Full detail arrays — included so the UI renders immediately
         "alignment": [dataclasses.asdict(r) for r in alignment],
         "concentration": dataclasses.asdict(concentration),
@@ -1284,24 +1303,27 @@ def run_analysis(
         "deployment_plan": dp_payload,
         # Phase 7.5E — UCF Verdicts (additive signal transparency layer)
         # Governance: read-only synthesis of existing signals.
-        "ucf_verdicts_by_symbol": {v["symbol"]: v for v in ucf_payload["verdicts"]},
+        "ucf_verdicts_by_symbol": _ucf_by_symbol,
         # Phase 7.5J — Analyst Consensus Transparency (additive; display-only)
         # Governance: no scoring, no ranking, no deployment queue changes.
-        "analyst_consensus_by_symbol": _build_consensus_payload(),
+        "analyst_consensus_by_symbol": _consensus_payload,
         # Phase 7.5K — Fidelity Analyst Transparency (additive; display-only)
         # Governance: ESS reformatted as analyst language + 3-signal consensus matrix.
-        "fidelity_signals_by_symbol": _build_fidelity_payload(),
+        "fidelity_signals_by_symbol": _fidelity_payload,
         # Phase 7.5N — Signal Source Metadata (additive; display-only)
         # Governance: refresh dates for Zacks/Danelfin freshness display. No scoring impact.
         "signal_source_metadata": _build_signal_source_metadata(),
         # DIL Phase 1 — FMP fundamental context for Decision Intelligence Layer (display-only)
         # Governance: read-only display fields. Never fed back into any scoring system.
-        "fmp_data_by_symbol": _build_fmp_payload([h.symbol for h in investable]),
+        "fmp_data_by_symbol": _fmp_payload,
         # DIL Phase 2 — recent price context (display-only; no scoring impact)
-        "price_context_by_symbol": _build_price_context_payload([h.symbol for h in investable]),
+        "price_context_by_symbol": _price_payload,
+        # ACTION-LATENCY-01 — display-only escalation for stale trim signals.
+        # Governance: advisory layer only; no scoring/ranking/allocation impact.
+        "action_latency_by_symbol": _action_latency_payload,
         # ISSUE-04D — pass analyst consensus for Class B2
         "dislocation_by_symbol": _build_dislocation_payload(
-            overlays, ac_by_sym=_build_consensus_payload()
+            overlays, ac_by_sym=_consensus_payload
         ),
     }
 
@@ -1904,6 +1926,20 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
     result["fmp_data_by_symbol"] = _build_fmp_payload(_held_syms)
     # DIL Phase 2 — recent price context (display-only; no scoring impact)
     result["price_context_by_symbol"] = _build_price_context_payload(_held_syms)
+    _ov_by_symbol = {
+        str(row.get("symbol") or "").upper(): row
+        for row in result.get("security_overlays", [])
+        if str(row.get("symbol") or "").strip()
+    }
+    result["action_latency_by_symbol"] = build_action_latency_by_symbol(
+        repo_root=_REPO_ROOT,
+        symbols=_held_syms,
+        snapshot_date=(result.get("run_metadata") or {}).get("snapshot_date", ""),
+        overlays_by_symbol=_ov_by_symbol,
+        fidelity_by_symbol=result.get("fidelity_signals_by_symbol", {}),
+        ucf_by_symbol=result.get("ucf_verdicts_by_symbol", {}),
+        price_context_by_symbol=result.get("price_context_by_symbol", {}),
+    )
     # MARKET-CONTEXT-01 — Deployment timing & macro event awareness (display-only)
     result["market_context"] = _build_market_context_payload(
         price_context_by_symbol=result.get("price_context_by_symbol", {}),
