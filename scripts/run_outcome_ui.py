@@ -2150,6 +2150,26 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     self._json_response({"conflicts": conflicts})
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/rotation-risk/summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.rotation_risk_monitor import rotation_risk_summary
+
+                self._json_response(rotation_risk_summary(repo_root=_REPO_ROOT))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "status": "DATA_UNAVAILABLE",
+                        "diagnostic_id": "ROTATION-RISK-01",
+                        "diagnostic_name": "Tech-to-hard-assets rotation monitor",
+                        "signal": "DATA_UNAVAILABLE",
+                        "headline": "Rotation monitor unavailable due to runtime error.",
+                        "error": str(exc),
+                    },
+                    200,
+                )
         elif path == "/api/cpv/latest":
             try:
                 import sys as _sys

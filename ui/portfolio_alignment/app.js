@@ -1106,6 +1106,7 @@ function renderResults(data) {
   renderKPIs(data);
   renderPortfolioConstructionStyle(data);   // UI Clarity Sprint — Problem 5
   renderMarketContext(data);                // MARKET-CONTEXT-01
+  loadRotationRiskSummary();                // ROTATION-RISK-01
   renderNarrativeSummary(data);      // UX-PA-09
   renderMultiDimScores(data);
   renderMandatePanel(data);
@@ -1611,6 +1612,118 @@ function renderMarketContext(data) {
     const bd = document.getElementById(portId);
     if (bd) bd.classList.add("mctx-open");
   }
+}
+
+// ROTATION-RISK-01 — display-only tech-to-hard-assets monitor
+async function loadRotationRiskSummary() {
+  const el = document.getElementById("rotationRiskContainer");
+  if (!el) return;
+
+  try {
+    const resp = await fetch("/api/rotation-risk/summary");
+    const data = await resp.json();
+    _renderRotationRiskPanel(data || {});
+  } catch (err) {
+    _renderRotationRiskPanel({
+      status: "DATA_UNAVAILABLE",
+      diagnostic_id: "ROTATION-RISK-01",
+      diagnostic_name: "Tech-to-hard-assets rotation monitor",
+      signal: "DATA_UNAVAILABLE",
+      headline: `Rotation monitor failed to load: ${err.message}`,
+      governance_note: "Display-only diagnostic; no scoring or recommendation impact.",
+      data_quality: { missing_inputs: ["endpoint_unreachable"] },
+      portfolio_exposure: {},
+      proxy_returns: {},
+      confirmation: {},
+      macro_context: { upcoming_high_impact_events: [] },
+    });
+  }
+}
+
+function _rrFmtPct(v, digits = 2) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return `${Number(v).toFixed(digits)}%`;
+}
+
+function _rrSignalClass(signal) {
+  if (signal === "ELEVATED_ROTATION_RISK") return "sev-HIGH";
+  if (signal === "WATCHLIST_ROTATION") return "sev-MODERATE";
+  if (signal === "TECH_LEADERSHIP") return "sev-LOW";
+  if (signal === "DATA_UNAVAILABLE") return "sev-NONE";
+  return "sev-NONE";
+}
+
+function _renderRotationRiskPanel(data) {
+  const el = document.getElementById("rotationRiskContainer");
+  if (!el) return;
+
+  const signal = data.signal || "DATA_UNAVAILABLE";
+  const dq = data.data_quality || {};
+  const px = data.portfolio_exposure || {};
+  const pr = data.proxy_returns || {};
+  const conf = data.confirmation || {};
+  const events = ((data.macro_context || {}).upcoming_high_impact_events) || [];
+  const missing = dq.missing_inputs || [];
+
+  const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
+  const confirmBadge = conf.confirmation_passed
+    ? '<span class="sev-badge sev-LOW">CONFIRMED</span>'
+    : '<span class="sev-badge sev-NONE">NOT CONFIRMED</span>';
+
+  const rows = [5, 20, 60].map(w => {
+    const t = (pr.tech_returns || {})[`${w}d`];
+    const h = (pr.hard_assets_returns || {})[`${w}d`];
+    const s = (pr.rotation_spread_pct || {})[`${w}d`];
+    return `<tr>
+      <td>${w}d</td>
+      <td>${_rrFmtPct(t, 3)}</td>
+      <td>${_rrFmtPct(h, 3)}</td>
+      <td>${_rrFmtPct(s, 3)}</td>
+    </tr>`;
+  }).join("");
+
+  const eventHtml = events.length
+    ? `<ul style="margin:6px 0 0 18px;padding:0;">
+        ${events.slice(0, 4).map(e => `<li style="font-size:0.78rem;color:var(--muted);margin:2px 0;">${escHtml(e.event_name || e.event_id)} (${escHtml(e.event_date || "")}, ${escHtml(String(e.days_away ?? "?"))}d)</li>`).join("")}
+      </ul>`
+    : '<div style="font-size:0.78rem;color:var(--muted);">No high-impact events in next 14 days.</div>';
+
+  const missingHtml = missing.length
+    ? `<div style="margin-top:8px;font-size:0.76rem;color:var(--muted);">Missing inputs: ${escHtml(missing.join(", "))}</div>`
+    : "";
+
+  el.innerHTML = `<div class="panel section-gap">
+    <p class="panel-title">Rotation Risk Monitor</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      ${signalBadge}
+      ${confirmBadge}
+      <span style="font-size:0.76rem;color:var(--muted);">Risk score: ${escHtml(String(data.risk_score ?? 0))}/100</span>
+      <span style="font-size:0.76rem;color:var(--muted);">As of ${escHtml(data.as_of_date || "")}</span>
+    </div>
+    <div style="font-size:0.84rem;color:var(--text);margin-bottom:10px;">${escHtml(data.headline || "")}</div>
+
+    <div class="two-col" style="margin-top:8px;">
+      <div>
+        <table class="alloc-table" style="font-size:0.8rem;">
+          <thead><tr><th>Window</th><th>Tech</th><th>Hard Assets</th><th>Spread</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:8px;font-size:0.76rem;color:var(--muted);">
+          Proxy cap bucket: ${escHtml(pr.selected_cap_bucket || "—")} · Latest proxy date: ${escHtml(pr.latest_proxy_date || "—")}
+        </div>
+      </div>
+      <div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Portfolio Exposure</div>
+        <div style="font-size:0.82rem;margin-bottom:6px;">Tech: <strong>${_rrFmtPct(px.tech_pct)}</strong> · Hard Assets: <strong>${_rrFmtPct(px.hard_assets_pct)}</strong> · Other: <strong>${_rrFmtPct(px.other_pct)}</strong></div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">Signal breadth: Tech bearish share ${_rrFmtPct((conf.tech_bearish_share ?? null) != null ? conf.tech_bearish_share * 100 : null, 1)}, Hard-assets bullish share ${_rrFmtPct((conf.hard_assets_bullish_share ?? null) != null ? conf.hard_assets_bullish_share * 100 : null, 1)}</div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Macro context</div>
+        ${eventHtml}
+      </div>
+    </div>
+
+    ${missingHtml}
+    <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
+  </div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
