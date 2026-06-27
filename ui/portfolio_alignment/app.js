@@ -39,25 +39,7 @@ let _strategicExitSymbols = [];  // persisted via /api/operator/strategic-exits
 // Phase 23.2 — operator policy state
 let _operatorPolicies = {};  // { [symbol]: { policy_type, policy_annotation, status, ... } }
 
-let _dataConfidenceCache = {
-  runId: null,
-  loaded: false,
-  loading: false,
-  rowsBySymbol: {},
-  error: null,
-};
-
 const _STORAGE_KEY = "sih_portfolio_last_result";
-
-const _DATA_CONF_LEVEL_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-const _DATA_CONF_PROVIDER_ORDER = ["ess", "zacks", "danelfin", "yahoo", "fmp"];
-const _DATA_CONF_PROVIDER_LABELS = {
-  ess: "ESS",
-  zacks: "Zacks",
-  danelfin: "Danelfin",
-  yahoo: "Yahoo",
-  fmp: "FMP",
-};
 
 // Drilldown state: per-rec toggle + sort mode
 const _drilldownState = {};   // { [recId]: { rendered: bool, sortMode: string } }
@@ -910,7 +892,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>ESS Signal</th><th>Flag</th>
-              <th>Score</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>Policy</th><th>Effective Action</th><th>Rationale</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>Policy</th><th>Effective Action</th><th>Rationale</th>
             </tr></thead>
             <tbody>
               ${cat1.map(c => `<tr class="pap-row ${c.priority === "HIGH" && c.execution_state !== "DEFERRED_BY_POLICY" ? "pap-row-high" : ""} ${c.execution_state === "DEFERRED_BY_POLICY" ? "pap-row-deferred" : ""} ${c.execution_state === "INFORMATIONAL_ONLY" ? "pap-row-info-only" : ""}">
@@ -919,7 +901,6 @@ function renderPortfolioActionPipeline(data) {
                 <td><span class="flag-${escHtml(c.flag)}">${escHtml(c.flag || "—")}</span></td>
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
-                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
                 <td>${c.policy_badge ? `<span class="policy-badge ${_policyBadgeClass(c.policy_type)}">${escHtml(c.policy_badge)}</span>` : '<span style="color:var(--muted);font-size:0.75rem">—</span>'}</td>
                 <td><span class="pap-exec-action pap-exec-${escHtml(c.execution_state)}">${escHtml(c.effective_action || c.flag || "—")}</span></td>
@@ -945,7 +926,7 @@ function renderPortfolioActionPipeline(data) {
           ${cat2.length === 0 ? '<div class="pap-cat-empty">No strategic exits designated.</div>' : `
           <table class="pap-tbl">
             <thead><tr>
-              <th>Symbol</th><th>Reason</th><th>Signal</th><th>Flag</th><th>% Port</th><th>Data Confidence</th><th>Priority</th>
+              <th>Symbol</th><th>Reason</th><th>Signal</th><th>Flag</th><th>% Port</th><th>Priority</th>
             </tr></thead>
             <tbody>
               ${cat2.map(c => `<tr class="pap-row pap-row-high">
@@ -954,7 +935,6 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.ov_flag ? `<span class="flag-${escHtml(c.ov_flag)}">${escHtml(c.ov_flag)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio != null ? c.percent_of_portfolio.toFixed(2) + "%" : "—"}</td>
-                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-HIGH">HIGH</span></td>
               </tr>`).join("")}
             </tbody>
@@ -991,7 +971,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Overweight Node</th><th>Drift</th>
-              <th>Signal</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>FVI</th><th>Note</th>
+              <th>Signal</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Note</th>
             </tr></thead>
             <tbody>
               ${cat3.map(c => `<tr class="pap-row ${c.severity === "HIGH" ? "pap-row-high" : ""}">
@@ -1002,7 +982,6 @@ function renderPortfolioActionPipeline(data) {
                 <td><span class="pap-drift">+${Math.abs(c.drift_pct).toFixed(1)}pp</span></td>
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
-                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.severity}">${c.severity}</span></td>
                 <td>${_fviBadgeHtml(c.fvi, true)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">${c.is_protected ? "Protected — consider reducing via index vehicles" : "Node overweight reduction candidate"}</td>
@@ -1030,7 +1009,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Flag</th><th>Signal</th>
-              <th>Score</th><th>% Port</th><th>Data Confidence</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
             </tr></thead>
             <tbody>
               ${cat4.map(c => `<tr class="pap-row ${c.priority === "HIGH" ? "pap-row-high" : c.priority === "MEDIUM" ? "pap-row-med" : ""}">
@@ -1039,7 +1018,6 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.signal ? `<span class="ess-badge ess-${escHtml(c.signal)}">${escHtml(c.signal)}</span>` : "—"}</td>
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
-                <td>${_dataConfidenceBadgeHtml(_getSymbolDataConfidence(c.symbol, "recommendation"), "")}</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
                 <td>${_fviBadgeHtml(c.fvi, false)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">
@@ -1143,7 +1121,6 @@ function renderResults(data) {
     // Re-render DQ table rows after conflict data arrives (non-blocking refresh)
     renderDeploymentQueue(data);
   });
-  _loadDataConfidence();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1181,254 +1158,6 @@ async function loadPISStatus() {
       }
     }
   } catch (_) { /* best-effort */ }
-}
-
-function _emptyDataConfidenceProvider() {
-  return { state: "missing", date: null, age_days: null };
-}
-
-function _normalizeDataConfidenceProvider(info) {
-  if (!info || typeof info !== "object") return _emptyDataConfidenceProvider();
-  return {
-    state: String(info.state || "missing").toLowerCase(),
-    date: info.date ? String(info.date) : null,
-    age_days: info.age_days != null ? Number(info.age_days) : null,
-  };
-}
-
-function _buildDataConfidenceIndex(payload) {
-  const rowsBySymbol = {};
-  const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
-  for (const row of rows) {
-    const sym = String((row && row.symbol) || "").trim().toUpperCase();
-    if (!sym) continue;
-    rowsBySymbol[sym] = {
-      symbol: sym,
-      ess: _normalizeDataConfidenceProvider(row.ess),
-      zacks: _normalizeDataConfidenceProvider(row.zacks),
-      danelfin: _normalizeDataConfidenceProvider(row.danelfin),
-      yahoo: _normalizeDataConfidenceProvider(row.yahoo),
-      fmp: _normalizeDataConfidenceProvider(row.fmp),
-      freshness: row.freshness || "",
-      sources: row.sources || {},
-    };
-  }
-  return rowsBySymbol;
-}
-
-async function _loadDataConfidence(force = false) {
-  const expectedRunId = (_analysisResult && _analysisResult.run_id) || null;
-  if (!force && _dataConfidenceCache.loading) return;
-  if (!force && _dataConfidenceCache.loaded && _dataConfidenceCache.runId === expectedRunId) return;
-
-  _dataConfidenceCache.loading = true;
-  try {
-    const resp = await fetch("/api/refresh-transparency", { cache: "no-store" });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const payload = await resp.json();
-    _dataConfidenceCache = {
-      runId: payload && payload.run_id ? String(payload.run_id) : expectedRunId,
-      loaded: true,
-      loading: false,
-      rowsBySymbol: _buildDataConfidenceIndex(payload),
-      error: null,
-    };
-    if (_analysisResult) _rerenderDataConfidenceSurfaces();
-  } catch (err) {
-    _dataConfidenceCache.loading = false;
-    _dataConfidenceCache.error = String(err);
-  }
-}
-
-function _rerenderDataConfidenceSurfaces() {
-  if (!_analysisResult) return;
-  renderDeploymentQueue(_analysisResult);
-  renderRecommendations(_analysisResult.recommendations || []);
-  renderPortfolioActionPipeline(_analysisResult);
-  if (_craProposal) _renderCRAProposal(_craProposal);
-}
-
-function _dataConfidenceRow(symbol) {
-  const sym = String(symbol || "").trim().toUpperCase();
-  if (!sym || !_dataConfidenceCache.loaded) return null;
-  return _dataConfidenceCache.rowsBySymbol[sym] || null;
-}
-
-function _dataConfidenceStateLabel(state) {
-  const normalized = String(state || "missing").toLowerCase();
-  if (normalized === "fresh") return "Fresh";
-  if (normalized === "stale") return "Stale";
-  return "Missing";
-}
-
-function _dataConfidenceProviderLine(providerKey, providerInfo, symbolPrefix = "") {
-  const label = _DATA_CONF_PROVIDER_LABELS[providerKey] || providerKey;
-  const state = _dataConfidenceStateLabel(providerInfo && providerInfo.state);
-  const date = providerInfo && providerInfo.date ? ` ${providerInfo.date}` : "";
-  return `${symbolPrefix}${label} ${state}${date}`.trim();
-}
-
-function _computeDataConfidenceLevel(providers, surfaceType) {
-  if (!providers) return "LOW";
-
-  if (surfaceType === "deployment") {
-    const issueCount = ["ess", "zacks", "danelfin", "yahoo", "fmp"].reduce((count, key) => {
-      return count + ((providers[key] && providers[key].state === "fresh") ? 0 : 1);
-    }, 0);
-    if (issueCount === 0) return "HIGH";
-    if (issueCount === 1) return "MEDIUM";
-    return "LOW";
-  }
-
-  const coreIssueCount = ["ess", "zacks", "danelfin", "yahoo"].reduce((count, key) => {
-    return count + ((providers[key] && providers[key].state === "fresh") ? 0 : 1);
-  }, 0);
-  const fmpIssue = !providers.fmp || providers.fmp.state !== "fresh";
-  if (coreIssueCount >= 2) return "LOW";
-  if (coreIssueCount === 1 || fmpIssue) return "MEDIUM";
-  return "HIGH";
-}
-
-function _getSymbolDataConfidence(symbol, surfaceType) {
-  if (!_dataConfidenceCache.loaded) return null;
-  const row = _dataConfidenceRow(symbol);
-  if (!row) {
-    return {
-      symbol: String(symbol || "").trim().toUpperCase(),
-      level: "LOW",
-      providers: {
-        ess: _emptyDataConfidenceProvider(),
-        zacks: _emptyDataConfidenceProvider(),
-        danelfin: _emptyDataConfidenceProvider(),
-        yahoo: _emptyDataConfidenceProvider(),
-        fmp: _emptyDataConfidenceProvider(),
-      },
-      issues: ["No freshness record available"],
-    };
-  }
-
-  const providers = {
-    ess: row.ess,
-    zacks: row.zacks,
-    danelfin: row.danelfin,
-    yahoo: row.yahoo,
-    fmp: row.fmp,
-  };
-  const level = _computeDataConfidenceLevel(providers, surfaceType);
-  const issues = [];
-  for (const key of ["ess", "zacks", "danelfin", "yahoo", "fmp"]) {
-    const info = providers[key];
-    if (!info || info.state === "fresh") continue;
-    issues.push(_dataConfidenceProviderLine(key, info));
-  }
-  return { symbol: row.symbol, level, providers, issues };
-}
-
-function _worstDataConfidenceLevel(levels) {
-  const normalized = levels.filter(Boolean);
-  if (!normalized.length) return "LOW";
-  return normalized.sort((a, b) => (_DATA_CONF_LEVEL_ORDER[a] ?? 9) - (_DATA_CONF_LEVEL_ORDER[b] ?? 9))[normalized.length - 1];
-}
-
-function _getAggregateDataConfidence(symbols, surfaceType) {
-  if (!_dataConfidenceCache.loaded) return null;
-  const unique = [...new Set((symbols || []).map((sym) => String(sym || "").trim().toUpperCase()).filter(Boolean))];
-  if (!unique.length) return null;
-
-  const perSymbol = unique.map((sym) => _getSymbolDataConfidence(sym, surfaceType)).filter(Boolean);
-  if (!perSymbol.length) return null;
-
-  const level = _worstDataConfidenceLevel(perSymbol.map((item) => item.level));
-  const issues = [];
-  for (const item of perSymbol) {
-    if (item.level === "HIGH") continue;
-    for (const issue of item.issues || []) {
-      issues.push(`${item.symbol} ${issue}`);
-    }
-  }
-  return {
-    level,
-    providers: null,
-    issues: [...new Set(issues)].slice(0, 6),
-    perSymbol,
-  };
-}
-
-function _dataConfidenceBadgeHtml(confidence, label = "Data Confidence") {
-  if (!confidence || !confidence.level) return "";
-  const text = label ? `${label}: ${confidence.level}` : confidence.level;
-  return `<span class="dc-badge dc-${confidence.level}">${text}</span>`;
-}
-
-function _dataConfidenceProviderGridHtml(confidence, title = "Data Confidence") {
-  if (!confidence || !confidence.providers) return "";
-  const items = _DATA_CONF_PROVIDER_ORDER.map((key) => {
-    const info = confidence.providers[key] || _emptyDataConfidenceProvider();
-    return `<div class="dc-provider-item">
-      <span class="dc-provider-name">${_DATA_CONF_PROVIDER_LABELS[key]}</span>
-      <span class="dc-provider-state dc-state-${info.state}">${_dataConfidenceStateLabel(info.state)}</span>
-      <span class="dc-provider-date">${info.date || "—"}</span>
-    </div>`;
-  }).join("");
-  return `<div class="dc-detail-block">
-    <div class="dc-detail-title">${title}</div>
-    <div class="dc-provider-grid">${items}</div>
-  </div>`;
-}
-
-function _dataConfidenceIssuesHtml(confidence, title = "Freshness Issues") {
-  if (!confidence || !Array.isArray(confidence.issues) || !confidence.issues.length) return "";
-  return `<div class="dc-issues-block">
-    <div class="dc-issues-title">${title}</div>
-    <ul class="dc-issues-list">${confidence.issues.map((issue) => `<li>${escHtml(issue)}</li>`).join("")}</ul>
-  </div>`;
-}
-
-function _dataConfidenceSummaryStripHtml(title, levels) {
-  if (!_dataConfidenceCache.loaded || !Array.isArray(levels) || !levels.length) return "";
-  const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
-  for (const level of levels) {
-    if (counts[level] != null) counts[level] += 1;
-  }
-  return `<div class="dc-summary-strip">
-    <span class="dc-summary-title">${title}</span>
-    <span class="dc-summary-chip dc-HIGH">HIGH ${counts.HIGH}</span>
-    <span class="dc-summary-chip dc-MEDIUM">MEDIUM ${counts.MEDIUM}</span>
-    <span class="dc-summary-chip dc-LOW">LOW ${counts.LOW}</span>
-  </div>`;
-}
-
-function _recommendationDataConfidence(rec) {
-  return _getAggregateDataConfidence(rec && rec.affected_symbols, "recommendation");
-}
-
-function _recommendationSummaryLevels(recs) {
-  if (!_dataConfidenceCache.loaded) return [];
-  return (recs || [])
-    .map((rec) => _recommendationDataConfidence(rec))
-    .filter(Boolean)
-    .map((item) => item.level);
-}
-
-function _queueSummaryLevels(data) {
-  if (!_dataConfidenceCache.loaded || !data || !data.deployment_queue || !Array.isArray(data.deployment_queue.queue)) return [];
-  return data.deployment_queue.queue
-    .map((row) => _getSymbolDataConfidence(row.symbol, "deployment"))
-    .filter(Boolean)
-    .map((item) => item.level);
-}
-
-function _craSummaryLevels(proposal) {
-  if (!_dataConfidenceCache.loaded || !proposal) return [];
-  const sourceLevels = (proposal.sources || [])
-    .map((row) => _getSymbolDataConfidence(row.symbol, "recommendation"))
-    .filter(Boolean)
-    .map((item) => item.level);
-  const targetLevels = (proposal.deployments || [])
-    .map((row) => _getSymbolDataConfidence(row.symbol, "deployment"))
-    .filter(Boolean)
-    .map((item) => item.level);
-  return [...sourceLevels, ...targetLevels];
 }
 
 function kpiCard(value, label, sub = "", extraClass = "") {
@@ -1728,8 +1457,7 @@ async function loadRotationRiskSummary() {
 }
 
 function _rrFmtPct(v, digits = 2) {
-  if (v == null || Number.isNaN(Number(v))) return "—";
-  return `${Number(v).toFixed(digits)}%`;
+  return _fmtPctDisplay(v, { digits, tinyThreshold: Math.pow(10, -digits) });
 }
 
 function _rrSignalClass(signal) {
@@ -2301,7 +2029,7 @@ function renderAllocationMap(rows) {
     label: r.node_label || r.node_key,
     drift: parseFloat(r.drift_pct) || 0,
     actual: parseFloat(r.effective_actual_pct ?? r.actual_pct ?? 0) || 0,
-    target: parseFloat(r.target_pct || 0),
+    target: parseFloat(r.target_pct) || 0,
   })).filter(r => r.actual > 0 || Math.abs(r.drift) > 0);
 
   const overweights = [...withDrift].sort((a, b) => b.drift - a.drift).filter(r => r.drift > 0.5).slice(0, 3);
@@ -2336,8 +2064,10 @@ function renderAllocationMap(rows) {
     const driftClass = driftN > 0 ? "drift-pos" : driftN < 0 ? "drift-neg" : "";
     const driftStr = driftN === 0 ? "—" : `<span class="${driftClass}">${driftN > 0 ? "+" : ""}${driftN.toFixed(1)}pp</span>`;
     const actual = parseFloat(r.effective_actual_pct ?? r.actual_pct ?? 0) || 0;
-    const direct = parseFloat(r.direct_actual_pct ?? 0) || 0;
-    const etf = parseFloat(r.etf_derived_actual_pct ?? 0) || 0;
+    const actualDisplay = _fmtPctDisplay(r.effective_actual_pct ?? r.actual_pct, { digits: 1, tinyThreshold: 0.1 });
+    const directDisplay = _fmtPctDisplay(r.direct_actual_pct, { digits: 1, tinyThreshold: 0.1 });
+    const etfDisplay = _fmtPctDisplay(r.etf_derived_actual_pct, { digits: 1, tinyThreshold: 0.1 });
+    const targetDisplay = _fmtPctDisplay(r.target_pct, { digits: 1, tinyThreshold: 0.1 });
 
     // Drift bar
     const barPct = Math.min(Math.abs(driftN) / Math.max(parseFloat(r.tactical_target_pct) || 10, 10) * 50, 50);
@@ -2348,10 +2078,10 @@ function renderAllocationMap(rows) {
 
     return `<tr>
       <td class="node-depth-${depth}">${r.node_label || r.node_key}</td>
-      <td style="text-align:right">${direct.toFixed(1)}%</td>
-      <td style="text-align:right">${etf.toFixed(1)}%</td>
-      <td style="text-align:right"><strong>${actual.toFixed(1)}%</strong></td>
-      <td style="text-align:right">${parseFloat(r.target_pct || 0).toFixed(1)}%</td>
+      <td style="text-align:right">${directDisplay}</td>
+      <td style="text-align:right">${etfDisplay}</td>
+      <td style="text-align:right"><strong>${actualDisplay}</strong></td>
+      <td style="text-align:right">${targetDisplay}</td>
       <td style="text-align:right">${driftStr}</td>
       <td>
         <div class="drift-bar-wrap">
@@ -3008,6 +2738,7 @@ function _computeSignalAgreement(ov, ac, fs) {
   const available = signals.filter(s => s.direction !== "UNKNOWN");
   const bullish   = available.filter(s => s.direction === "BULLISH").length;
   const total     = available.length;
+  const observationText = total > 0 ? `${bullish}/${total}` : "No observations";
 
   let label, confidence;
   if (total === 0) {
@@ -3030,7 +2761,7 @@ function _computeSignalAgreement(ov, ac, fs) {
     ((essDir === "BEARISH" && majorityBullish) ||
      (essDir === "BULLISH" && !majorityBullish && total - bullish > bullish));
 
-  return { signals, bullish, total, label, confidence, essOverride };
+  return { signals, bullish, total, observationText, label, confidence, essOverride };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3192,7 +2923,7 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
   return `<div class="sa-panel">
     <div class="sa-panel-header">
       <span class="sa-panel-title">Signal Agreement</span>
-      <span class="sa-count">${ag.bullish}&thinsp;/&thinsp;${ag.total}</span>
+      <span class="sa-count">${escHtml(ag.observationText || "No observations")}</span>
       <span class="sa-label" style="color:${labelColor}">${ag.label}</span>
       <span class="sa-conf ${confCls}">Confidence: ${ag.confidence}</span>
     </div>
@@ -3526,7 +3257,6 @@ function _signalIntelligencePanelHtml(sym, ov, ac, fs) {
   const ucfScore   = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score)  : null;
   const ucfRank    = ucf.ucf_rank   != null ? parseInt(ucf.ucf_rank)     : null;
   const ucfSummary = ucf.signal_summary || "";
-  const dataConfidence = _getSymbolDataConfidence(symU, "deployment");
   const conflictFlags = ucf.conflict_flags || [];
   const matrix = (fs && fs.consensus_matrix) || {};
 
@@ -3616,11 +3346,9 @@ function _signalIntelligencePanelHtml(sym, ov, ac, fs) {
         <span style="color:${ucfLabelColor};font-weight:700;font-size:0.88rem;margin-left:6px">${escHtml(ucfLabel.replace(/_/g," "))}</span>
         ${ucfScore != null ? `<span class="si-section-sub">Score: ${ucfScore.toFixed(1)}</span>` : ""}
         ${ucfRank  != null ? `<span class="si-section-sub">Rank: #${ucfRank}</span>` : ""}
-        ${_dataConfidenceBadgeHtml(dataConfidence)}
         ${deploymentStatus}
       </div>
       ${ucfSummary ? `<div class="si-summary-text">${escHtml(ucfSummary)}</div>` : ""}
-      ${_dataConfidenceIssuesHtml(dataConfidence)}
       ${driverRows ? `<table class="si-driver-table"><tbody>${driverRows}</tbody></table>` : ""}
       ${conflictFlags.length ? `<div class="si-conflict-flags">${conflictFlags.map(f => `<span class="si-badge si-badge-warn">⚑ ${escHtml(f.replace(/_/g," "))}</span>`).join(" ")}</div>` : ""}
     </div>`;
@@ -3838,7 +3566,6 @@ function _buildExplanationBlock(rec) {
 function renderRecommendations(recs) {
   const el = document.getElementById("recommendationsContent");
   const sepHtml = `<div class="rec-section-separator">Allocation &amp; Portfolio Observations</div>`;
-  const summaryHtml = _dataConfidenceSummaryStripHtml("Recommendations", _recommendationSummaryLevels(recs));
 
   if (!recs.length) {
     el.innerHTML = sepHtml + `<div style="padding:20px;text-align:center;color:var(--muted)">
@@ -3873,7 +3600,6 @@ function renderRecommendations(recs) {
 
   // ── Card builder (same logic as before, reused for all lanes) ──────────
   const buildCard = (r, i) => {
-    const dataConfidence = _recommendationDataConfidence(r);
     const symbols = (r.affected_symbols || []).map(s =>
       `<span class="rec-symbol">${s}</span>`
     ).join("");
@@ -4012,14 +3738,12 @@ function renderRecommendations(recs) {
       <div class="rec-meta">
         ${stateBadge}
         <span class="rec-type-badge">${typeLabel}</span>
-        <span class="rec-conf-badge">Action Confidence: ${r.confidence || "—"}</span>
-        ${_dataConfidenceBadgeHtml(dataConfidence)}
+        <span class="rec-conf-badge">Confidence: ${r.confidence || "—"}</span>
         ${r.mandate_urgency ? `<span class="mandate-urgency-badge urgency-${r.mandate_urgency}">${r.mandate_urgency}</span>` : ""}
         ${r.mandate_drift_label ? `<span class="mandate-drift-badge mdrift-${r.mandate_drift_label}">${r.mandate_drift_label.replace(/_/g, " ")}</span>` : ""}
         ${driftStr}
         ${symbols ? `<div class="rec-symbols">${symbols}</div>` : ""}
       </div>
-      ${_dataConfidenceIssuesHtml(dataConfidence)}
       ${exposureHtml}
       ${etfBarHtml}
       ${r.recommendation_type === "CASH_ALLOCATION" && r.cash_mandate_context
@@ -4189,7 +3913,7 @@ function renderRecommendations(recs) {
     buildLane(laneExplain,   "explain",   "Explainability",       true),
   ].join("");
 
-  el.innerHTML = sepHtml + summaryHtml + html;
+  el.innerHTML = sepHtml + html;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4450,7 +4174,7 @@ function renderSecurityOverlays(overlays) {
     const agrLabelCls = (ag.label === "FULL ALIGNMENT" || ag.label === "STRONG ALIGNMENT")
       ? "sa-agree-full" : (ag.label === "MIXED" ? "sa-agree-mixed" : "sa-agree-diverge");
     const agrCell = `<span class="sa-agree-chip ${agrLabelCls}">${ag.label}</span>
-      <span style="font-size:0.72rem;color:var(--muted);white-space:nowrap"> ${ag.bullish}/${ag.total}</span>`;
+      <span style="font-size:0.72rem;color:var(--muted);white-space:nowrap"> ${escHtml(ag.observationText || "No observations")}</span>`;
     const confCls = { HIGH: "sa-conf-high", MEDIUM: "sa-conf-medium", LOW: "sa-conf-low" }[ag.confidence] || "";
     const confCell = `<span class="${confCls}">${ag.confidence}</span>`;
 
@@ -5219,7 +4943,6 @@ function renderDeploymentQueue(data) {
 
   // Phase 7.5F — Cash deployment summary (only when plan is loaded)
   const cashSummaryHtml = hasPlan ? _daCashSummaryHtml(plan) : "";
-  const dataConfidenceSummaryHtml = _dataConfidenceSummaryStripHtml("Deployment Queue", _queueSummaryLevels(data));
 
   // Phase 7.5F — Action cards for top 10 (only when plan is loaded)
   const actionCardsHtml = hasPlan
@@ -5327,7 +5050,6 @@ function renderDeploymentQueue(data) {
       <span class="dq-advisory-note">Guidance only &#8212; not a trade instruction</span>
     </div>
     ${summaryHtml}
-    ${dataConfidenceSummaryHtml}
     ${cashContextHtml}
     ${cashSummaryHtml}
     <div class="da-action-section">
@@ -5408,7 +5130,6 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
     const sym  = rec.symbol;
     const cand = queue.find(c => c.symbol === sym) || {};
     const ucf  = _ucfBySymbol[sym] || {};
-    const dataConfidence = _getSymbolDataConfidence(sym, "deployment");
 
     const tierShort = _dqTierShort(cand.narrative_tier || "");
     const tierDp    = rec.deployment_tier || "TIER_3";
@@ -5492,10 +5213,8 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
         <span class="da-wt-arrow">→</span>
         <span class="da-wt-proj">${projWt}%</span>
       </div>
-      ${_dataConfidenceBadgeHtml(dataConfidence)}
       <div class="da-card-mv">${curMV} → ${projMV}</div>
       <div class="da-card-reasons">${reasonsHtml}</div>
-      ${_dataConfidenceIssuesHtml(dataConfidence)}
       ${_signalConflictBadgesHtml(sym)}
       ${_securityAlphaBadgeHtml(sym)}
       ${_dilBtnHtml}
@@ -5566,7 +5285,6 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
 
     // Phase 7.5F — action column: Add $ and Wt% → Proj
     const sym = c.symbol;
-    const dataConfidence = _getSymbolDataConfidence(sym, "deployment");
     const dp  = _dpBySymbol[sym] || null;
     const addAmt    = dp ? parseFloat(dp.suggested_add || 0) : null;
     const curWtDisp = c.current_weight_pct != null ? parseFloat(c.current_weight_pct).toFixed(1) + "%" : "—";
@@ -5617,7 +5335,7 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
     return `<tr class="dq-data-row${rankCls}" onclick="_dqToggleBreakdown('${bdId}')">
       <td><span class="dq-rank-num${rankNumCls}">#${c.rank}${c.policy_rank_boost ? '<span title="Preferred Accumulation rank boost" style="font-size:0.7rem;margin-left:2px">⭐</span>' : ''}</span></td>
       <td><span class="dq-sym">${escHtml(c.symbol)}</span>${c.policy_annotation ? `<br><span class="${_policyBadgeClass(c.policy_type)}" style="margin-top:2px">${escHtml(c.policy_annotation)}</span>` : ''}</td>
-      <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span>${dataConfidence ? `<div class="dq-data-confidence-cell">${_dataConfidenceBadgeHtml(dataConfidence)}</div>` : ""}</td>
+      <td><span class="dq-score-val ${_dqScoreClass(score)}">${score.toFixed(1)}</span></td>
       <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
       <td style="text-align:right;white-space:nowrap">${wtDisp}</td>
       <td style="text-align:right;font-weight:600">${c.composite_score != null ? parseFloat(c.composite_score).toFixed(2) : "—"}</td>
@@ -5641,10 +5359,6 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-sig-val dq-sig-label">${escHtml(ucfLabelShort)}</div>
             <div class="dq-sig-lbl">UCF Label</div>
           </div>
-          ${dataConfidence ? `<div class="dq-sig-card dq-sig-ucf">
-            <div class="dq-sig-val dq-sig-label">${dataConfidence.level}</div>
-            <div class="dq-sig-lbl">Data Confidence</div>
-          </div>` : ""}
           <div class="dq-sig-card">
             <div class="dq-sig-val">${escHtml(compScore)}</div>
             <div class="dq-sig-lbl">Composite</div>
@@ -5679,8 +5393,6 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
           </div>
         </div>
         ${ucfSummary ? `<div class="dq-signal-summary">${escHtml(ucfSummary)}</div>` : ""}
-        ${_dataConfidenceProviderGridHtml(dataConfidence, "Deployment Data Confidence")}
-        ${_dataConfidenceIssuesHtml(dataConfidence)}
         ${_signalConflictBadgesHtml(sym)}
         ${_securityAlphaInsightHtml(sym)}
         ${_signalAgreementPanelHtml(ov, ac2, fs2)}
@@ -6613,8 +6325,8 @@ function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfB
     const intentBadgeHtml = intentMeta
       ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
       : "";
-    const actionLatencyBadge = _actionLatencyBadgeHtml(actionLatency);
-    const actionLatencyPanelHtml = _actionLatencyPanelHtml(actionLatency);
+    const actionLatencyBadge = _actionLatencyBadgeHtml(actionLatency, s.source_intent);
+    const actionLatencyPanelHtml = _actionLatencyPanelHtml(actionLatency, s.source_intent);
     const intentExplanationHtml = (intentMeta && intentMeta.explanation)
       ? `<div class="rq-intent-explanation">${escHtml(intentMeta.explanation)}</div>`
       : "";
@@ -8739,7 +8451,6 @@ function _renderCRAProposal(p) {
   content.innerHTML = `
     ${_craBuildRotationObjectiveBanner(p)}
     ${_craBuildRotationSummaryPanel(p)}
-    ${_dataConfidenceSummaryStripHtml("CRA", _craSummaryLevels(p))}
     <div class="cra-columns">
       ${_craBuildSourcesCol(p)}
       ${_craBuildRotationMapCol(p)}
@@ -8959,7 +8670,6 @@ function _craBuildSourcesCol(p) {
 function _craBuildSourceCard(s) {
   const blocked = s.blocked_by_policy;
   const cardClass = blocked ? "cra-source-card cra-blocked" : "cra-source-card";
-  const dataConfidence = _getSymbolDataConfidence(s.symbol, "recommendation");
 
   // PAP-EXPLAIN-01: Explicit ROTATION_SOURCE role badge
   const roleBadge = `<span class="cra-role-badge cra-role-source" title="This position is being REDUCED to fund higher-conviction purchases">SELL ↑ SOURCE</span>`;
@@ -9011,6 +8721,10 @@ function _craBuildSourceCard(s) {
        ${s.policy_alignment_reason ? `<div style="font-size:0.71rem;color:#5b4f36;margin-top:2px">Policy: ${escHtml(s.policy_alignment_reason)}</div>` : ""}`
     : "";
 
+  const _normalizeReason = (value) => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const evidenceSummary = String(s.evidence_summary || "").trim();
+  const showEvidenceSummary = evidenceSummary && _normalizeReason(evidenceSummary) !== _normalizeReason(s.reduction_reason || "");
+
   // Tax note
   const taxNote = s.tax_annotation
     ? `<div class="cra-tax-note">${escHtml(s.tax_annotation)}</div>`
@@ -9044,7 +8758,6 @@ function _craBuildSourceCard(s) {
     <div class="cra-source-row1">
       ${roleBadge}
       <span class="cra-sym">${escHtml(s.symbol)}</span>
-      ${_dataConfidenceBadgeHtml(dataConfidence)}
       ${priBadge}
       ${taxBadge}
       ${intentBadge}
@@ -9054,9 +8767,8 @@ function _craBuildSourceCard(s) {
     </div>
     <div class="cra-source-row2">${proceedsHtml}</div>
     ${reductionMeta}
-    ${_dataConfidenceIssuesHtml(dataConfidence)}
     ${intentNote}
-    <div class="cra-source-evidence">${escHtml(s.evidence_summary || "")}</div>
+    ${showEvidenceSummary ? `<div class="cra-source-evidence">${escHtml(evidenceSummary)}</div>` : ""}
     ${taxNote}
     <div class="cra-source-actions">${checkboxHtml}</div>
   </div>`;
@@ -9141,7 +8853,6 @@ function _craBuildRotationMapCol(p) {
 }
 
 function _craBuildTargetCard(t) {
-  const dataConfidence = _getSymbolDataConfidence(t.symbol, "deployment");
   const tierShort = t.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL"
     : t.narrative_tier === "HIGH_CONVICTION_ANCHOR" ? "HCA"
     : (t.narrative_tier || "—").replace(/_/g, " ");
@@ -9174,7 +8885,6 @@ function _craBuildTargetCard(t) {
       ${roleBadge}
       <span class="${rankClass}">#${t.rank}</span>
       <span class="cra-target-sym">${escHtml(t.symbol)}</span>
-      ${_dataConfidenceBadgeHtml(dataConfidence)}
       <span class="${tierClass}">${tierShort}</span>
       <span class="cra-das-score">DAS ${dasScore}</span>
     </div>
@@ -9185,7 +8895,6 @@ function _craBuildTargetCard(t) {
       &nbsp;·&nbsp;
       <span style="font-size:0.7rem">${escHtml(t.allocation_node || "")}</span>
     </div>
-    ${_dataConfidenceIssuesHtml(dataConfidence)}
     ${t.allocation_note ? `<div style="font-size:0.71rem;color:var(--muted);margin-top:2px">${escHtml(t.allocation_note)}</div>` : ""}
     ${fundingHtml}
   </div>`;
@@ -9334,17 +9043,41 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function _parseDisplayNumber(v) {
+  if (v == null) return { state: "missing", value: null };
+  if (typeof v === "string" && !v.trim()) return { state: "missing", value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n)) return { state: "invalid", value: null };
+  return { state: "value", value: n };
+}
+
+function _fmtPctDisplay(v, opts = {}) {
+  const digits = Number.isInteger(opts.digits) ? opts.digits : 1;
+  const tinyThreshold = (opts.tinyThreshold != null) ? Number(opts.tinyThreshold) : Math.pow(10, -digits);
+  const parsed = _parseDisplayNumber(v);
+  if (parsed.state === "missing") return "—";
+  if (parsed.state === "invalid") return "N/A";
+  const n = parsed.value;
+  const absN = Math.abs(n);
+  if (absN > 0 && absN < tinyThreshold) {
+    const tiny = tinyThreshold.toFixed(digits);
+    return n < 0 ? `>-${tiny}%` : `<${tiny}%`;
+  }
+  return `${n.toFixed(digits)}%`;
+}
+
 function pct(v) {
-  const n = parseFloat(v || 0);
-  if (isNaN(n)) return "—";
-  return n.toFixed(1) + "%";
+  return _fmtPctDisplay(v, { digits: 1, tinyThreshold: 0.1 });
 }
 
 function formatMV(v) {
-  const n = parseFloat(v || 0);
-  if (isNaN(n)) return "—";
-  if (n >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
-  if (n >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
+  const parsed = _parseDisplayNumber(v);
+  if (parsed.state === "missing") return "—";
+  if (parsed.state === "invalid") return "N/A";
+  const n = parsed.value;
+  if (Math.abs(n) > 0 && Math.abs(n) < 1) return n < 0 ? ">-$1" : "<$1";
+  if (Math.abs(n) >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
+  if (Math.abs(n) >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
   return "$" + n.toFixed(0);
 }
 

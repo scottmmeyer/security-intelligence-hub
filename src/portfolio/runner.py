@@ -19,6 +19,7 @@ import csv
 import dataclasses
 import io
 import json
+import math
 import os
 import uuid
 from datetime import datetime, timezone
@@ -260,6 +261,176 @@ def _fld(obj, attr: str, default=None):
     if isinstance(obj, dict):
         return obj.get(attr, default)
     return getattr(obj, attr, default)
+
+
+def _classify_numeric_display_value(value: object) -> tuple[str, Optional[float]]:
+    """Classify a value for display semantics: missing, invalid, zero, or finite value."""
+    if value is None:
+        return "missing", None
+    if isinstance(value, str) and not value.strip():
+        return "missing", None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "invalid", None
+    if not math.isfinite(n):
+        return "invalid", None
+    if n == 0.0:
+        return "zero", 0.0
+    return "value", n
+
+
+def _audit_numeric_surface(
+    *,
+    surface: str,
+    rows: list,
+    fields: list[str],
+    id_fields: tuple[str, ...] = ("symbol", "node_key", "recommendation_id"),
+    tiny_threshold: float = 0.1,
+    max_examples: int = 24,
+) -> tuple[dict[str, int], list[dict[str, object]]]:
+    """Audit one display surface for missing/invalid/zero/tiny-nonzero numeric values."""
+    counts = {
+        "inspected_values": 0,
+        "missing_count": 0,
+        "invalid_count": 0,
+        "zero_count": 0,
+        "finite_nonzero_count": 0,
+        "tiny_nonzero_count": 0,
+    }
+    examples: list[dict[str, object]] = []
+
+    for row in rows or []:
+        if dataclasses.is_dataclass(row) and not isinstance(row, type):
+            record = dataclasses.asdict(row)
+        elif isinstance(row, dict):
+            record = row
+        else:
+            continue
+
+        entity = ""
+        for fid in id_fields:
+            fv = record.get(fid)
+            if fv is not None and str(fv).strip():
+                entity = str(fv).strip()
+                break
+
+        for field in fields:
+            counts["inspected_values"] += 1
+            cls, n = _classify_numeric_display_value(record.get(field))
+            if cls == "missing":
+                counts["missing_count"] += 1
+            elif cls == "invalid":
+                counts["invalid_count"] += 1
+            elif cls == "zero":
+                counts["zero_count"] += 1
+            else:
+                counts["finite_nonzero_count"] += 1
+                if n is not None and abs(n) < tiny_threshold:
+                    counts["tiny_nonzero_count"] += 1
+
+            if len(examples) < max_examples:
+                include = cls in {"missing", "invalid"}
+                if cls == "value" and n is not None and abs(n) < tiny_threshold:
+                    include = True
+                if include:
+                    examples.append({
+                        "surface": surface,
+                        "entity": entity,
+                        "field": field,
+                        "classification": "tiny_nonzero" if include and cls == "value" else cls,
+                        "raw_value": record.get(field),
+                    })
+
+    return counts, examples
+
+
+def _build_zero_nan_audit(
+    *,
+    alignment_rows: list,
+    overlays: list,
+    deployment_queue_payload: dict,
+) -> dict:
+    """Build ZERO-NAN-AUDIT-01 diagnostics (display-only, additive)."""
+    align_counts, align_examples = _audit_numeric_surface(
+        surface="alignment",
+        rows=alignment_rows,
+        fields=[
+            "direct_actual_pct",
+            "etf_derived_actual_pct",
+            "effective_actual_pct",
+            "actual_pct",
+            "target_pct",
+            "drift_pct",
+        ],
+        id_fields=("node_key", "node_label"),
+    )
+    ov_counts, ov_examples = _audit_numeric_surface(
+        surface="security_overlays",
+        rows=overlays,
+        fields=["percent_of_portfolio", "composite_score", "zacks_rating", "danelfin_score"],
+        id_fields=("symbol",),
+    )
+
+    dq_queue = list((deployment_queue_payload or {}).get("queue") or [])
+    dq_counts, dq_examples = _audit_numeric_surface(
+        surface="deployment_queue",
+        rows=dq_queue,
+        fields=["deployment_score", "projected_weight_pct", "suggested_add", "trim_score"],
+        id_fields=("symbol", "allocation_node"),
+    )
+    cash_counts, cash_examples = _audit_numeric_surface(
+        surface="deployment_cash_context",
+        rows=[(deployment_queue_payload or {}).get("cash_context") or {}],
+        fields=["cash_mv", "deployable_mv", "adjusted_deployable_mv", "adjusted_deployable_pct"],
+        id_fields=("run_id",),
+    )
+
+    totals = {
+        "inspected_values": 0,
+        "missing_count": 0,
+        "invalid_count": 0,
+        "zero_count": 0,
+        "finite_nonzero_count": 0,
+        "tiny_nonzero_count": 0,
+    }
+    for part in (align_counts, ov_counts, dq_counts, cash_counts):
+        for k in totals:
+            totals[k] += int(part.get(k, 0))
+
+    status = "OK"
+    if totals["invalid_count"] > 0 or totals["tiny_nonzero_count"] > 0:
+        status = "REVIEW"
+
+    examples = (align_examples + ov_examples + dq_examples + cash_examples)[:24]
+    return {
+        "audit_id": "ZERO-NAN-AUDIT-01",
+        "display_only": True,
+        "status": status,
+        # Required top-level UI/API contract fields (display diagnostics only).
+        "suspicious_zero_count": totals["zero_count"],
+        "nan_count": totals["invalid_count"],
+        "null_rendered_as_zero_count": 0,
+        "divide_by_zero_count": 0,
+        "tiny_rounded_to_zero_count": totals["tiny_nonzero_count"],
+        "governance_note": (
+            "Display diagnostics only. Never used by scoring, recommendation, "
+            "allocation, ranking, or trade execution logic."
+        ),
+        "summary": totals,
+        "surfaces": {
+            "alignment": align_counts,
+            "security_overlays": ov_counts,
+            "deployment_queue": dq_counts,
+            "deployment_cash_context": cash_counts,
+        },
+        "suspicious_counts": {
+            "invalid_numeric_values": totals["invalid_count"],
+            "tiny_nonzero_values_lt_0_1": totals["tiny_nonzero_count"],
+            "missing_numeric_values": totals["missing_count"],
+        },
+        "examples": examples,
+    }
 
 
 def _to_float(v, default=None):
@@ -1321,6 +1492,13 @@ def run_analysis(
         # ACTION-LATENCY-01 — display-only escalation for stale trim signals.
         # Governance: advisory layer only; no scoring/ranking/allocation impact.
         "action_latency_by_symbol": _action_latency_payload,
+        # ZERO-NAN-AUDIT-01 — display-only numeric semantics diagnostics.
+        # Governance: never used in scoring, recommendation, allocation, or execution.
+        "zero_nan_audit": _build_zero_nan_audit(
+            alignment_rows=alignment,
+            overlays=overlays,
+            deployment_queue_payload=dq_payload,
+        ),
         # ISSUE-04D — pass analyst consensus for Class B2
         "dislocation_by_symbol": _build_dislocation_payload(
             overlays, ac_by_sym=_consensus_payload
