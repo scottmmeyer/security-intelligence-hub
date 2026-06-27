@@ -1619,11 +1619,91 @@ async function loadRotationRiskSummary() {
   const el = document.getElementById("rotationRiskContainer");
   if (!el) return;
 
+  const endpoint = "/api/rotation-risk/summary";
+
   try {
-    const resp = await fetch("/api/rotation-risk/summary");
-    const data = await resp.json();
-    _renderRotationRiskPanel(data || {});
+    const resp = await fetch(endpoint);
+    const status = Number(resp && resp.status) || 0;
+    const contentType = String((resp && resp.headers && resp.headers.get("content-type")) || "").toLowerCase();
+
+    if (!resp.ok) {
+      const raw = await resp.text();
+      const sample = String(raw || "").slice(0, 160).trim();
+      const htmlLike = sample.startsWith("<!DOCTYPE") || sample.startsWith("<html") || sample.startsWith("<");
+      throw {
+        name: "RotationRiskHttpError",
+        message: `HTTP ${status} from ${endpoint}`,
+        diagnostic: {
+          endpoint,
+          http_status: status,
+          response_content_type: contentType || "unknown",
+          response_looks_html: htmlLike,
+          error_type: htmlLike ? "HTML_FALLBACK" : "HTTP_ERROR",
+          response_sample: sample,
+        },
+      };
+    }
+
+    const raw = await resp.text();
+    const sample = String(raw || "").slice(0, 160).trim();
+    const htmlLike = sample.startsWith("<!DOCTYPE") || sample.startsWith("<html") || sample.startsWith("<");
+    if (!contentType.includes("application/json") || htmlLike) {
+      throw {
+        name: "RotationRiskNonJsonResponse",
+        message: `Non-JSON response from ${endpoint}`,
+        diagnostic: {
+          endpoint,
+          http_status: status,
+          response_content_type: contentType || "unknown",
+          response_looks_html: htmlLike,
+          error_type: htmlLike ? "HTML_FALLBACK" : "NON_JSON_RESPONSE",
+          response_sample: sample,
+        },
+      };
+    }
+
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch (parseErr) {
+      throw {
+        name: "RotationRiskJsonParseError",
+        message: `JSON parse failed for ${endpoint}: ${parseErr.message}`,
+        diagnostic: {
+          endpoint,
+          http_status: status,
+          response_content_type: contentType || "unknown",
+          response_looks_html: htmlLike,
+          error_type: "JSON_PARSE_ERROR",
+          response_sample: sample,
+        },
+      };
+    }
+
+    if (!data || typeof data !== "object") {
+      throw {
+        name: "RotationRiskPayloadError",
+        message: `Invalid payload shape from ${endpoint}`,
+        diagnostic: {
+          endpoint,
+          http_status: status,
+          response_content_type: contentType || "unknown",
+          response_looks_html: false,
+          error_type: "INVALID_PAYLOAD",
+        },
+      };
+    }
+
+    data._endpoint_diagnostic = {
+      endpoint,
+      http_status: status,
+      response_content_type: contentType || "unknown",
+      response_looks_html: false,
+      error_type: "NONE",
+    };
+    _renderRotationRiskPanel(data);
   } catch (err) {
+    const diag = (err && err.diagnostic) || {};
     _renderRotationRiskPanel({
       status: "DATA_UNAVAILABLE",
       diagnostic_id: "ROTATION-RISK-01",
@@ -1631,11 +1711,18 @@ async function loadRotationRiskSummary() {
       signal: "DATA_UNAVAILABLE",
       headline: `Rotation monitor failed to load: ${err.message}`,
       governance_note: "Display-only diagnostic; no scoring or recommendation impact.",
-      data_quality: { missing_inputs: ["endpoint_unreachable"] },
+      data_quality: { missing_inputs: [diag.error_type || "endpoint_unreachable"] },
       portfolio_exposure: {},
       proxy_returns: {},
       confirmation: {},
       macro_context: { upcoming_high_impact_events: [] },
+      _endpoint_diagnostic: {
+        endpoint,
+        http_status: diag.http_status != null ? diag.http_status : null,
+        response_content_type: diag.response_content_type || "unknown",
+        response_looks_html: !!diag.response_looks_html,
+        error_type: diag.error_type || "NETWORK_ERROR",
+      },
     });
   }
 }
@@ -1664,6 +1751,7 @@ function _renderRotationRiskPanel(data) {
   const conf = data.confirmation || {};
   const events = ((data.macro_context || {}).upcoming_high_impact_events) || [];
   const missing = dq.missing_inputs || [];
+  const endpointDiag = data._endpoint_diagnostic || null;
 
   const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
   const confirmBadge = conf.confirmation_passed
@@ -1690,6 +1778,16 @@ function _renderRotationRiskPanel(data) {
 
   const missingHtml = missing.length
     ? `<div style="margin-top:8px;font-size:0.76rem;color:var(--muted);">Missing inputs: ${escHtml(missing.join(", "))}</div>`
+    : "";
+
+  const diagHtml = endpointDiag
+    ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">
+        Endpoint: ${escHtml(endpointDiag.endpoint || "unknown")}
+        · HTTP: ${escHtml(String(endpointDiag.http_status ?? "n/a"))}
+        · Content-Type: ${escHtml(String(endpointDiag.response_content_type || "unknown"))}
+        · HTML-like: ${endpointDiag.response_looks_html ? "yes" : "no"}
+        · Error Type: ${escHtml(String(endpointDiag.error_type || "NONE"))}
+      </div>`
     : "";
 
   el.innerHTML = `<div class="panel section-gap">
@@ -1722,6 +1820,7 @@ function _renderRotationRiskPanel(data) {
     </div>
 
     ${missingHtml}
+    ${diagHtml}
     <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
   </div>`;
 }
