@@ -2218,6 +2218,14 @@ function triggerSignalRefresh() {
   const msg = document.getElementById("signalRefreshMsg");
   if (!btn || !msg) return;
   const mode = _selectedRefreshMode();
+  if (mode === "rebuild_research_universe") {
+    const proceed = window.confirm("This will refresh approximately 2,473 research-universe symbols. Historical snapshots and trend history will be retained. This may take significantly longer than holdings-only refresh. Continue?");
+    if (!proceed) {
+      btn.disabled = false;
+      btn.textContent = _refreshModeLabel(mode);
+      return;
+    }
+  }
   // Disable immediately to prevent double-click while the POST is in-flight
   btn.disabled = true;
   btn.textContent = `Starting ${_refreshModeLabel(mode)}...`;
@@ -2226,7 +2234,11 @@ function triggerSignalRefresh() {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({
+      intent: mode,
+      requested_by: "operator",
+      source: "outcome_visualization",
+    }),
   })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(data => {

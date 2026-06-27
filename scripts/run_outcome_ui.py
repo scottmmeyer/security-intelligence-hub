@@ -47,44 +47,100 @@ _REFRESH_REPORT_PATH = _REPO_ROOT / "data" / "current" / "last_signal_refresh_re
 _refresh_proc: subprocess.Popen | None = None
 _refresh_last_report: dict | None = None
 _refresh_last_exit_code: int | None = None
-_refresh_started_at_utc: datetime | None = None
-_refresh_completed_at_utc: datetime | None = None
-_refresh_mode: str | None = None
-_refresh_log_lines: list[str] = []
-_refresh_log_lock = threading.Lock()
+_refresh_requested_intent: str | None = None
+_refresh_resolved_intent: str | None = None
+_refresh_universe_scope: str | None = None
+_refresh_estimated_symbol_count: int | None = None
+_refresh_updates: list[str] = []
+_refresh_does_not_update: list[str] = []
+_refresh_research_universe_expected: bool = False
+_refresh_candidate_readiness_expected: bool = False
+_refresh_started_at_utc: str | None = None
+_refresh_completed_at_utc: str | None = None
+
+_REFRESH_INTENT_CATALOG: dict[str, dict[str, object]] = {
+    "portfolio_signals": {
+        "resolved_intent": "portfolio_signals",
+        "refresh_mode": "portfolio_signals",
+        "use_smart": True,
+        "entrypoint": "refresh_signals",
+        "universe_scope": "portfolio_holdings",
+        "updates": [
+            "holdings_readiness",
+            "zacks_holdings_rows",
+            "danelfin_holdings_rows",
+            "yahoo_holdings_rows",
+        ],
+        "does_not_update": [
+            "research_universe_freshness",
+            "cw_das_candidate_inputs",
+            "ucf_candidate_inputs",
+            "recommendation_candidate_set",
+            "cra_candidate_targets",
+        ],
+        "research_universe_freshness_expected": False,
+        "candidate_readiness_expected": False,
+    },
+    "rebuild_research_universe": {
+        "resolved_intent": "rebuild_research_universe",
+        "refresh_mode": "rebuild_research_universe",
+        "use_smart": False,
+        "entrypoint": "refresh_signals",
+        "universe_scope": "research_universe",
+        "updates": [
+            "research_universe_freshness",
+            "cw_das_candidate_inputs",
+            "ucf_candidate_inputs",
+            "recommendation_candidate_set",
+            "cra_candidate_targets",
+        ],
+        "does_not_update": [],
+        "research_universe_freshness_expected": True,
+        "candidate_readiness_expected": True,
+    },
+    "prepare_portfolio_review": {
+        "resolved_intent": "prepare_portfolio_review",
+        "refresh_mode": "prepare_portfolio_review",
+        "use_smart": False,
+        "entrypoint": "prepare_portfolio_review",
+        "universe_scope": "portfolio_review_bundle",
+        "updates": [
+            "portfolio_review_artifacts",
+            "alignment_report_surfaces",
+        ],
+        "does_not_update": [
+            "research_universe_freshness_guarantee",
+        ],
+        "research_universe_freshness_expected": False,
+        "candidate_readiness_expected": False,
+    },
+    "refresh_stale_only": {
+        "resolved_intent": "refresh_stale_only",
+        "refresh_mode": "stale_only",
+        "use_smart": True,
+        "entrypoint": "refresh_signals",
+        "universe_scope": "stale_subset",
+        "updates": [
+            "provider_stale_or_missing_repairs",
+            "holdings_coverage_repairs",
+        ],
+        "does_not_update": [
+            "research_universe_rebuild_guarantee",
+            "cw_das_candidate_inputs_guarantee",
+            "ucf_candidate_inputs_guarantee",
+            "recommendation_candidate_set_guarantee",
+            "cra_candidate_targets_guarantee",
+        ],
+        "research_universe_freshness_expected": False,
+        "candidate_readiness_expected": False,
+    },
+}
 
 # On-demand score fetch jobs keyed by symbol (uppercase)
 _fetch_jobs: dict[str, dict] = {}
 _fetch_lock = threading.Lock()
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
-_PROVIDER_PROGRESS_RE = re.compile(
-    r"^\[(\d+)\s*/\s*(\d+)\]\s+Fetching\s+([A-Za-z0-9_\- ]+)\s+data\s+for\s+([A-Z0-9./\-]+)",
-    re.IGNORECASE,
-)
-_ANALYTICAL_UNIVERSE_CSV = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
-_FMP_UNIVERSE_CSV = _REPO_ROOT / "data" / "signals" / "fmp" / "latest" / "latest_fmp_enriched_universe.csv"
-_MANIFEST_PATH = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
-_RUNS_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
-_FRESHNESS_THRESHOLD_DAYS = 2
-
-
-def _capture_refresh_output(proc: subprocess.Popen) -> None:
-    """Capture refresh subprocess output for live progress telemetry."""
-    stream = proc.stdout
-    if stream is None:
-        return
-    try:
-        for raw in stream:
-            line = str(raw).rstrip()
-            if not line:
-                continue
-            with _refresh_log_lock:
-                _refresh_log_lines.append(line)
-                if len(_refresh_log_lines) > 200:
-                    del _refresh_log_lines[: len(_refresh_log_lines) - 200]
-    except Exception:
-        return
 
 
 class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -137,6 +193,95 @@ def _load_ess_coverage_warning() -> dict:
         return json.loads(_ESS_COVERAGE_WARNING.read_text(encoding="utf-8"))
     except Exception:
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
+
+
+def _normalize_refresh_intent(intent: object | None) -> str:
+    raw = str(intent or "").strip().lower()
+    if not raw:
+        return "portfolio_signals"
+    alias_map = {
+        "stale_only": "refresh_stale_only",
+        "refresh_stale_only": "refresh_stale_only",
+        "portfolio_signals": "portfolio_signals",
+        "rebuild_research_universe": "rebuild_research_universe",
+        "prepare_portfolio_review": "prepare_portfolio_review",
+    }
+    return alias_map.get(raw, "")
+
+
+def _estimate_portfolio_holdings_count() -> int | None:
+    try:
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from src.portfolio.holdings_coverage import summarize_holdings_coverage
+
+        analysis_runs_root = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+        base_universe_csv = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
+        counts: list[int] = []
+        for provider_name in ("zacks", "danelfin", "yahoo"):
+            latest_csv = _SIGNAL_FILES.get(provider_name)
+            if latest_csv is None:
+                continue
+            summary = summarize_holdings_coverage(
+                provider=provider_name,
+                latest_csv=latest_csv,
+                analysis_runs_root=analysis_runs_root,
+                base_universe_csv=base_universe_csv,
+                threshold_days=2,
+            )
+            val = int(summary.get("applicable_holdings") or 0)
+            if val > 0:
+                counts.append(val)
+        return max(counts) if counts else None
+    except Exception:
+        return None
+
+
+def _count_research_universe_rows() -> int | None:
+    csv_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
+    if not csv_path.exists():
+        return None
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            return sum(1 for _ in csv.DictReader(fh))
+    except Exception:
+        return None
+
+
+def _estimated_count_for_intent(resolved_intent: str) -> int | None:
+    if resolved_intent == "portfolio_signals":
+        return _estimate_portfolio_holdings_count()
+    if resolved_intent == "rebuild_research_universe":
+        return _count_research_universe_rows()
+    if resolved_intent == "prepare_portfolio_review":
+        return _estimate_portfolio_holdings_count()
+    return None
+
+
+def _refresh_metadata_from_report(report: dict | None) -> dict[str, object]:
+    if not isinstance(report, dict):
+        return {}
+    mode = str(report.get("refresh_mode") or "").strip().lower()
+    if mode == "stale_only":
+        resolved = "refresh_stale_only"
+    elif mode in {"portfolio_signals", "rebuild_research_universe", "prepare_portfolio_review"}:
+        resolved = mode
+    else:
+        resolved = ""
+    if not resolved:
+        return {}
+
+    entry = _REFRESH_INTENT_CATALOG.get(resolved) or {}
+    return {
+        "requested_intent": resolved,
+        "resolved_intent": resolved,
+        "universe_scope": entry.get("universe_scope"),
+        "estimated_symbol_count": _estimated_count_for_intent(resolved),
+        "updates": list(entry.get("updates") or []),
+        "does_not_update": list(entry.get("does_not_update") or []),
+        "research_universe_freshness_expected": bool(entry.get("research_universe_freshness_expected")),
+        "candidate_readiness_expected": bool(entry.get("candidate_readiness_expected")),
+    }
 
 
 def _sanitize_nan(obj: object) -> object:
@@ -464,400 +609,6 @@ def _signal_status() -> dict:
         ess_entry["badge_state"] = "UNKNOWN"
     result["ess"] = ess_entry
     return result
-
-
-def _parse_iso_date(value: str | None) -> date | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw).date()
-    except Exception:
-        return None
-
-
-def _load_provider_rows(csv_path: Path) -> dict[str, dict[str, str]]:
-    rows: dict[str, dict[str, str]] = {}
-    if not csv_path.exists():
-        return rows
-    try:
-        with csv_path.open("r", encoding="utf-8", newline="") as fh:
-            for row in csv.DictReader(fh):
-                sym = str(row.get("symbol", "")).strip().upper()
-                if sym:
-                    rows[sym] = row
-    except Exception:
-        return {}
-    return rows
-
-
-def _is_provider_value_present(row: dict[str, str], primary_fields: list[str]) -> bool:
-    if not primary_fields:
-        return True
-    return any(str(row.get(field, "")).strip() for field in primary_fields)
-
-
-def _classify_provider_freshness(
-    symbol: str,
-    provider_rows: dict[str, dict[str, str]],
-    *,
-    date_field: str,
-    primary_fields: list[str],
-    today: date,
-) -> dict[str, object]:
-    row = provider_rows.get(symbol)
-    if row is None:
-        return {"state": "missing", "date": None, "age_days": None}
-    if not _is_provider_value_present(row, primary_fields):
-        return {"state": "missing", "date": str(row.get(date_field, "") or "") or None, "age_days": None}
-    sourced = _parse_iso_date(row.get(date_field))
-    if sourced is None:
-        return {"state": "missing", "date": str(row.get(date_field, "") or "") or None, "age_days": None}
-    age_days = max((today - sourced).days, 0)
-    return {
-        "state": "fresh" if age_days <= _FRESHNESS_THRESHOLD_DAYS else "stale",
-        "date": sourced.isoformat(),
-        "age_days": age_days,
-    }
-
-
-def _latest_candidate_run_id() -> str | None:
-    if not _MANIFEST_PATH.exists():
-        return None
-    try:
-        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    portfolios = manifest.get("portfolios") if isinstance(manifest, dict) else []
-    if not isinstance(portfolios, list):
-        return None
-    candidates: list[tuple[str, str, str]] = []
-    for entry in portfolios:
-        if not isinstance(entry, dict):
-            continue
-        run_id = str(entry.get("run_id") or "").strip()
-        if not run_id:
-            continue
-        run_dir = _RUNS_ROOT / run_id
-        if not (run_dir / "deployment_queue.json").exists():
-            continue
-        if not (run_dir / "ucf_verdicts.json").exists():
-            continue
-        if not (run_dir / "recommendations.json").exists():
-            continue
-        candidates.append(
-            (
-                str(entry.get("snapshot_date") or ""),
-                str(entry.get("created_at_utc") or ""),
-                run_id,
-            )
-        )
-    if not candidates:
-        return None
-    candidates.sort(reverse=True)
-    return candidates[0][2]
-
-
-def _load_json(path: Path) -> dict | list | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _candidate_symbols_from_run(run_id: str) -> dict[str, list[str]]:
-    run_dir = _RUNS_ROOT / run_id
-    queue_json = _load_json(run_dir / "deployment_queue.json") or {}
-    ucf_json = _load_json(run_dir / "ucf_verdicts.json") or {}
-    rec_json = _load_json(run_dir / "recommendations.json") or []
-
-    queue_rows = []
-    if isinstance(queue_json, dict):
-        queue_rows = list(queue_json.get("queue") or queue_json.get("deployment_queue") or [])
-    queue_symbols = [str(r.get("symbol") or "").strip().upper() for r in queue_rows if isinstance(r, dict)]
-
-    verdict_rows = []
-    if isinstance(ucf_json, dict):
-        verdict_rows = list(ucf_json.get("verdicts") or [])
-    elif isinstance(ucf_json, list):
-        verdict_rows = list(ucf_json)
-    ucf_symbols = [str(r.get("symbol") or "").strip().upper() for r in verdict_rows if isinstance(r, dict)]
-
-    recommendation_rows = list(rec_json) if isinstance(rec_json, list) else []
-    recommendation_primary: list[str] = []
-    recommendation_all: list[str] = []
-    for row in recommendation_rows:
-        if not isinstance(row, dict):
-            continue
-        affected = row.get("affected_symbols") or []
-        if isinstance(affected, list) and affected:
-            first = str(affected[0] or "").strip().upper()
-            if first:
-                recommendation_primary.append(first)
-            for sym in affected:
-                norm = str(sym or "").strip().upper()
-                if norm:
-                    recommendation_all.append(norm)
-
-    def _unique(values: list[str]) -> list[str]:
-        seen: set[str] = set()
-        out: list[str] = []
-        for value in values:
-            if value and value not in seen:
-                out.append(value)
-                seen.add(value)
-        return out
-
-    return {
-        "cw_das": _unique(queue_symbols),
-        "ucf": _unique(ucf_symbols),
-        "recommendations_primary": _unique(recommendation_primary),
-        "recommendations_all": _unique(recommendation_all),
-    }
-
-
-def _load_cra_symbols_from_latest_proposal() -> list[str]:
-    try:
-        import sys as _sys
-        if str(_REPO_ROOT) not in _sys.path:
-            _sys.path.insert(0, str(_REPO_ROOT))
-        from src.portfolio.cra.rotation_proposal_builder import build_proposal_from_manifest
-
-        if not _MANIFEST_PATH.exists():
-            return []
-        tax_state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
-        proposal = build_proposal_from_manifest(
-            manifest_path=_MANIFEST_PATH,
-            runs_root=_RUNS_ROOT,
-            tax_state_path=tax_state_path if tax_state_path.exists() else None,
-        )
-        if proposal is None:
-            return []
-        deployments = proposal.to_dict().get("deployments") or []
-        return [str(row.get("symbol") or "").strip().upper() for row in deployments if isinstance(row, dict)]
-    except Exception:
-        return []
-
-
-def _read_research_universe_symbols() -> list[str]:
-    if not _ANALYTICAL_UNIVERSE_CSV.exists():
-        return []
-    symbols: list[str] = []
-    try:
-        with _ANALYTICAL_UNIVERSE_CSV.open("r", encoding="utf-8", newline="") as fh:
-            for row in csv.DictReader(fh):
-                sym = str(row.get("symbol") or "").strip().upper()
-                if sym:
-                    symbols.append(sym)
-    except Exception:
-        return []
-    seen: set[str] = set()
-    unique: list[str] = []
-    for sym in symbols:
-        if sym not in seen:
-            unique.append(sym)
-            seen.add(sym)
-    return unique
-
-
-def _readiness_status(fresh_pct: float, stale_or_missing_count: int) -> str:
-    if fresh_pct >= 95.0 and stale_or_missing_count <= 1:
-        return "HIGH"
-    if fresh_pct >= 80.0:
-        return "MEDIUM"
-    return "LOW"
-
-
-def _compute_candidate_transparency_payload() -> dict[str, object]:
-    today = date.today()
-    provider_maps = {
-        "zacks": {
-            "rows": _load_provider_rows(_SIGNAL_FILES["zacks"]),
-            "date_field": "sourced_date",
-            "primary_fields": ["zacks_rank", "zacks_score"],
-        },
-        "danelfin": {
-            "rows": _load_provider_rows(_SIGNAL_FILES["danelfin"]),
-            "date_field": "sourced_date",
-            "primary_fields": ["danelfin_raw", "danelfin_score"],
-        },
-        "yahoo": {
-            "rows": _load_provider_rows(_SIGNAL_FILES["yahoo"]),
-            "date_field": "sourced_date",
-            "primary_fields": ["price_target", "analyst_count", "current_price"],
-        },
-        "ess": {
-            "rows": _load_provider_rows(_ESS_SIGNAL_SNAPSHOT),
-            "date_field": "snapshot_date",
-            "primary_fields": ["signal_coverage_status", "starmine_ess_text"],
-        },
-        "fmp": {
-            "rows": _load_provider_rows(_FMP_UNIVERSE_CSV),
-            "date_field": "fmp_sourced_date",
-            "primary_fields": ["fmp_coverage_status"],
-        },
-    }
-
-    run_id = _latest_candidate_run_id()
-    symbol_sets = {
-        "cw_das": [],
-        "ucf": [],
-        "recommendations_primary": [],
-        "recommendations_all": [],
-        "cra": [],
-        "research_universe": _read_research_universe_symbols(),
-    }
-    if run_id:
-        symbol_sets.update(_candidate_symbols_from_run(run_id))
-    symbol_sets["cra"] = sorted({s for s in _load_cra_symbols_from_latest_proposal() if s})
-
-    def _core_state(symbol: str) -> bool:
-        z = _classify_provider_freshness(
-            symbol,
-            provider_maps["zacks"]["rows"],
-            date_field=str(provider_maps["zacks"]["date_field"]),
-            primary_fields=list(provider_maps["zacks"]["primary_fields"]),
-            today=today,
-        )
-        d = _classify_provider_freshness(
-            symbol,
-            provider_maps["danelfin"]["rows"],
-            date_field=str(provider_maps["danelfin"]["date_field"]),
-            primary_fields=list(provider_maps["danelfin"]["primary_fields"]),
-            today=today,
-        )
-        y = _classify_provider_freshness(
-            symbol,
-            provider_maps["yahoo"]["rows"],
-            date_field=str(provider_maps["yahoo"]["date_field"]),
-            primary_fields=list(provider_maps["yahoo"]["primary_fields"]),
-            today=today,
-        )
-        return z.get("state") == "fresh" and d.get("state") == "fresh" and y.get("state") == "fresh"
-
-    def _metric_for_set(label: str, symbols: list[str]) -> dict[str, object]:
-        total = len(symbols)
-        core_fresh = sum(1 for sym in symbols if _core_state(sym))
-        stale_or_missing = max(total - core_fresh, 0)
-        pct = round((core_fresh / total * 100.0), 1) if total else 0.0
-        return {
-            "label": label,
-            "total": total,
-            "core_fresh": core_fresh,
-            "stale_or_missing": stale_or_missing,
-            "core_fresh_pct": pct,
-            "status": _readiness_status(pct, stale_or_missing),
-        }
-
-    readiness = {
-        "research_universe": _metric_for_set("Research Universe", symbol_sets["research_universe"]),
-        "cw_das": _metric_for_set("CW-DAS Queue", symbol_sets["cw_das"]),
-        "ucf": _metric_for_set("UCF Ranked", symbol_sets["ucf"]),
-        "recommendations": _metric_for_set("Recommendations", symbol_sets["recommendations_primary"]),
-        "cra": _metric_for_set("CRA Deployments", symbol_sets["cra"]),
-    }
-
-    rows_by_symbol: dict[str, dict[str, object]] = {}
-    source_sets = {
-        "cw_das": set(symbol_sets["cw_das"]),
-        "ucf": set(symbol_sets["ucf"]),
-        "recommendations": set(symbol_sets["recommendations_all"]),
-        "cra": set(symbol_sets["cra"]),
-    }
-    table_symbols = sorted(set().union(*source_sets.values())) if source_sets else []
-    for sym in table_symbols:
-        z = _classify_provider_freshness(
-            sym,
-            provider_maps["zacks"]["rows"],
-            date_field=str(provider_maps["zacks"]["date_field"]),
-            primary_fields=list(provider_maps["zacks"]["primary_fields"]),
-            today=today,
-        )
-        d = _classify_provider_freshness(
-            sym,
-            provider_maps["danelfin"]["rows"],
-            date_field=str(provider_maps["danelfin"]["date_field"]),
-            primary_fields=list(provider_maps["danelfin"]["primary_fields"]),
-            today=today,
-        )
-        y = _classify_provider_freshness(
-            sym,
-            provider_maps["yahoo"]["rows"],
-            date_field=str(provider_maps["yahoo"]["date_field"]),
-            primary_fields=list(provider_maps["yahoo"]["primary_fields"]),
-            today=today,
-        )
-        e = _classify_provider_freshness(
-            sym,
-            provider_maps["ess"]["rows"],
-            date_field=str(provider_maps["ess"]["date_field"]),
-            primary_fields=list(provider_maps["ess"]["primary_fields"]),
-            today=today,
-        )
-        f = _classify_provider_freshness(
-            sym,
-            provider_maps["fmp"]["rows"],
-            date_field=str(provider_maps["fmp"]["date_field"]),
-            primary_fields=list(provider_maps["fmp"]["primary_fields"]),
-            today=today,
-        )
-        core_fresh = z.get("state") == "fresh" and d.get("state") == "fresh" and y.get("state") == "fresh"
-        full_fresh = core_fresh and e.get("state") == "fresh" and f.get("state") == "fresh"
-        freshness = "FULL_FRESH" if full_fresh else ("CORE_FRESH" if core_fresh else "CORE_PARTIAL")
-        rows_by_symbol[sym] = {
-            "symbol": sym,
-            "sources": {
-                "cw_das": sym in source_sets["cw_das"],
-                "ucf": sym in source_sets["ucf"],
-                "recommendations": sym in source_sets["recommendations"],
-                "cra": sym in source_sets["cra"],
-            },
-            "zacks": z,
-            "danelfin": d,
-            "yahoo": y,
-            "ess": e,
-            "fmp": f,
-            "freshness": freshness,
-        }
-
-    return {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "threshold_days": _FRESHNESS_THRESHOLD_DAYS,
-        "run_id": run_id,
-        "readiness": readiness,
-        "rows": [rows_by_symbol[k] for k in sorted(rows_by_symbol.keys())],
-    }
-
-
-def _parse_provider_progress_line(line: str) -> dict[str, object]:
-    raw = str(line or "").strip()
-    if not raw:
-        return {
-            "provider_stage": None,
-            "stage_progress_current": None,
-            "stage_progress_total": None,
-            "current_symbol": None,
-        }
-    m = _PROVIDER_PROGRESS_RE.match(raw)
-    if not m:
-        return {
-            "provider_stage": None,
-            "stage_progress_current": None,
-            "stage_progress_total": None,
-            "current_symbol": None,
-        }
-    provider = str(m.group(3) or "").strip().title()
-    current = int(m.group(1))
-    total = int(m.group(2))
-    symbol = str(m.group(4) or "").strip().upper()
-    return {
-        "provider_stage": provider,
-        "stage_progress_current": current,
-        "stage_progress_total": total,
-        "current_symbol": symbol,
-    }
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
@@ -1778,38 +1529,55 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 )
         elif path == "/api/signal-refresh/status":
             running = _refresh_proc is not None and _refresh_proc.poll() is None
-            global _refresh_last_report, _refresh_last_exit_code, _refresh_completed_at_utc
+            global _refresh_last_report, _refresh_last_exit_code
+            global _refresh_completed_at_utc
             if _refresh_proc is not None and not running:
                 _refresh_last_exit_code = _refresh_proc.poll()
-                if _refresh_completed_at_utc is None:
-                    _refresh_completed_at_utc = datetime.now(timezone.utc)
                 if _refresh_last_report is None and _REFRESH_REPORT_PATH.exists():
                     try:
                         _refresh_last_report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
                     except Exception:
                         _refresh_last_report = None
-            elapsed_sec: float | None = None
-            if _refresh_started_at_utc is not None:
-                elapsed_sec = max((datetime.now(timezone.utc) - _refresh_started_at_utc).total_seconds(), 0.0)
-            with _refresh_log_lock:
-                recent_lines = list(_refresh_log_lines[-8:])
-            last_line = recent_lines[-1] if recent_lines else ""
-            progress_fields = _parse_provider_progress_line(last_line)
+                if _refresh_completed_at_utc is None:
+                    _refresh_completed_at_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+            metadata = {
+                "requested_intent": _refresh_requested_intent,
+                "resolved_intent": _refresh_resolved_intent,
+                "universe_scope": _refresh_universe_scope,
+                "estimated_symbol_count": _refresh_estimated_symbol_count,
+                "updates": list(_refresh_updates),
+                "does_not_update": list(_refresh_does_not_update),
+                "research_universe_freshness_expected": _refresh_research_universe_expected,
+                "candidate_readiness_expected": _refresh_candidate_readiness_expected,
+            }
+            if not metadata.get("resolved_intent"):
+                metadata.update(_refresh_metadata_from_report(_refresh_last_report))
+
+            elapsed = None
+            if running and _refresh_started_at_utc:
+                try:
+                    started = datetime.fromisoformat(_refresh_started_at_utc)
+                    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                except Exception:
+                    elapsed = None
+
             self._json_response({
                 "running": running,
                 "exit_code": _refresh_last_exit_code,
                 "last_report": _refresh_last_report,
-                "mode": _refresh_mode,
-                "started_at_utc": _refresh_started_at_utc.isoformat() if _refresh_started_at_utc else None,
-                "completed_at_utc": _refresh_completed_at_utc.isoformat() if _refresh_completed_at_utc else None,
-                "elapsed_sec": round(elapsed_sec, 1) if elapsed_sec is not None else None,
-                "recent_log_lines": recent_lines,
-                "last_log_line": last_line,
-                "provider_stage_note": "Provider-stage progress, not overall refresh completion.",
-                **progress_fields,
+                "mode": metadata.get("resolved_intent"),
+                "started_at_utc": _refresh_started_at_utc,
+                "completed_at_utc": _refresh_completed_at_utc,
+                "elapsed_sec": elapsed,
+                "provider_stage": None,
+                "stage_progress_current": None,
+                "stage_progress_total": None,
+                "current_symbol": None,
+                "last_log_line": "",
+                "recent_log_lines": [],
+                **metadata,
             })
-        elif path == "/api/refresh-transparency":
-            self._json_response(_compute_candidate_transparency_payload())
         elif path == "/api/score-fetch/status":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -2605,58 +2373,132 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": f"Failed to save draft: {exc}"}, 500)
         elif path == "/api/signal-refresh":
             global _refresh_proc
-            if _refresh_proc is not None and _refresh_proc.poll() is None:
-                self._json_response({"started": False, "reason": "already running"})
-                return
             global _refresh_last_report, _refresh_last_exit_code
-            _refresh_last_report = None
-            _refresh_last_exit_code = None
-            refresh_mode = "stale_only"
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length) if length else b"{}"
-                payload = json.loads(body) if body else {}
-                refresh_mode = str(payload.get("mode") or refresh_mode).strip().lower()
-                if _REFRESH_REPORT_PATH.exists():
-                    _REFRESH_REPORT_PATH.unlink()
-            except Exception:
-                refresh_mode = "stale_only"
+            global _refresh_requested_intent, _refresh_resolved_intent
+            global _refresh_universe_scope, _refresh_estimated_symbol_count
+            global _refresh_updates, _refresh_does_not_update
+            global _refresh_research_universe_expected, _refresh_candidate_readiness_expected
+            global _refresh_started_at_utc, _refresh_completed_at_utc
+            if _refresh_proc is not None and _refresh_proc.poll() is None:
+                self._json_response({
+                    "accepted": False,
+                    "started": False,
+                    "reason": "already running",
+                    "job_status": "running",
+                    "requested_intent": _refresh_requested_intent,
+                    "resolved_intent": _refresh_resolved_intent,
+                    "universe_scope": _refresh_universe_scope,
+                    "estimated_symbol_count": _refresh_estimated_symbol_count,
+                    "updates": list(_refresh_updates),
+                    "does_not_update": list(_refresh_does_not_update),
+                    "research_universe_freshness_expected": _refresh_research_universe_expected,
+                    "candidate_readiness_expected": _refresh_candidate_readiness_expected,
+                })
+                return
 
-            if refresh_mode == "prepare_portfolio_review":
-                command = [
+            payload: dict = {}
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            if content_length > 0:
+                try:
+                    raw = self.rfile.read(content_length)
+                    payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    if not isinstance(payload, dict):
+                        raise ValueError("JSON body must be an object")
+                except Exception:
+                    self._json_response(
+                        {
+                            "accepted": False,
+                            "error": "invalid JSON body",
+                        },
+                        400,
+                    )
+                    return
+
+            requested = payload.get("intent")
+            if requested is None:
+                requested = payload.get("mode")
+            normalized = _normalize_refresh_intent(requested)
+            if not normalized:
+                allowed = sorted(_REFRESH_INTENT_CATALOG.keys())
+                self._json_response(
+                    {
+                        "accepted": False,
+                        "error": "unknown refresh intent",
+                        "requested_intent": str(requested),
+                        "allowed_intents": allowed,
+                    },
+                    400,
+                )
+                return
+
+            intent_cfg = _REFRESH_INTENT_CATALOG[normalized]
+            resolved_intent = str(intent_cfg.get("resolved_intent") or normalized)
+            entrypoint = str(intent_cfg.get("entrypoint") or "refresh_signals")
+            refresh_mode = str(intent_cfg.get("refresh_mode") or "")
+            use_smart = bool(intent_cfg.get("use_smart"))
+            estimated_count = _estimated_count_for_intent(resolved_intent)
+
+            if entrypoint == "prepare_portfolio_review":
+                cmd = [
                     sys.executable,
                     str(_REPO_ROOT / "scripts" / "prepare_portfolio_review.py"),
                     "--report-path",
                     str(_REFRESH_REPORT_PATH),
                 ]
             else:
-                command = [
+                cmd = [
                     sys.executable,
                     str(_REPO_ROOT / "scripts" / "refresh_signals.py"),
                     "--mode",
                     refresh_mode,
-                    "--smart",
+                ]
+                if use_smart:
+                    cmd.append("--smart")
+                cmd.extend([
                     "--report-path",
                     str(_REFRESH_REPORT_PATH),
-                ]
+                ])
 
-            global _refresh_started_at_utc, _refresh_completed_at_utc, _refresh_mode
-            with _refresh_log_lock:
-                _refresh_log_lines.clear()
-            _refresh_started_at_utc = datetime.now(timezone.utc)
+            _refresh_last_report = None
+            _refresh_last_exit_code = None
+            _refresh_requested_intent = normalized
+            _refresh_resolved_intent = resolved_intent
+            _refresh_universe_scope = str(intent_cfg.get("universe_scope") or "unknown")
+            _refresh_estimated_symbol_count = estimated_count
+            _refresh_updates = list(intent_cfg.get("updates") or [])
+            _refresh_does_not_update = list(intent_cfg.get("does_not_update") or [])
+            _refresh_research_universe_expected = bool(intent_cfg.get("research_universe_freshness_expected"))
+            _refresh_candidate_readiness_expected = bool(intent_cfg.get("candidate_readiness_expected"))
+            _refresh_started_at_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
             _refresh_completed_at_utc = None
-            _refresh_mode = refresh_mode
+            try:
+                if _REFRESH_REPORT_PATH.exists():
+                    _REFRESH_REPORT_PATH.unlink()
+            except Exception:
+                pass
             _refresh_proc = subprocess.Popen(
-                command,
+                cmd,
                 cwd=str(_REPO_ROOT),
                 env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
             )
-            threading.Thread(target=_capture_refresh_output, args=(_refresh_proc,), daemon=True).start()
-            self._json_response({"started": True, "mode": refresh_mode})
+            self._json_response(
+                {
+                    "accepted": True,
+                    "started": True,
+                    "job_status": "started",
+                    "requested_intent": _refresh_requested_intent,
+                    "resolved_intent": _refresh_resolved_intent,
+                    "universe_scope": _refresh_universe_scope,
+                    "estimated_symbol_count": _refresh_estimated_symbol_count,
+                    "updates": list(_refresh_updates),
+                    "does_not_update": list(_refresh_does_not_update),
+                    "research_universe_freshness_expected": _refresh_research_universe_expected,
+                    "candidate_readiness_expected": _refresh_candidate_readiness_expected,
+                    "mode": _refresh_resolved_intent,
+                    "source": str(payload.get("source") or "outcome_visualization"),
+                    "requested_by": str(payload.get("requested_by") or "operator"),
+                }
+            )
         elif path == "/api/pis/refresh":
             try:
                 import sys as _sys

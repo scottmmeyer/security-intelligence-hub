@@ -1070,12 +1070,12 @@
               <label for="signalRefreshMode">Next Refresh Intent</label>
               <select id="signalRefreshMode">
                 <option value="stale_only">Refresh Stale Only</option>
-                <option value="portfolio_signals" selected>Refresh Portfolio Signals</option>
-                <option value="rebuild_research_universe">Rebuild Research Universe</option>
+                <option value="portfolio_signals" selected>Refresh Current Holdings Only</option>
+                <option value="rebuild_research_universe">Refresh Full Research Universe (~2,473 symbols)</option>
                 <option value="prepare_portfolio_review">Prepare Portfolio Review</option>
               </select>
             </div>
-            <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Portfolio Signals</button>
+            <button id="signalRefreshBtn" class="signal-refresh-btn" onclick="triggerSignalRefresh()">Refresh Current Holdings Only</button>
           </div>
         </div>
         <div id="signalRefreshMsg" style="margin-top: 8px; font-size: 0.82rem; color: var(--muted); display: none;"></div>
