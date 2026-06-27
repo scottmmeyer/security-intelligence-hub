@@ -1740,6 +1740,99 @@ function _rrSignalClass(signal) {
   return "sev-NONE";
 }
 
+function _rrSeverityClass(sev) {
+  if (sev === "ELEVATED") return "sev-HIGH";
+  if (sev === "WATCH") return "sev-MODERATE";
+  if (sev === "INFO") return "sev-LOW";
+  return "sev-NONE";
+}
+
+function _rrFmtMoney(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return formatMV(Number(v));
+}
+
+function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSignal) {
+  if (!commodityGuard && !fragilityWatch) {
+    return `<div class="panel" style="margin-top:10px;">
+      <p class="panel-title">Hard-Asset Sleeve Review</p>
+      <div style="font-size:0.8rem;color:var(--muted);">Guardrail payload unavailable for this run. Rotation monitor remains display-only and advisory.</div>
+    </div>`;
+  }
+
+  const g = commodityGuard || {};
+  const f = fragilityWatch || {};
+  const gStatus = String(g.status || "NONE");
+  const gSev = String(g.severity || "NONE");
+  const fStatus = String(f.status || "NONE");
+  const fSev = String(f.severity || "NONE");
+
+  const choices = Array.isArray(g.operator_choices) ? g.operator_choices : [];
+  const choiceLabel = v => {
+    const map = {
+      continue_with_equity_deployment: "Continue with equity deployment",
+      reserve_cash: "Reserve cash",
+      fill_hard_asset_sleeve: "Fill hard-asset sleeve",
+      mark_commodities_target_waived: "Waive commodity target",
+      rerun_with_custom_cash: "Re-run with custom cash",
+    };
+    return map[v] || String(v || "").replace(/_/g, " ");
+  };
+
+  const macroEvents = Array.isArray(f.macro_events) ? f.macro_events : [];
+  const macroText = macroEvents.length
+    ? `${macroEvents.slice(0, 3).join("; ")}${macroEvents.length > 3 ? "..." : ""}`
+    : "No near-window high-impact events";
+
+  return `<div class="panel" style="margin-top:10px;">
+    <p class="panel-title">Hard-Asset Sleeve Review</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
+      <span class="sev-badge sev-NONE">OPERATOR REVIEW</span>
+      <span class="sev-badge sev-NONE">NO AUTOMATIC RERANKING</span>
+      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <span class="sev-badge ${_rrSeverityClass(gSev)}">${escHtml(gStatus)}</span>
+      <span class="sev-badge ${_rrSeverityClass(fSev)}">${escHtml(fStatus)}</span>
+      <span style="font-size:0.76rem;color:var(--muted);">Rotation signal: ${escHtml(f.rotation_signal || rotationSignal || "DATA_UNAVAILABLE")}</span>
+    </div>
+
+    <div style="font-size:0.84rem;color:var(--text);margin-bottom:8px;">
+      <strong>Hard-Asset Sleeve Unfilled</strong>
+      <div style="margin-top:4px;">${escHtml(g.message || f.message || "Advisory guardrail state unavailable.")}</div>
+    </div>
+
+    <div class="two-col" style="margin-top:8px;">
+      <div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Commodity Sleeve</div>
+        <div style="font-size:0.82rem;line-height:1.45;">
+          Commodities: <strong>${_rrFmtPct(g.commodities_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.commodities_target_pct)}</strong><br>
+          Gold: <strong>${_rrFmtPct(g.gold_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.gold_target_pct)}</strong><br>
+          Energy: <strong>${_rrFmtPct(g.energy_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.energy_target_pct)}</strong><br>
+          Broad Basket: <strong>${_rrFmtPct(g.broad_basket_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.broad_basket_target_pct)}</strong>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Deployment and Fragility Context</div>
+        <div style="font-size:0.82rem;line-height:1.45;">
+          Deployable cash: <strong>${_rrFmtMoney(g.deployment_cash)}</strong><br>
+          Equity deployment candidates: <strong>${escHtml(String(g.equity_deployment_count ?? "—"))}</strong><br>
+          Commodity candidates available: <strong>${g.commodity_candidates_available === true ? "Yes" : g.commodity_candidates_available === false ? "No" : "—"}</strong><br>
+          Tech exposure: <strong>${_rrFmtPct(f.tech_sector_pct)}</strong><br>
+          Ultra-mega drift: <strong>${_rrFmtPct(f.ultra_mega_drift_pp)}</strong><br>
+          Macro catalyst window: <strong>${f.macro_catalyst_window ? "Yes" : "No"}</strong>
+        </div>
+        <div style="margin-top:6px;font-size:0.76rem;color:var(--muted);">${escHtml(macroText)}</div>
+      </div>
+    </div>
+
+    ${choices.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+      ${choices.map(c => `<span class="sev-badge sev-NONE">${escHtml(choiceLabel(c))}</span>`).join("")}
+    </div>` : ""}
+  </div>`;
+}
+
 function _renderRotationRiskPanel(data) {
   const el = document.getElementById("rotationRiskContainer");
   if (!el) return;
@@ -1752,6 +1845,8 @@ function _renderRotationRiskPanel(data) {
   const events = ((data.macro_context || {}).upcoming_high_impact_events) || [];
   const missing = dq.missing_inputs || [];
   const endpointDiag = data._endpoint_diagnostic || null;
+  const commodityGuard = data.commodity_fill_guard || null;
+  const fragilityWatch = data.rotation_fragility_watch || null;
 
   const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
   const confirmBadge = conf.confirmation_passed
@@ -1790,6 +1885,8 @@ function _renderRotationRiskPanel(data) {
       </div>`
     : "";
 
+  const hardAssetReviewHtml = _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, signal);
+
   el.innerHTML = `<div class="panel section-gap">
     <p class="panel-title">Rotation Risk Monitor</p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
@@ -1821,6 +1918,7 @@ function _renderRotationRiskPanel(data) {
 
     ${missingHtml}
     ${diagHtml}
+    ${hardAssetReviewHtml}
     <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
   </div>`;
 }

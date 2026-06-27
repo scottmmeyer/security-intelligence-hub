@@ -47,22 +47,26 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(fh))
 
 
-def _latest_run_id(repo_root: Path) -> str:
+def _latest_run_ids(repo_root: Path) -> list[str]:
     manifest_path = repo_root / "data" / "portfolio_ingestion" / "manifest.json"
     if not manifest_path.exists():
-        return ""
+        return []
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:
-        return ""
+        return []
     portfolios = manifest.get("portfolios") or []
-    if not portfolios:
-        return ""
-    latest = max(
+    ranked = sorted(
         portfolios,
         key=lambda p: (str(p.get("snapshot_date", "")), str(p.get("created_at_utc", ""))),
+        reverse=True,
     )
-    return str(latest.get("run_id", "") or "")
+    return [str(p.get("run_id", "") or "") for p in ranked if str(p.get("run_id", "") or "").strip()]
+
+
+def _latest_run_id(repo_root: Path) -> str:
+    run_ids = _latest_run_ids(repo_root)
+    return run_ids[0] if run_ids else ""
 
 
 def _load_holdings(repo_root: Path, run_id: str) -> list[dict[str, str]]:
@@ -77,6 +81,266 @@ def _load_holdings(repo_root: Path, run_id: str) -> list[dict[str, str]]:
         / "holdings.csv"
     )
     return _read_csv_rows(holdings_path)
+
+
+def _load_alignment_rows(repo_root: Path, run_id: str) -> list[dict[str, str]]:
+    if not run_id:
+        return []
+    path = (
+        repo_root
+        / "data"
+        / "portfolio_ingestion"
+        / "analysis_runs"
+        / run_id
+        / "alignment.csv"
+    )
+    return _read_csv_rows(path)
+
+
+def _load_deployment_queue(repo_root: Path, run_id: str) -> dict:
+    if not run_id:
+        return {}
+    path = (
+        repo_root
+        / "data"
+        / "portfolio_ingestion"
+        / "analysis_runs"
+        / run_id
+        / "deployment_queue.json"
+    )
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _pick_guardrail_run_id(repo_root: Path, preferred_run_id: str) -> str:
+    run_ids = [preferred_run_id] if preferred_run_id else []
+    run_ids.extend([rid for rid in _latest_run_ids(repo_root) if rid and rid != preferred_run_id])
+    for rid in run_ids:
+        run_dir = (
+            repo_root
+            / "data"
+            / "portfolio_ingestion"
+            / "analysis_runs"
+            / rid
+        )
+        if (run_dir / "alignment.csv").exists() and (run_dir / "deployment_queue.json").exists():
+            return rid
+    return preferred_run_id
+
+
+def _alignment_row_by_node(alignment_rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    for row in alignment_rows:
+        key = str(row.get("node_key") or "").strip().upper()
+        if key:
+            out[key] = row
+    return out
+
+
+def _tech_sensitive_deployment_count(
+    queue: list[dict],
+    holdings: list[dict[str, str]],
+) -> int:
+    by_symbol_industry: dict[str, str] = {}
+    for row in holdings:
+        sym = str(row.get("symbol") or "").strip().upper()
+        ind = _industry_normalized(row.get("industry") or "")
+        if sym and ind:
+            by_symbol_industry[sym] = ind
+
+    count = 0
+    for cand in queue:
+        node = str(cand.get("allocation_node") or "").upper()
+        if not node.startswith("EQUITIES"):
+            continue
+        sym = str(cand.get("symbol") or "").strip().upper()
+        if by_symbol_industry.get(sym) == "TECHNOLOGY":
+            count += 1
+    return count
+
+
+def _build_commodity_fill_guard(
+    *,
+    alignment_rows: list[dict[str, str]],
+    deployment_queue: dict,
+    holdings: list[dict[str, str]],
+) -> dict:
+    by_node = _alignment_row_by_node(alignment_rows)
+
+    def _pair(node_key: str) -> tuple[Optional[float], Optional[float]]:
+        row = by_node.get(node_key.upper(), {})
+        return _safe_float(row.get("actual_pct")), _safe_float(row.get("target_pct"))
+
+    comm_actual, comm_target = _pair("COMMODITIES")
+    gold_actual, gold_target = _pair("COMMODITIES.GOLD")
+    energy_actual, energy_target = _pair("COMMODITIES.ENERGY")
+    broad_actual, broad_target = _pair("COMMODITIES.BROAD_BASKET")
+
+    cash_context = deployment_queue.get("cash_context") or {}
+    deployable_cash = (
+        _safe_float(cash_context.get("adjusted_deployable_mv"))
+        if cash_context.get("adjusted_deployable_mv") is not None
+        else _safe_float(cash_context.get("deployable_mv"))
+    )
+    deployable_cash = float(deployable_cash or 0.0)
+
+    queue = list(deployment_queue.get("queue") or [])
+    equity_deployment_count = sum(
+        1 for c in queue if str(c.get("allocation_node") or "").upper().startswith("EQUITIES")
+    )
+    commodity_deployment_count = sum(
+        1 for c in queue if str(c.get("allocation_node") or "").upper().startswith("COMMODITIES")
+    )
+    tech_sensitive_deployment_count = _tech_sensitive_deployment_count(queue, holdings)
+
+    target = float(comm_target or 0.0)
+    actual = float(comm_actual or 0.0)
+    gap = actual - target
+    near_zero_unfilled = target > 0 and actual <= 0.25
+    has_equity_deployment = equity_deployment_count > 0
+    has_deployable_cash = deployable_cash > 0.0
+
+    status = "NONE"
+    severity = "NONE"
+    message = "Hard-asset sleeve posture is within expected bounds."
+    if target <= 0:
+        message = "Commodity target is zero; no hard-asset sleeve fill review required."
+    elif near_zero_unfilled and has_deployable_cash and has_equity_deployment:
+        status = "ACTIVE_REVIEW"
+        severity = "WATCH"
+        if tech_sensitive_deployment_count > 0 or abs(gap) >= 2.0:
+            severity = "ELEVATED"
+        message = "Hard-asset sleeve is unfilled while deployable cash is being allocated to equities."
+    elif actual < target and has_deployable_cash:
+        status = "INFO"
+        severity = "INFO"
+        message = "Hard-asset sleeve is below target while deployable cash exists; review deployment intent."
+    elif actual < target:
+        status = "INFO"
+        severity = "INFO"
+        message = "Hard-asset sleeve is below target, but no deployable cash is currently available."
+
+    return {
+        "status": status,
+        "severity": severity,
+        "commodities_actual_pct": round(actual, 3) if comm_actual is not None else None,
+        "commodities_target_pct": round(target, 3) if comm_target is not None else None,
+        "commodities_gap_pp": round(gap, 3) if comm_actual is not None and comm_target is not None else None,
+        "gold_actual_pct": round(float(gold_actual or 0.0), 3) if gold_actual is not None else None,
+        "gold_target_pct": round(float(gold_target or 0.0), 3) if gold_target is not None else None,
+        "energy_actual_pct": round(float(energy_actual or 0.0), 3) if energy_actual is not None else None,
+        "energy_target_pct": round(float(energy_target or 0.0), 3) if energy_target is not None else None,
+        "broad_basket_actual_pct": round(float(broad_actual or 0.0), 3) if broad_actual is not None else None,
+        "broad_basket_target_pct": round(float(broad_target or 0.0), 3) if broad_target is not None else None,
+        "deployment_cash": round(deployable_cash, 2),
+        "deployment_targets_count": len(queue),
+        "tech_sensitive_deployment_count": tech_sensitive_deployment_count,
+        "equity_deployment_count": equity_deployment_count,
+        "commodity_candidates_available": commodity_deployment_count > 0,
+        "commodity_deployment_count": commodity_deployment_count,
+        "message": message,
+        "operator_choices": [
+            "continue_with_equity_deployment",
+            "reserve_cash",
+            "fill_hard_asset_sleeve",
+            "mark_commodities_target_waived",
+            "rerun_with_custom_cash",
+        ],
+    }
+
+
+def _build_rotation_fragility_watch(
+    *,
+    rotation_signal: str,
+    confirmation_passed: bool,
+    exposure: dict,
+    macro_events: list[dict],
+    alignment_rows: list[dict[str, str]],
+    commodity_guard: dict,
+) -> dict:
+    by_node = _alignment_row_by_node(alignment_rows)
+    ultra_mega = by_node.get("EQUITIES.US.MEGA.ULTRA_MEGA", {})
+    ultra_mega_drift = _safe_float(ultra_mega.get("drift_pct"))
+
+    hard_actual = commodity_guard.get("commodities_actual_pct")
+    hard_target = commodity_guard.get("commodities_target_pct")
+    deploy_eq_count = int(commodity_guard.get("equity_deployment_count") or 0)
+    tech_deploy_count = int(commodity_guard.get("tech_sensitive_deployment_count") or 0)
+
+    macro_catalyst_window = bool(macro_events)
+    tech_pct = _safe_float(exposure.get("tech_pct")) or 0.0
+    signal_norm = str(rotation_signal or "DATA_UNAVAILABLE").upper()
+
+    if not hard_target or hard_target <= 0:
+        return {
+            "status": "NONE",
+            "severity": "NONE",
+            "rotation_confirmed": bool(confirmation_passed),
+            "rotation_signal": signal_norm,
+            "tech_sector_pct": round(tech_pct, 3),
+            "hard_asset_sleeve_actual_pct": hard_actual,
+            "hard_asset_sleeve_target_pct": hard_target,
+            "ultra_mega_drift_pp": round(float(ultra_mega_drift), 3) if ultra_mega_drift is not None else None,
+            "macro_catalyst_window": macro_catalyst_window,
+            "macro_events": [str(e.get("event_name") or e.get("event_id") or "") for e in macro_events if e],
+            "message": "Hard-asset sleeve target is zero; rotation fragility watch is inactive.",
+        }
+
+    score = 0
+    if (hard_actual or 0.0) <= 0.25:
+        score += 2
+    if tech_pct >= 25.0:
+        score += 1
+    if ultra_mega_drift is not None and ultra_mega_drift >= 3.0:
+        score += 1
+    if deploy_eq_count > 0:
+        score += 1
+    if tech_deploy_count > 0:
+        score += 1
+    if macro_catalyst_window:
+        score += 1
+
+    if signal_norm == "ELEVATED_ROTATION_RISK":
+        score += 2
+    elif signal_norm in {"WATCHLIST_ROTATION", "NO_CLEAR_SIGNAL", "DATA_UNAVAILABLE"}:
+        score += 1
+
+    if score >= 7:
+        status = "FRAGILITY_ELEVATED"
+        severity = "ELEVATED"
+    elif score >= 4:
+        status = "FRAGILITY_WATCH"
+        severity = "WATCH"
+    elif score >= 2:
+        status = "FRAGILITY_INFO"
+        severity = "INFO"
+    else:
+        status = "NONE"
+        severity = "NONE"
+
+    msg = "Rotation is not confirmed, but portfolio fragility should be monitored before incremental equity deployment."
+    if status == "FRAGILITY_ELEVATED":
+        msg = "Rotation confirmation is incomplete, but fragility is elevated because hard assets are underfilled while equity deployment remains active."
+    elif status == "NONE":
+        msg = "No material pre-confirmation rotation fragility detected."
+
+    return {
+        "status": status,
+        "severity": severity,
+        "rotation_confirmed": bool(confirmation_passed),
+        "rotation_signal": signal_norm,
+        "tech_sector_pct": round(tech_pct, 3),
+        "hard_asset_sleeve_actual_pct": hard_actual,
+        "hard_asset_sleeve_target_pct": hard_target,
+        "ultra_mega_drift_pp": round(float(ultra_mega_drift), 3) if ultra_mega_drift is not None else None,
+        "macro_catalyst_window": macro_catalyst_window,
+        "macro_events": [str(e.get("event_name") or e.get("event_id") or "") for e in macro_events if e],
+        "message": msg,
+    }
 
 
 def _effective_weight(row: dict[str, str], total_mv: float) -> float:
@@ -393,12 +657,31 @@ def rotation_risk_summary(repo_root: Path, run_id: str = "") -> dict:
 
     mei_events = _upcoming_mei_events(repo_root=repo_root, days_ahead=14)
 
+    guardrail_run_id = _pick_guardrail_run_id(repo_root=repo_root, preferred_run_id=selected_run)
+    alignment_rows = _load_alignment_rows(repo_root=repo_root, run_id=guardrail_run_id)
+    deployment_queue = _load_deployment_queue(repo_root=repo_root, run_id=guardrail_run_id)
+
+    commodity_fill_guard = _build_commodity_fill_guard(
+        alignment_rows=alignment_rows,
+        deployment_queue=deployment_queue,
+        holdings=holdings,
+    )
+    rotation_fragility_watch = _build_rotation_fragility_watch(
+        rotation_signal=signal,
+        confirmation_passed=bool(confirmation.get("confirmation_passed")),
+        exposure=exposure,
+        macro_events=mei_events,
+        alignment_rows=alignment_rows,
+        commodity_guard=commodity_fill_guard,
+    )
+
     return {
         "status": status,
         "diagnostic_id": "ROTATION-RISK-01",
         "diagnostic_name": "Tech-to-hard-assets rotation monitor",
         "as_of_date": as_of,
         "run_id": selected_run,
+        "guardrail_run_id": guardrail_run_id,
         "signal": signal,
         "headline": headline,
         "risk_score": risk_score,
@@ -437,4 +720,6 @@ def rotation_risk_summary(repo_root: Path, run_id: str = "") -> dict:
         "macro_context": {
             "upcoming_high_impact_events": mei_events,
         },
+        "commodity_fill_guard": commodity_fill_guard,
+        "rotation_fragility_watch": rotation_fragility_watch,
     }
