@@ -160,9 +160,9 @@ def _seed_replay_perf(tmp_path: Path) -> None:
         for d, v in zip(dates, vals):
             rows.append(
                 {
-                    "series_id": f"{replay_id}:BENCHMARK",
+                    "series_id": f"{replay_id}:FULL_UNIVERSE",
                     "replay_id": replay_id,
-                    "series_type": "BENCHMARK",
+                    "series_type": "FULL_UNIVERSE",
                     "date": d,
                     "value": str(v),
                     "cumulative_return": "0",

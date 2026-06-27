@@ -1847,6 +1847,7 @@ function _renderRotationRiskPanel(data) {
   const endpointDiag = data._endpoint_diagnostic || null;
   const commodityGuard = data.commodity_fill_guard || null;
   const fragilityWatch = data.rotation_fragility_watch || null;
+  const proxyDiag = data.proxy_diagnostics || null;
 
   const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
   const confirmBadge = conf.confirmation_passed
@@ -1887,6 +1888,28 @@ function _renderRotationRiskPanel(data) {
 
   const hardAssetReviewHtml = _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, signal);
 
+  const proxyDiagHtml = (() => {
+    if (!proxyDiag) return "";
+    const ic = proxyDiag.series_identity_check || {};
+    const techProxy = proxyDiag.tech_proxy || {};
+    const hardProxies = proxyDiag.hard_assets_proxies || [];
+    const warn = ic.warning;
+    const validationFailed = ic.same_replay_id || ic.identical_returns_all_windows;
+    const techSrc = escHtml(techProxy.series_type_used || "unknown");
+    const hardSrcs = [...new Set(hardProxies.map(p => p.series_type_used).filter(Boolean))].map(escHtml).join(", ") || "—";
+    const warnHtml = validationFailed
+      ? `<div style="margin-top:4px;font-size:0.78rem;color:var(--sev-HIGH-color,#e53e3e);font-weight:600;">
+           ⚠ Proxy validation failed — tech and hard-assets series are not distinct.
+           Rotation signal unavailable until proxy inputs are fixed.
+         </div>`
+      : "";
+    return `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">
+      Proxy sources — Tech: ${techSrc} · Hard Assets: ${hardSrcs}
+      ${warn ? ` · Warning: ${escHtml(warn)}` : ""}
+      ${warnHtml}
+    </div>`;
+  })();
+
   el.innerHTML = `<div class="panel section-gap">
     <p class="panel-title">Rotation Risk Monitor</p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
@@ -1918,6 +1941,7 @@ function _renderRotationRiskPanel(data) {
 
     ${missingHtml}
     ${diagHtml}
+    ${proxyDiagHtml}
     ${hardAssetReviewHtml}
     <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
   </div>`;

@@ -19,6 +19,13 @@ _WINDOWS = (5, 20, 60)
 _CAP_PRIORITY = ("LARGE", "MEGA", "MID", "SMALL", "MICRO")
 _HARD_ASSET_INDUSTRIES = ("ENERGY", "BASIC MATERIALS", "INDUSTRIALS")
 
+# Ordered preference for cohort-specific series type. FULL_UNIVERSE is the
+# industry-filtered cohort average; TOP_N_STRATEGY is the selected basket.
+# BENCHMARK is intentionally excluded — it is a shared market-wide index
+# (e.g. S&P 500) identical across all replay_ids and must not be used to
+# compute inter-cohort spreads.
+_COHORT_SERIES_PREFERENCE = ("FULL_UNIVERSE", "TOP_N_STRATEGY")
+
 
 @dataclass(frozen=True)
 class SeriesWindowReturns:
@@ -503,12 +510,33 @@ def _window_returns_for_replay(
     for row in replay_perf_rows:
         if str(row.get("replay_id") or "").strip() != replay_id:
             continue
-        if str(row.get("series_type") or "").strip().upper() != "BENCHMARK":
+        if str(row.get("series_type") or "").strip().upper() not in _COHORT_SERIES_PREFERENCE:
             continue
         d = str(row.get("date") or "").strip()
         value = _safe_float(row.get("value"))
         if d and value is not None and value > 0:
             points.append((d, value))
+
+    # If multiple cohort series types exist for this replay, prefer the first
+    # in _COHORT_SERIES_PREFERENCE (FULL_UNIVERSE over TOP_N_STRATEGY).
+    if points:
+        type_priority = {t: i for i, t in enumerate(_COHORT_SERIES_PREFERENCE)}
+        present_types = {str(r.get("series_type") or "").strip().upper()
+                        for r in replay_perf_rows
+                        if str(r.get("replay_id") or "").strip() == replay_id
+                        and str(r.get("series_type") or "").strip().upper() in _COHORT_SERIES_PREFERENCE}
+        if len(present_types) > 1:
+            best_type = min(present_types, key=lambda t: type_priority.get(t, 99))
+            points = []
+            for row in replay_perf_rows:
+                if str(row.get("replay_id") or "").strip() != replay_id:
+                    continue
+                if str(row.get("series_type") or "").strip().upper() != best_type:
+                    continue
+                d = str(row.get("date") or "").strip()
+                value = _safe_float(row.get("value"))
+                if d and value is not None and value > 0:
+                    points.append((d, value))
 
     if len(points) < 2:
         return None
@@ -526,12 +554,25 @@ def _window_returns_for_replay(
 
     if not out:
         return None
-    return SeriesWindowReturns(
+    # Capture which series_type was actually used for diagnostics.
+    used_type = None
+    for t in _COHORT_SERIES_PREFERENCE:
+        for row in replay_perf_rows:
+            if (str(row.get("replay_id") or "").strip() == replay_id
+                    and str(row.get("series_type") or "").strip().upper() == t
+                    and str(row.get("date") or "").strip() == points[-1][0]):
+                used_type = t
+                break
+        if used_type:
+            break
+    result = SeriesWindowReturns(
         replay_id=replay_id,
         market_cap_bucket=cap_bucket,
         latest_date=latest_date,
         returns=out,
     )
+    result.__dict__["_used_series_type"] = used_type or "UNKNOWN"
+    return result
 
 
 def _aggregate_hard_asset_returns(series: dict[str, SeriesWindowReturns]) -> dict[int, float]:
@@ -595,6 +636,81 @@ def _upcoming_mei_events(repo_root: Path, days_ahead: int = 14) -> list[dict]:
     return out[:6]
 
 
+def _proxy_diagnostics(
+    tech_series: Optional[SeriesWindowReturns],
+    tech_replay_id: str,
+    hard_series: dict[str, "SeriesWindowReturns"],
+    hard_returns: dict[int, float],
+) -> dict:
+    def _series_diag(series: Optional[SeriesWindowReturns], industry: str, replay_id: str) -> dict:
+        if series is None:
+            return {
+                "replay_id": replay_id,
+                "industry": industry,
+                "series_type_used": None,
+                "row_count": 0,
+                "latest_date": None,
+                "returns": {"5d": None, "20d": None, "60d": None},
+            }
+        ret = series.returns
+        return {
+            "replay_id": replay_id,
+            "industry": industry,
+            "series_type_used": series.__dict__.get("_used_series_type"),
+            "row_count": None,  # not tracked; replay_id is the identity
+            "latest_date": series.latest_date,
+            "returns": {
+                "5d": round(ret.get(5, 0.0) * 100, 3) if 5 in ret else None,
+                "20d": round(ret.get(20, 0.0) * 100, 3) if 20 in ret else None,
+                "60d": round(ret.get(60, 0.0) * 100, 3) if 60 in ret else None,
+            },
+        }
+
+    tech_diag = _series_diag(tech_series, "TECHNOLOGY", tech_replay_id)
+    hard_diag_entries = [
+        _series_diag(s, ind, s.replay_id) for ind, s in hard_series.items()
+    ]
+
+    # Identity check: are tech and any hard-asset series using the same replay_id
+    # or producing identical returns across all windows?
+    same_replay_id = any(
+        tech_replay_id and tech_replay_id == (s.replay_id if s else None)
+        for s in hard_series.values()
+    )
+
+    identical_returns = False
+    if tech_series and hard_returns:
+        for w in _WINDOWS:
+            t = tech_series.returns.get(w)
+            h = hard_returns.get(w)
+            if t is not None and h is not None and abs(t - h) < 1e-9:
+                identical_returns = True
+                break
+        # Must be identical across ALL available windows to trigger
+        all_identical = tech_series and all(
+            w not in tech_series.returns or w not in hard_returns
+            or abs(tech_series.returns[w] - hard_returns[w]) < 1e-9
+            for w in _WINDOWS
+        ) and bool(tech_series.returns)
+        identical_returns = all_identical
+
+    warning = None
+    if same_replay_id:
+        warning = "tech_and_hard_asset_proxy_replay_ids_identical"
+    elif identical_returns:
+        warning = "tech_and_hard_asset_proxy_returns_identical_all_windows"
+
+    return {
+        "tech_proxy": tech_diag,
+        "hard_assets_proxies": hard_diag_entries,
+        "series_identity_check": {
+            "same_replay_id": same_replay_id,
+            "identical_returns_all_windows": identical_returns,
+            "warning": warning,
+        },
+    }
+
+
 def rotation_risk_summary(repo_root: Path, run_id: str = "") -> dict:
     """Build display-only rotation risk summary from existing repository artifacts."""
     as_of = date.today().isoformat()
@@ -654,6 +770,25 @@ def rotation_risk_summary(repo_root: Path, run_id: str = "") -> dict:
         signal = "DATA_UNAVAILABLE"
         headline = "Core proxy data unavailable; rotation monitor is informationally disabled."
         risk_score = 0
+
+    # ── ROTATION-PROXY-AUDIT-01 — proxy identity validation (fail-closed) ─────
+    # Must run after the initial status/signal block so it can override cleanly.
+    proxy_diag = _proxy_diagnostics(
+        tech_series=tech_series,
+        tech_replay_id=tech_replay_id,
+        hard_series=hard_series,
+        hard_returns=hard_returns,
+    )
+    identity_check = proxy_diag["series_identity_check"]
+    proxy_validation_failed = bool(
+        identity_check.get("same_replay_id") or identity_check.get("identical_returns_all_windows")
+    )
+    if proxy_validation_failed and status == "OK":
+        status = "DATA_UNAVAILABLE"
+        signal = "DATA_UNAVAILABLE"
+        risk_score = 0
+        headline = "Rotation proxy validation failed — tech and hard-asset series are not distinct. Rotation signal unavailable."
+        missing_inputs.append("tech_and_hard_asset_proxy_series_identical")
 
     mei_events = _upcoming_mei_events(repo_root=repo_root, days_ahead=14)
 
@@ -720,6 +855,7 @@ def rotation_risk_summary(repo_root: Path, run_id: str = "") -> dict:
         "macro_context": {
             "upcoming_high_impact_events": mei_events,
         },
+        "proxy_diagnostics": proxy_diag,
         "commodity_fill_guard": commodity_fill_guard,
         "rotation_fragility_watch": rotation_fragility_watch,
     }
