@@ -1480,7 +1480,964 @@ function _rrFmtMoney(v) {
   return formatMV(Number(v));
 }
 
-function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSignal) {
+function _renderCandidateChip(c) {
+  const sym = escHtml(String(c.symbol || "—"));
+  const type = escHtml(String(c.vehicle_type || ""));
+  const note = escHtml(String(c.classification_note || ""));
+  const why = escHtml(String(c.rationale || ""));
+  return `<div style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:rgba(255,255,255,.03);">
+    <div style="font-size:0.8rem;font-weight:700;">${sym}${type ? ` <span style="font-weight:500;color:var(--muted);">(${type})</span>` : ""}</div>
+    ${note ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">${note}</div>` : ""}
+    ${why ? `<div style="font-size:0.72rem;color:var(--text);margin-top:2px;">${why}</div>` : ""}
+  </div>`;
+}
+
+function _renderHardAssetPriorityGate(priorityGate) {
+  if (!priorityGate || typeof priorityGate !== "object") {
+    return `<div class="panel" style="margin-top:10px;">
+      <p class="panel-title">Hard-Asset Priority Gate</p>
+      <div style="font-size:0.8rem;color:var(--muted);">Priority gate payload unavailable for this run.</div>
+    </div>`;
+  }
+
+  const factors = Array.isArray(priorityGate.decision_factors) ? priorityGate.decision_factors : [];
+  const options = Array.isArray(priorityGate.capital_options) ? priorityGate.capital_options : [];
+  const rationale = Array.isArray(priorityGate.rationale) ? priorityGate.rationale : [];
+  const summary = priorityGate.summary || {};
+  const verdict = String(priorityGate.priority_verdict || priorityGate.verdict || "NONE");
+  const severity = String(priorityGate.severity || "NONE");
+  const score = Number(priorityGate.priority_score ?? priorityGate.score ?? 0);
+  const scoreLabel = String(priorityGate.score_label || "Review pressure score");
+  const scoreNote = String(priorityGate.score_note || "Display-only capital-allocation review score; not a trade-confidence score.");
+  const recommendedAction = String(priorityGate.recommended_operator_action || priorityGate.recommended_action || "No recommendation available.");
+
+  const factorHtml = factors.map(f => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.03);">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+        <strong style="font-size:0.8rem;">${escHtml(String(f.factor || "factor").replace(/_/g, " "))}</strong>
+        <span class="sev-badge sev-NONE" style="text-transform:uppercase;">${escHtml(String(f.impact || "neutral"))}</span>
+      </div>
+      <div style="font-size:0.8rem;margin-top:4px;"><strong>${escHtml(String(f.value ?? "—"))}</strong></div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:4px;">${escHtml(String(f.note || ""))}</div>
+    </div>`).join("");
+
+  const optionHtml = options.map(opt => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:rgba(255,255,255,.03);min-width:200px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <strong style="font-size:0.84rem;">Option ${escHtml(String(opt.code || "?"))}</strong>
+        <span class="sev-badge sev-NONE">${escHtml(String(opt.label || ""))}</span>
+      </div>
+      <div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escHtml(String(opt.preferred_when || ""))}</div>
+      <div style="font-size:0.74rem;color:var(--text);margin-top:4px;">${escHtml(String(opt.description || ""))}</div>
+      ${opt.amount != null ? `<div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">Amount: ${escHtml(_rrFmtMoney(opt.amount))}</div>` : ""}
+      ${opt.amount_breakdown ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:2px;">${escHtml(Object.entries(opt.amount_breakdown).map(([k, v]) => `${k.replace(/_/g, " ")}: ${_rrFmtMoney(v)}`).join(" · "))}</div>` : ""}
+    </div>`).join("");
+
+  return `<div class="panel" style="margin-top:10px;">
+    <p class="panel-title">Hard-Asset Priority Gate</p>
+    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">Display-only; not trade instructions.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <span class="sev-badge ${_rrSeverityClass(severity)}">${escHtml(verdict)}</span>
+      <span class="sev-badge sev-NONE">${escHtml(scoreLabel)}: ${escHtml(String(score))}/100</span>
+      <span class="sev-badge sev-NONE">Priority bias: ${escHtml(String(priorityGate.priority_bias || "—"))}</span>
+      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
+      <span class="sev-badge sev-NONE">OPERATOR REVIEW REQUIRED</span>
+      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
+      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
+      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
+    </div>
+    <div style="font-size:0.74rem;color:var(--muted);margin-bottom:8px;">${escHtml(scoreNote)}</div>
+    <div style="font-size:0.84rem;color:var(--text);margin-bottom:8px;">${escHtml(recommendedAction)}</div>
+    ${rationale.length ? `<div style="font-size:0.74rem;color:var(--muted);margin-bottom:8px;">${rationale.map(x => escHtml(String(x))).join(" · ")}</div>` : ""}
+    <div class="two-col" style="margin-top:8px;">
+      <div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Decision factors</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">${factorHtml}</div>
+      </div>
+      <div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Priority summary</div>
+        <div style="font-size:0.82rem;line-height:1.45;">
+          Commodity gap: <strong>${_rrFmtPct(summary.commodities_gap_pct)}</strong><br>
+          Commodities actual: <strong>${_rrFmtPct(summary.commodities_actual_pct)}</strong><br>
+          Commodities target: <strong>${_rrFmtPct(summary.commodities_target_pct)}</strong><br>
+          Deployable cash: <strong>${_rrFmtMoney(summary.deployable_cash)}</strong><br>
+          Equity deployment candidates: <strong>${escHtml(String(summary.equity_deployment_count ?? "—"))}</strong><br>
+          Direct hard-asset completion candidates: <strong>${escHtml(String(summary.direct_completion_candidate_count ?? summary.candidate_count ?? "—"))}</strong><br>
+          Equity-adjacent proxies: <strong>${escHtml(String(summary.equity_adjacent_proxy_count ?? "—"))}</strong>
+        </div>
+        ${priorityGate.guardrail_notes ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">${escHtml(String((Array.isArray(priorityGate.guardrail_notes) ? priorityGate.guardrail_notes : []).join(" · ")))}</div>` : ""}
+      </div>
+    </div>
+    ${optionHtml ? `<div style="margin-top:10px;">
+      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Capital options</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">${optionHtml}</div>
+    </div>` : ""}
+  </div>`;
+}
+
+function _renderTodayOperatorActionPlan(plan) {
+  if (!plan || typeof plan !== "object") return "";
+
+  const ordered = Array.isArray(plan.ordered_actions) ? plan.ordered_actions : [];
+  const cashOptions = Array.isArray(plan.cash_options) ? plan.cash_options : [];
+  const hardAssetPlan = Array.isArray(plan.hard_asset_buy_plan) ? plan.hard_asset_buy_plan : [];
+  const equityFallback = Array.isArray(plan.equity_buy_fallback) ? plan.equity_buy_fallback : [];
+  const sellTrim = Array.isArray(plan.sell_trim_review) ? plan.sell_trim_review : [];
+  const blocked = Array.isArray(plan.blocked_actions) ? plan.blocked_actions : [];
+
+  const _renderCard = (title, items) => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:rgba(255,255,255,.03);">
+      <div style="font-size:0.8rem;font-weight:700;margin-bottom:6px;">${escHtml(title)}</div>
+      ${items.length ? `<ul style="margin:0 0 0 16px;padding:0;">${items.map(x => `<li style="font-size:0.78rem;color:var(--text);margin:2px 0;">${escHtml(String(x))}</li>`).join("")}</ul>` : `<div style="font-size:0.76rem;color:var(--muted);">No items.</div>`}
+    </div>`;
+
+  const firstDecision = ordered.find(x => x.code === "FIRST_DECISION") || {};
+  const hardAssetFirst = ordered.find(x => x.code === "CASH_ACTION_IF_HARD_ASSET_FIRST") || {};
+  const equityFirst = ordered.find(x => x.code === "EQUITY_FALLBACK_IF_WAIVED_OR_SPLIT") || {};
+  const raisingCapital = ordered.find(x => x.code === "SELL_TRIM_REVIEW_IF_RAISING_CAPITAL") || {};
+  const summary = (plan.summary && typeof plan.summary === "object") ? plan.summary : {};
+  const directCompletionCount = Number(summary.direct_completion_candidate_count || 0);
+  const commodityCandidatesAvailable = summary.commodity_candidates_available === true || directCompletionCount > 0;
+
+  const hardAssetBullets = hardAssetPlan.map(x => {
+    const label = String(x.label || x.node_key || "Hard asset");
+    const dc = _rrFmtMoney(x.deployable_cash_only_amount);
+    const ftRaw = x.full_target_amount ?? x.gap_amount_full_portfolio;
+    const ft = ftRaw != null ? _rrFmtMoney(ftRaw) : "—";
+    return `${label}: deployable-cash-only ${dc}; full target ${ft}`;
+  });
+
+  const _pickEqAmount = (row) => {
+    const raw = row.suggested_amount ?? row.suggested_add ?? row.amount;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const equityBullets = equityFallback.slice(0, 10).map(x => {
+    const sym = String(x.symbol || "?");
+    const rank = x.rank != null ? `#${x.rank}` : "#?";
+    const amt = _rrFmtMoney(_pickEqAmount(x));
+    return `${rank} ${sym} about +${amt}`;
+  });
+
+  const trimBullets = sellTrim.slice(0, 6).map(x => {
+    const sym = String(x.symbol || "?");
+    const amtRaw = x.estimated_proceeds ?? x.suggested_trim_amount ?? x.amount;
+    const amt = Number(amtRaw);
+    const amtTxt = Number.isFinite(amt) && amt > 0 ? ` about ${_rrFmtMoney(amt)}` : "";
+    const state = String(x.policy_state || x.priority || "").trim();
+    const stateTxt = state ? ` (${state})` : "";
+    return `${sym}${amtTxt}: ${String(x.reason || "review")}${stateTxt}`;
+  });
+  const blockedBullets = blocked.slice(0, 6).map(x => {
+    const state = String(x.policy_state || "BLOCKED_BY_POLICY");
+    return `${String(x.symbol || "?")}: ${String(x.reason || "blocked")} (${state})`;
+  });
+  const tslaBlocked = blocked.find(x => String(x.symbol || "").toUpperCase() === "TSLA");
+  const raisingCapitalBullets = trimBullets.length
+    ? trimBullets
+    : (raisingCapital.details || []);
+  if (tslaBlocked) {
+    raisingCapitalBullets.push(`TSLA: ${String(tslaBlocked.reason || "blocked by policy")}; not executable until policy state changes.`);
+  }
+  const optionBullets = cashOptions.slice(0, 5).map(x => `${String(x.code || "OPTION")}: ${_rrFmtMoney(x.amount)}`);
+
+  return `<div class="panel" style="margin-top:10px;">
+    <p class="panel-title">Today’s Operator Action Plan</p>
+    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">Display-only synthesis of existing diagnostics. This is not trade instructions.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
+      <span class="sev-badge sev-NONE">OPERATOR REVIEW REQUIRED</span>
+      <span class="sev-badge sev-NONE">Commodity candidates: ${commodityCandidatesAvailable ? "Yes" : "No"} (${directCompletionCount})</span>
+      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
+      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
+      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;">
+      ${_renderCard("First decision", [String(firstDecision.headline || "Decide cash path first."), ...(firstDecision.details || [])])}
+      ${_renderCard("If hard-asset-first", hardAssetBullets.length ? hardAssetBullets : (hardAssetFirst.details || []))}
+      ${_renderCard("If equity-first", equityBullets.length ? equityBullets : (equityFirst.details || []))}
+      ${_renderCard("If raising capital", raisingCapitalBullets)}
+      ${_renderCard("Blocked / conflicts", [...blockedBullets, "KGC is gold-adjacent but not a direct COMMODITIES.GOLD filler.", "XLE and energy/materials equities are equity-adjacent proxies, not direct commodity fillers."])}
+    </div>
+  </div>`;
+}
+
+function _buildClientTodayOperatorActionPlan(priorityGate, candidateQueue) {
+  const analysis = _lastAnalysisData || {};
+  const dq = (analysis.deployment_queue || {});
+  const queue = Array.isArray(dq.queue) ? dq.queue : [];
+  if (!queue.length) return null;
+
+  const summary = (priorityGate && priorityGate.summary) || {};
+  const deployableCash = Number(summary.deployable_cash || (dq.cash_context || {}).adjusted_deployable_mv || (dq.cash_context || {}).deployable_mv || 0);
+  const nodes = Array.isArray((candidateQueue || {}).sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
+  const queueTargetGap = ((candidateQueue || {}).target_gap || {});
+  const byKey = Object.fromEntries(nodes.map(n => [String(n.node_key || ""), n]));
+  const directCompletionCandidateCount = nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0);
+  const commodityCandidatesAvailable = directCompletionCandidateCount > 0;
+
+  const overlays = Array.isArray(analysis.security_overlays) ? analysis.security_overlays : [];
+  const bySym = Object.fromEntries(
+    overlays
+      .map(r => [String(r.symbol || "").toUpperCase(), r])
+      .filter(([k]) => k)
+  );
+
+  const planRecs = Array.isArray(((analysis.deployment_plan || {}).recommendations))
+    ? (analysis.deployment_plan || {}).recommendations
+    : [];
+  const planBySym = Object.fromEntries(
+    planRecs
+      .map(r => [String(r.symbol || "").toUpperCase(), r])
+      .filter(([k]) => k)
+  );
+
+  const portfolioValue = Number(
+    summary.portfolio_value
+    || ((candidateQueue || {}).summary || {}).portfolio_value
+    || analysis.total_market_value
+    || 0
+  );
+
+  const money = v => Number((Number(v || 0)).toFixed(2));
+  const half = deployableCash * 0.5;
+  const energy = deployableCash * 0.35;
+  const broad = Math.max(0, deployableCash - half - energy);
+
+  const goldAmt = money((byKey["COMMODITIES.GOLD"] || {}).deployable_cash_fill_amount || half);
+  const energyAmt = money((byKey["COMMODITIES.ENERGY"] || {}).deployable_cash_fill_amount || energy);
+  const broadAmt = money((byKey["COMMODITIES.BROAD_BASKET"] || {}).deployable_cash_fill_amount || broad);
+  const goldFull = money((byKey["COMMODITIES.GOLD"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.gold_pct || 0) / 100)));
+  const energyFull = money((byKey["COMMODITIES.ENERGY"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.energy_pct || 0) / 100)));
+  const broadFull = money((byKey["COMMODITIES.BROAD_BASKET"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.broad_basket_pct || 0) / 100)));
+
+  const eqFallback = queue.slice(0, 10).map((row, i) => ({
+    symbol: String(row.symbol || "").toUpperCase(),
+    rank: Number(row.rank || i + 1),
+    suggested_amount: money(
+      (planBySym[String(row.symbol || "").toUpperCase()] || {}).suggested_add
+      || (planBySym[String(row.symbol || "").toUpperCase()] || {}).suggested_amount
+      || row.suggested_add
+      || row.suggested_amount
+      || 0
+    ),
+  })).filter(r => r.symbol);
+
+  const craSources = Array.isArray((_craProposal && _craProposal.sources)) ? _craProposal.sources : [];
+  const sourceBySym = Object.fromEntries(
+    craSources
+      .map(s => [String(s.symbol || "").toUpperCase(), s])
+      .filter(([k]) => k)
+  );
+
+  const sellTrim = [];
+  if (bySym.KGC || sourceBySym.KGC) {
+    const src = sourceBySym.KGC || {};
+    sellTrim.push({
+      symbol: "KGC",
+      reason: String(bySym.KGC && bySym.KGC.flag_rationale || src.evidence_summary || "thesis trim / action due"),
+      estimated_proceeds: money(src.estimated_proceeds || 0),
+      policy_state: String(src.priority || bySym.KGC && bySym.KGC.execution_state || "REVIEW"),
+    });
+  }
+  if (bySym.PRIM || sourceBySym.PRIM) {
+    const src = sourceBySym.PRIM || {};
+    sellTrim.push({
+      symbol: "PRIM",
+      reason: String(bySym.PRIM && bySym.PRIM.flag_rationale || src.evidence_summary || "thesis trim / missed action review"),
+      estimated_proceeds: money(src.estimated_proceeds || 0),
+      policy_state: String(src.priority || bySym.PRIM && bySym.PRIM.execution_state || "REVIEW"),
+    });
+  }
+  if (!sellTrim.length) {
+    sellTrim.push({ symbol: "KGC", reason: "thesis trim / action due", estimated_proceeds: 0, policy_state: "REVIEW" });
+    sellTrim.push({ symbol: "PRIM", reason: "thesis trim / missed action review", estimated_proceeds: 0, policy_state: "REVIEW" });
+  }
+
+  const tslaSource = sourceBySym.TSLA || {};
+  const blocked = [{
+    symbol: "TSLA",
+    reason: String(tslaSource.evidence_summary || "thesis exit blocked by operator policy"),
+    policy_state: "BLOCKED_BY_POLICY",
+  }];
+
+  return {
+    display_only: true,
+    operator_review_required: true,
+    ordered_actions: [
+      {
+        code: "FIRST_DECISION",
+        headline: "Review hard-asset sleeve before deploying all cash to equities.",
+        details: [
+          `Deployable cash: ${_rrFmtMoney(deployableCash)}`,
+        ],
+      },
+      {
+        code: "CASH_ACTION_IF_HARD_ASSET_FIRST",
+        details: [
+          `Gold about ${_rrFmtMoney(goldAmt)}`,
+          `Energy about ${_rrFmtMoney(energyAmt)}`,
+          `Broad basket about ${_rrFmtMoney(broadAmt)}`,
+        ],
+      },
+      {
+        code: "EQUITY_FALLBACK_IF_WAIVED_OR_SPLIT",
+      },
+      {
+        code: "SELL_TRIM_REVIEW_IF_RAISING_CAPITAL",
+        details: sellTrim.slice(0, 4).map(row => `${row.symbol} about ${_rrFmtMoney(row.estimated_proceeds)}: ${row.reason} (${row.policy_state})`),
+      },
+      {
+        code: "CONFLICT_REVIEW",
+      },
+    ],
+    hard_asset_buy_plan: [
+      { label: "Gold", deployable_cash_only_amount: goldAmt, full_target_amount: goldFull },
+      { label: "Energy", deployable_cash_only_amount: energyAmt, full_target_amount: energyFull },
+      { label: "Broad basket", deployable_cash_only_amount: broadAmt, full_target_amount: broadFull },
+    ],
+    equity_buy_fallback: eqFallback,
+    sell_trim_review: sellTrim,
+    blocked_actions: blocked,
+    cash_options: [],
+    summary: {
+      commodity_candidates_available: commodityCandidatesAvailable,
+      direct_completion_candidate_count: directCompletionCandidateCount,
+      deployable_cash: deployableCash,
+      portfolio_value: portfolioValue,
+    },
+  };
+}
+
+function _queueAnalysisContext() {
+  const analysis = _lastAnalysisData || {};
+  const overlays = Array.isArray(analysis.security_overlays) ? analysis.security_overlays : [];
+  const overlaysBySymbol = Object.fromEntries(
+    overlays
+      .map(row => [String(row.symbol || "").toUpperCase(), row])
+      .filter(entry => entry[0])
+  );
+  return {
+    totalMarketValue: Number(analysis.total_market_value || 0),
+    overlaysBySymbol,
+    analystConsensusBySymbol: analysis.analyst_consensus_by_symbol || {},
+  };
+}
+
+function _clientPosture(overlay, consensus) {
+  if (!overlay) return "N/A";
+  const signalDirection = String(overlay.signal_direction || "").toUpperCase();
+  const ess = String(overlay.starmine_ess_text || overlay.ess_score_text || "").toUpperCase();
+  const consensusLabel = String((consensus || {}).consensus_label || "").toUpperCase();
+  if (signalDirection === "NEUTRAL" && ess === "BEARISH" && consensusLabel === "BUY") return "weak/mixed";
+  return signalDirection ? signalDirection.toLowerCase() : "N/A";
+}
+
+function _directFitScore(symbol, nodeKey) {
+  const base = 84;
+  if (nodeKey === "COMMODITIES.GOLD") return Math.min(99, base + ({ GLD: 10, IAU: 8, SGOL: 6 }[symbol] || 0));
+  if (nodeKey === "COMMODITIES.ENERGY") return Math.min(99, base + ({ USO: 8, BNO: 7, UNG: 5 }[symbol] || 0));
+  return Math.min(99, base + ({ PDBC: 9, DBC: 7, GSG: 6 }[symbol] || 0));
+}
+
+function _proxyFitScore(symbol, overlay) {
+  let score = 52 - 18 - 10 - 8;
+  if (symbol === "KGC") score += 6;
+  if (overlay) {
+    if (String(overlay.signal_direction || "").toUpperCase() === "NEUTRAL") score -= 4;
+    if (["BEARISH", "VERY_BEARISH"].includes(String(overlay.starmine_ess_text || overlay.ess_score_text || "").toUpperCase())) score -= 5;
+  }
+  return Math.max(5, Math.min(65, score));
+}
+
+function _hardAssetVehicleType(symbol) {
+  const sym = String(symbol || "").toUpperCase();
+  if (["PSX", "CVE", "DVN", "NUE", "STLD", "CRS", "KGC"].includes(sym)) return "EQUITY";
+  if (["GLD", "IAU", "SGOL", "USO", "BNO", "UNG", "DBC", "PDBC", "GSG", "XLE"].includes(sym)) return "ETF";
+  return sym.length <= 4 ? "ETF" : "EQUITY";
+}
+
+function _allocationExamples(fullAmount, cashAmount, candidateCount) {
+  const count = Math.max(1, Number(candidateCount || 0));
+  return {
+    single_candidate_fill: {
+      full_target_gap: Number(fullAmount.toFixed(2)),
+      deployable_cash_only: Number(cashAmount.toFixed(2)),
+    },
+    equal_split: {
+      full_target_gap: Number((fullAmount / count).toFixed(2)),
+      deployable_cash_only: Number((cashAmount / count).toFixed(2)),
+    },
+    operator_selected: {
+      full_target_gap: null,
+      deployable_cash_only: null,
+    },
+  };
+}
+
+function _buildClientSleeveFit(candidateQueue) {
+  const ctx = _queueAnalysisContext();
+  const summary = candidateQueue.summary || {};
+  const nodes = Array.isArray(candidateQueue.sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
+  const rows = [];
+
+  for (const node of nodes) {
+    const nodeKey = String(node.node_key || node.node || "");
+    const fullAmount = Number(node.gap_amount_full_portfolio || node.approx_gap_dollars || 0);
+    const cashAmount = Number(node.deployable_cash_fill_amount || 0);
+    const direct = Array.isArray(node.direct_completion_candidates) ? node.direct_completion_candidates : [];
+    const proxies = Array.isArray(node.equity_adjacent_proxies) ? node.equity_adjacent_proxies : [];
+    const examples = _allocationExamples(fullAmount, cashAmount, direct.length);
+
+    for (const candidate of direct) {
+      const symbol = String(candidate.symbol || "").toUpperCase();
+      const overlay = ctx.overlaysBySymbol[symbol];
+      const consensus = ctx.analystConsensusBySymbol[symbol] || {};
+      rows.push({
+        sleeve: nodeKey,
+        candidate: symbol,
+        candidate_type: `Direct ${nodeKey.split(".").slice(-1)[0].replace(/_/g, " ").toLowerCase()} ETF`,
+        sleeve_fit_score: _directFitScore(symbol, nodeKey),
+        direct_filler: true,
+        full_gap_amount: fullAmount,
+        deployable_cash_only_amount: cashAmount,
+        amount_semantics: examples,
+        current_holding: Boolean(overlay),
+        current_sih_posture: _clientPosture(overlay, consensus),
+        caveat: "structure/tax review",
+      });
+    }
+
+    for (const candidate of proxies) {
+      const symbol = String(candidate.symbol || "").toUpperCase();
+      const overlay = ctx.overlaysBySymbol[symbol];
+      const consensus = ctx.analystConsensusBySymbol[symbol] || {};
+      rows.push({
+        sleeve: nodeKey,
+        candidate: symbol,
+        candidate_type: symbol === "KGC" ? "Gold miner equity proxy" : "Equity-adjacent proxy",
+        sleeve_fit_score: _proxyFitScore(symbol, overlay),
+        direct_filler: false,
+        full_gap_amount: 0,
+        deployable_cash_only_amount: 0,
+        amount_semantics: {
+          single_candidate_fill: { full_target_gap: 0, deployable_cash_only: 0 },
+          equal_split: { full_target_gap: 0, deployable_cash_only: 0 },
+          operator_selected: { full_target_gap: null, deployable_cash_only: null },
+        },
+        current_holding: Boolean(overlay),
+        current_sih_posture: _clientPosture(overlay, consensus),
+        current_action_context: overlay ? `${String(overlay.opportunity_flag || "")} / ${String(overlay.flag_rationale || "")}`.trim() : null,
+        caveat: symbol === "KGC" ? "equity proxy only, not direct filler" : "proxy only, not direct filler",
+        classification_note: symbol === "KGC"
+          ? "KGC may be economically sensitive to gold prices, but it is a gold-mining equity, not direct gold exposure. It should be reviewed as a gold-adjacent proxy, not as the primary COMMODITIES.GOLD sleeve filler."
+          : "Equity-adjacent proxy; review separately from direct sleeve fillers.",
+        not_direct_filler_reason: symbol === "KGC" ? "Not a direct COMMODITIES.GOLD filler" : "Not a direct sleeve filler",
+      });
+    }
+  }
+
+  rows.sort((a, b) => Number(b.sleeve_fit_score || 0) - Number(a.sleeve_fit_score || 0) || String(a.candidate || "").localeCompare(String(b.candidate || "")));
+  return {
+    display_only: true,
+    operator_review_required: true,
+    scoring_basis: "SLEEVE_COMPLETION_FIT_NOT_EQUITY_RANKING",
+    portfolio_value: Number(ctx.totalMarketValue.toFixed(2)),
+    deployable_cash: Number((summary.deployable_cash || 0).toFixed(2)),
+    allocation_modes: [
+      {
+        mode: "FULL_TARGET_GAP",
+        description: "Fill the full commodity sleeve gap using total portfolio value.",
+        total_amount: Number((summary.gap_amount_full_portfolio || summary.approx_gap_dollars || 0).toFixed(2)),
+      },
+      {
+        mode: "DEPLOYABLE_CASH_ONLY",
+        description: "Use only current deployable cash and allocate proportionally across sleeve targets.",
+        total_amount: Number((summary.deployable_cash_only_amount || summary.deployable_cash || 0).toFixed(2)),
+      },
+      {
+        mode: "CUSTOM_AMOUNT",
+        description: "Operator-specified amount; display-only estimate.",
+        total_amount: null,
+      },
+    ],
+    candidate_fit_scores: rows,
+    table_rows: rows,
+  };
+}
+
+function _buildClientCandidateQueueFromGuard(commodityGuard) {
+  const ctx = _queueAnalysisContext();
+  const g = commodityGuard || {};
+  const commTarget = Number(g.commodities_target_pct || 0);
+  const commActual = Number(g.commodities_actual_pct || 0);
+  const goldTarget = Number(g.gold_target_pct || 0);
+  const goldActual = Number(g.gold_actual_pct || 0);
+  const energyTarget = Number(g.energy_target_pct || 0);
+  const energyActual = Number(g.energy_actual_pct || 0);
+  const broadTarget = Number(g.broad_basket_target_pct || 0);
+  const broadActual = Number(g.broad_basket_actual_pct || 0);
+  const deployableCash = Number(g.deployment_cash || 0);
+  const totalPortfolioValue = Number(ctx.totalMarketValue || 0);
+
+  const gap = {
+    commodities_pct: Math.max(0, commTarget - commActual),
+    gold_pct: Math.max(0, goldTarget - goldActual),
+    energy_pct: Math.max(0, energyTarget - energyActual),
+    broad_basket_pct: Math.max(0, broadTarget - broadActual),
+  };
+
+  const mkCandidates = (symbols, note) => symbols.map(s => ({
+    symbol: s,
+    vehicle_type: _hardAssetVehicleType(s),
+    classification_note: note,
+    rationale: "Display-only sleeve completion candidate; operator review required.",
+  }));
+
+  const fullAmount = pct => Number((totalPortfolioValue * (pct / 100)).toFixed(2));
+  const cashAmount = pct => {
+    const share = gap.commodities_pct > 0 ? pct / gap.commodities_pct : 0;
+    return Number((deployableCash * share).toFixed(2));
+  };
+
+  const candidateGroups = [
+    {
+      node: "COMMODITIES.GOLD",
+      gap_pct: Number(gap.gold_pct.toFixed(3)),
+      candidate_type: "DIRECT_COMPLETION_VEHICLE",
+      candidates: ["GLD", "IAU", "SGOL"],
+    },
+    {
+      node: "COMMODITIES.ENERGY",
+      gap_pct: Number(gap.energy_pct.toFixed(3)),
+      candidate_type: "DIRECT_COMPLETION_VEHICLE",
+      candidates: ["USO", "BNO", "UNG"],
+    },
+    {
+      node: "COMMODITIES.BROAD_BASKET",
+      gap_pct: Number(gap.broad_basket_pct.toFixed(3)),
+      candidate_type: "DIRECT_COMPLETION_VEHICLE",
+      candidates: ["DBC", "PDBC", "GSG"],
+    },
+  ];
+
+  const sleeves = [
+    {
+      node_key: "COMMODITIES.GOLD",
+      display_name: "Gold Sleeve",
+      actual_pct: Number(goldActual.toFixed(3)),
+      target_pct: Number(goldTarget.toFixed(3)),
+      gap_pp: Number(gap.gold_pct.toFixed(3)),
+      approx_gap_dollars: fullAmount(gap.gold_pct),
+      gap_amount_full_portfolio: fullAmount(gap.gold_pct),
+      deployable_cash_fill_amount: cashAmount(gap.gold_pct),
+      direct_completion_candidates: mkCandidates(["GLD", "IAU", "SGOL"], "Display-only direct commodity completion candidates."),
+      equity_adjacent_proxies: mkCandidates(["KGC"], "Gold miner equity proxy; advisory only and not a direct COMMODITIES.GOLD filler."),
+      portfolio_substitutes: [],
+      existing_queue_candidates: [],
+    },
+    {
+      node_key: "COMMODITIES.ENERGY",
+      display_name: "Energy Sleeve",
+      actual_pct: Number(energyActual.toFixed(3)),
+      target_pct: Number(energyTarget.toFixed(3)),
+      gap_pp: Number(gap.energy_pct.toFixed(3)),
+      approx_gap_dollars: fullAmount(gap.energy_pct),
+      gap_amount_full_portfolio: fullAmount(gap.energy_pct),
+      deployable_cash_fill_amount: cashAmount(gap.energy_pct),
+      direct_completion_candidates: mkCandidates(["USO", "BNO", "UNG"], "Display-only direct commodity completion candidates."),
+      equity_adjacent_proxies: mkCandidates(["XLE", "PSX", "CVE", "DVN", "NUE", "STLD", "CRS"], "Classified as EQUITIES; advisory only and not direct COMMODITIES fillers."),
+      portfolio_substitutes: [],
+      existing_queue_candidates: [],
+    },
+    {
+      node_key: "COMMODITIES.BROAD_BASKET",
+      display_name: "Broad Basket Sleeve",
+      actual_pct: Number(broadActual.toFixed(3)),
+      target_pct: Number(broadTarget.toFixed(3)),
+      gap_pp: Number(gap.broad_basket_pct.toFixed(3)),
+      approx_gap_dollars: fullAmount(gap.broad_basket_pct),
+      gap_amount_full_portfolio: fullAmount(gap.broad_basket_pct),
+      deployable_cash_fill_amount: cashAmount(gap.broad_basket_pct),
+      direct_completion_candidates: mkCandidates(["DBC", "PDBC", "GSG"], "Display-only direct commodity completion candidates."),
+      equity_adjacent_proxies: [],
+      portfolio_substitutes: [],
+      existing_queue_candidates: [],
+    },
+  ];
+
+  return {
+    status: gap.commodities_pct > 0 ? "ACTIVE_REVIEW" : "NO_GAP",
+    severity: gap.commodities_pct > 0 ? "INFO" : "NONE",
+    display_only: true,
+    operator_review_required: true,
+    target_gap: {
+      commodities_pct: Number(gap.commodities_pct.toFixed(3)),
+      gold_pct: Number(gap.gold_pct.toFixed(3)),
+      energy_pct: Number(gap.energy_pct.toFixed(3)),
+      broad_basket_pct: Number(gap.broad_basket_pct.toFixed(3)),
+    },
+    summary: {
+      total_gap_pp: Number(gap.commodities_pct.toFixed(3)),
+      deployable_cash: Number(deployableCash.toFixed(2)),
+      portfolio_value: Number(totalPortfolioValue.toFixed(2)),
+      approx_gap_dollars: fullAmount(gap.commodities_pct),
+      gap_amount_full_portfolio: fullAmount(gap.commodities_pct),
+      deployable_cash_only_amount: Number(deployableCash.toFixed(2)),
+    },
+    message: "Commodity sleeve gap detected; display-only completion candidates are available for operator review.",
+    candidate_groups: candidateGroups,
+    sleeve_nodes: sleeves,
+    equity_adjacent_substitutes: ["KGC", "XLE", "PSX", "CVE", "DVN", "NUE", "STLD", "CRS"],
+    warnings: [
+      "Display-only candidates; not trade instructions.",
+      "Commodity/futures-linked products may have structure, tax, volatility, and tracking considerations.",
+      "Equity-adjacent proxies do not directly fill the COMMODITIES sleeve unless classified that way by the allocation model.",
+    ],
+    advisories: [
+      "DISPLAY_ONLY",
+      "OPERATOR_REVIEW_REQUIRED",
+      "CAPITAL_DEPLOYMENT_QUEUE_UNCHANGED",
+      "CRA_UNCHANGED",
+    ],
+    equity_proxy_disclaimer: "Equity-adjacent proxies are advisory only and do not directly fill the COMMODITIES sleeve unless classification policy is changed.",
+  };
+}
+
+function _buildClientPriorityGate(commodityGuard, fragilityWatch, candidateQueue, rotationSignal) {
+  const g = commodityGuard || {};
+  const f = fragilityWatch || {};
+  const q = candidateQueue || {};
+  const summary = q.summary || {};
+  const nodes = Array.isArray(q.sleeve_nodes) ? q.sleeve_nodes : [];
+
+  const deployableCash = Number(g.deployment_cash || summary.deployable_cash || 0);
+  const commoditiesActual = Number(g.commodities_actual_pct || 0);
+  const commoditiesTarget = Number(g.commodities_target_pct || 0);
+  const commoditiesGap = Math.max(0, commoditiesTarget - commoditiesActual);
+  const equityDeploymentCount = Number(g.equity_deployment_count || 0);
+  const techSensitiveDeploymentCount = Number(g.tech_sensitive_deployment_count || 0);
+  const commodityCandidatesAvailable = g.commodity_candidates_available === true;
+  const macroCatalystWindow = Boolean(f.macro_catalyst_window);
+  const queueStatus = String(q.status || g.status || "NONE").toUpperCase();
+  const queueSeverity = String(q.severity || g.severity || "NONE").toUpperCase();
+  const fragilityStatus = String(f.status || "NONE").toUpperCase();
+  const fragilitySeverity = String(f.severity || "NONE").toUpperCase();
+
+  let pressure = 0;
+  if (commoditiesGap > 0) pressure += 25;
+  if (deployableCash > 0) pressure += 15;
+  if (commodityCandidatesAvailable) pressure += 10;
+  if (queueStatus === "ACTIVE_REVIEW") pressure += 10;
+  if (["INFO", "WATCH", "ELEVATED"].includes(queueSeverity)) pressure += 5;
+  if (fragilityStatus !== "NONE") pressure += 10;
+  if (["WATCH", "ELEVATED"].includes(fragilitySeverity)) pressure += 10;
+  if (equityDeploymentCount > 0) pressure += 5;
+  if (techSensitiveDeploymentCount > 0) pressure += 5;
+  if (macroCatalystWindow) pressure += 5;
+  if (nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0)) pressure += 5;
+  pressure = Math.max(0, Math.min(100, pressure));
+
+  let verdict = "CONTINUE_EQUITY_DEPLOYMENT";
+  let recommendedAction = "Continue equity deployment; hard-asset pressure is advisory but not dominant.";
+  if (commoditiesTarget <= 0) {
+    verdict = "HARD_ASSET_NOT_APPLICABLE";
+    recommendedAction = "Keep the equity deployment queue unchanged; no hard-asset target is active.";
+  } else if (commoditiesGap <= 0 && deployableCash <= 0) {
+    verdict = "CONTINUE_EQUITY_DEPLOYMENT";
+    recommendedAction = "Continue equity deployment; the hard-asset sleeve is already funded and no deployable cash is available.";
+  } else if (pressure >= 70) {
+    verdict = "PARTIAL_HARD_ASSET_FILL";
+    recommendedAction = "OPERATOR REVIEW REQUIRED — consider reserving some or all deployable cash for hard-asset sleeve completion before deploying all excess cash to equities.";
+  } else if (pressure >= 45) {
+    verdict = "OPERATOR_REVIEW_REQUIRED";
+    recommendedAction = "OPERATOR REVIEW REQUIRED — consider reserving some or all deployable cash for hard-asset sleeve completion before deploying all excess cash to equities.";
+  }
+
+  const reviewRotationSignal = String(f.rotation_signal || signal || "DATA_UNAVAILABLE").toUpperCase();
+  const rotationConfirmed = Boolean(f.rotation_confirmed ?? conf.confirmation_passed);
+  const scoreLabel = "Review pressure score";
+  const scoreNote = pressure >= 70
+    ? `High because the commodity sleeve is structurally unfilled and deployable cash is available; moderated by ${reviewRotationSignal} / ${rotationConfirmed ? "CONFIRMED" : "NOT CONFIRMED"}. Display-only capital-allocation review score; not a trade-confidence score.`
+    : pressure >= 45
+      ? `Elevated because the commodity sleeve is underfilled and deployable cash is available; moderated by ${reviewRotationSignal} / ${rotationConfirmed ? "CONFIRMED" : "NOT CONFIRMED"}. Display-only capital-allocation review score; not a trade-confidence score.`
+      : "Display-only capital-allocation review score; not a trade-confidence score.";
+
+  const nodeByKey = Object.fromEntries(nodes.map(n => [String(n.node_key || n.node || "").toUpperCase(), n]).filter(entry => entry[0]));
+  const goldNode = nodeByKey["COMMODITIES.GOLD"] || {};
+  const energyNode = nodeByKey["COMMODITIES.ENERGY"] || {};
+  const broadNode = nodeByKey["COMMODITIES.BROAD_BASKET"] || {};
+  const deployableCashOnlyGold = Number(goldNode.deployable_cash_fill_amount ?? (deployableCash * 0.5));
+  const deployableCashOnlyEnergy = Number(energyNode.deployable_cash_fill_amount ?? (deployableCash * 0.35));
+  const deployableCashOnlyBroad = Number(broadNode.deployable_cash_fill_amount ?? Math.max(0, deployableCash - deployableCashOnlyGold - deployableCashOnlyEnergy));
+  const splitAmount = Number((deployableCash / 2).toFixed(2));
+
+  const capitalOptions = [
+    {
+      code: "A",
+      label: "Continue equity deployment",
+      preferred_when: "hard_asset_pressure < 45",
+      description: "Keep the current deployment queue intact and treat hard-asset fill as secondary.",
+      amount: Number(deployableCash.toFixed(2)),
+      amount_breakdown: { equities: Number(deployableCash.toFixed(2)) },
+    },
+    {
+      code: "B",
+      label: "Deployable-cash-only hard-asset fill",
+      preferred_when: "deployable cash exists and the operator wants a sleeve-first split",
+      description: "Use current deployable cash to partially fill the hard-asset sleeve while leaving the equity queue unchanged.",
+      amount: Number(deployableCash.toFixed(2)),
+      amount_breakdown: {
+        gold: Number(deployableCashOnlyGold.toFixed(2)),
+        energy: Number(deployableCashOnlyEnergy.toFixed(2)),
+        broad_basket: Number(deployableCashOnlyBroad.toFixed(2)),
+      },
+    },
+    {
+      code: "C",
+      label: "Split approach",
+      preferred_when: "the operator wants to balance sleeves without changing queue order",
+      description: "Divide deployable cash between hard assets and equities while preserving existing deployment order.",
+      amount: splitAmount,
+      amount_breakdown: { hard_assets: splitAmount, equities: splitAmount },
+    },
+    {
+      code: "D",
+      label: "Reserve cash",
+      preferred_when: "deployable cash exists but neither sleeve should move immediately",
+      description: "Hold deployable cash while the operator reviews the hard-asset sleeve and equity queue together.",
+      amount: Number(deployableCash.toFixed(2)),
+    },
+    {
+      code: "E",
+      label: "Waive commodity target",
+      preferred_when: "commodity target is intentionally deferred",
+      description: "Treat the hard-asset sleeve as waived for this review cycle; display-only and operator controlled.",
+      amount: 0,
+    },
+  ];
+
+  const rationale = [
+    "Display-only advisory gate; it does not modify ranking, queue order, CRA, or execution behavior.",
+    recommendedAction,
+  ];
+  if (commoditiesGap > 0) rationale.push("The hard-asset sleeve is still under target.");
+  if (deployableCash > 0) rationale.push("Deployable cash is available and can be reserved for the sleeve if desired.");
+  if (equityDeploymentCount > 0) rationale.push("Equity deployment is already active, so the decision is a capital-allocation preference rather than an availability problem.");
+  if (macroCatalystWindow) rationale.push("A macro catalyst window is active, so the operator may prefer partial hard-asset staging before fully deploying cash to equities.");
+  if (commodityCandidatesAvailable) rationale.push("Commodity completion candidates exist, but they remain display-only and operator-reviewed.");
+
+  const decisionFactors = [
+    {
+      factor: "Commodity sleeve gap",
+      value: Number(commoditiesGap.toFixed(3)),
+      impact: commoditiesGap > 0 ? "higher" : "neutral",
+      note: commoditiesGap > 0 ? "Hard-asset target remains underfilled." : "Hard-asset sleeve is at target.",
+    },
+    {
+      factor: "Deployable cash available",
+      value: Number(deployableCash.toFixed(2)),
+      impact: deployableCash > 0 ? "higher" : "lower",
+      note: deployableCash > 0 ? "Cash is available for either sleeve or equity deployment." : "No deployable cash is currently available.",
+    },
+    {
+      factor: "Equity deployment candidates",
+      value: equityDeploymentCount,
+      impact: equityDeploymentCount > 0 ? "higher" : "lower",
+      note: equityDeploymentCount > 0 ? "Capital is already flowing to equities." : "No equity deployment candidates are present.",
+    },
+    {
+      factor: "Rotation fragility status",
+      value: fragilityStatus,
+      impact: fragilityStatus !== "NONE" ? "higher" : "neutral",
+      note: String(f.message || "Rotation fragility watch is informational only."),
+    },
+    {
+      factor: "Tech-sensitive deployment candidates",
+      value: techSensitiveDeploymentCount,
+      impact: techSensitiveDeploymentCount > 0 ? "higher" : "neutral",
+      note: techSensitiveDeploymentCount > 0 ? "Some equity deployment candidates are tech-sensitive." : "No tech-sensitive deployment pressure detected.",
+    },
+    {
+      factor: "Direct hard-asset completion candidates",
+      value: nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0),
+      impact: nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0) ? "higher" : "lower",
+      note: nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0) ? "Hard-asset completion candidates are available for operator review." : "No direct hard-asset completion candidates were present.",
+    },
+  ];
+
+  return {
+    source: "client_fallback",
+    display_only: true,
+    operator_review_required: true,
+    status: commoditiesGap > 0 ? "ACTIVE_REVIEW" : "NO_GAP",
+    severity: queueSeverity !== "NONE" ? queueSeverity : fragilitySeverity,
+    verdict,
+    priority_verdict: verdict,
+    score: pressure,
+    priority_score: pressure,
+    recommended_action: recommendedAction,
+    recommended_operator_action: recommendedAction,
+    score_label: scoreLabel,
+    score_note: scoreNote,
+    rationale,
+    decision_factors: decisionFactors,
+    capital_options: capitalOptions,
+    summary: {
+      commodities_actual_pct: Number(commoditiesActual.toFixed(3)),
+      commodities_target_pct: Number(commoditiesTarget.toFixed(3)),
+      commodities_gap_pct: Number(commoditiesGap.toFixed(3)),
+      deployable_cash: Number(deployableCash.toFixed(2)),
+      equity_deployment_count: equityDeploymentCount,
+      candidate_count: Number(q.candidate_count || 0),
+      direct_completion_candidate_count: nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0),
+      equity_adjacent_proxy_count: nodes.reduce((total, n) => total + (Array.isArray(n.equity_adjacent_proxies) ? n.equity_adjacent_proxies.length : 0), 0),
+    },
+    priority_bias: verdict === "CONTINUE_EQUITY_DEPLOYMENT" ? "EQUITY_DEPLOYMENT_FIRST" : "HARD_ASSET_REVIEW_FIRST",
+    guardrail_notes: [
+      "Display-only and operator-reviewed.",
+      "No queue mutation, rank mutation, or trade execution attached.",
+      "Derived client-side because the live summary did not include the gate payload.",
+    ],
+  };
+}
+
+  function _renderSleeveFitDrilldown(candidateQueue) {
+  const sleeveFit = candidateQueue && candidateQueue.sleeve_fit ? candidateQueue.sleeve_fit : _buildClientSleeveFit(candidateQueue || {});
+  const rows = Array.isArray(sleeveFit.table_rows) ? sleeveFit.table_rows : [];
+  const modes = Array.isArray(sleeveFit.allocation_modes) ? sleeveFit.allocation_modes : [];
+
+  const modeCards = modes.map(mode => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:180px;background:rgba(255,255,255,.03);">
+      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">${escHtml(String(mode.mode || "").replace(/_/g, " "))}</div>
+      <div style="font-size:0.92rem;font-weight:700;margin-top:4px;">${mode.total_amount == null ? "Placeholder" : escHtml(_rrFmtMoney(mode.total_amount))}</div>
+      <div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escHtml(String(mode.description || ""))}</div>
+    </div>`).join("");
+
+  const rowHtml = rows.map(row => {
+    const examples = row.amount_semantics || {};
+    const single = examples.single_candidate_fill || {};
+    const split = examples.equal_split || {};
+    const caveat = row.candidate === "KGC"
+      ? `${String(row.not_direct_filler_reason || "Not a direct COMMODITIES.GOLD filler")}. ${String(row.classification_note || "")}`
+      : String(row.caveat || "");
+    const currentPosture = row.current_action_context ? `${row.current_sih_posture || "N/A"} · ${row.current_action_context}` : (row.current_sih_posture || "N/A");
+    return `<tr>
+      <td>${escHtml(String(row.sleeve || ""))}</td>
+      <td><strong>${escHtml(String(row.candidate || ""))}</strong></td>
+      <td>${escHtml(String(row.candidate_type || ""))}</td>
+      <td style="text-align:right">${escHtml(String(row.sleeve_fit_score || "—"))}</td>
+      <td>${row.direct_filler ? "Yes" : "No"}</td>
+      <td style="text-align:right">${_rrFmtMoney(row.full_gap_amount)}${row.direct_filler ? `<div style="font-size:0.72rem;color:var(--muted);">Single: ${_rrFmtMoney(single.full_target_gap)} · Split: ${_rrFmtMoney(split.full_target_gap)}</div>` : `<div style="font-size:0.72rem;color:var(--muted);">$0 direct sleeve filler</div>`}</td>
+      <td style="text-align:right">${_rrFmtMoney(row.deployable_cash_only_amount)}${row.direct_filler ? `<div style="font-size:0.72rem;color:var(--muted);">Single: ${_rrFmtMoney(single.deployable_cash_only)} · Split: ${_rrFmtMoney(split.deployable_cash_only)}</div>` : `<div style="font-size:0.72rem;color:var(--muted);">$0 direct sleeve filler</div>`}</td>
+      <td>${row.current_holding ? "Yes" : "No"}</td>
+      <td>${escHtml(String(currentPosture || "N/A"))}</td>
+      <td>${escHtml(caveat)}</td>
+    </tr>`;
+  }).join("");
+
+  return `<details style="margin-top:10px;" open>
+    <summary style="cursor:pointer;font-weight:700;">Sleeve Fit Drilldown</summary>
+    <div style="font-size:0.78rem;color:var(--muted);margin:6px 0 10px;">Compares direct sleeve fillers with equity-adjacent proxies. Display-only; not trade instructions.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${modeCards}</div>
+    <div style="overflow:auto;">
+      <table class="holdings-tbl" style="min-width:1080px;">
+        <thead>
+          <tr>
+            <th>Sleeve</th>
+            <th>Candidate</th>
+            <th>Candidate type</th>
+            <th style="text-align:right">Sleeve fit score</th>
+            <th>Direct filler?</th>
+            <th style="text-align:right">Full target gap</th>
+            <th style="text-align:right">Deployable-cash-only</th>
+            <th>Current holding?</th>
+            <th>Current SIH posture</th>
+            <th>Caveat</th>
+          </tr>
+        </thead>
+        <tbody>${rowHtml}</tbody>
+      </table>
+    </div>
+  </details>`;
+}
+
+function _renderHardAssetCandidateQueue(candidateQueue) {
+  if (!candidateQueue || typeof candidateQueue !== "object") {
+    return `<div class="panel" style="margin-top:10px;">
+      <p class="panel-title">Hard-Asset Candidate Queue</p>
+      <div style="font-size:0.8rem;color:var(--muted);">Commodity sleeve completion candidates are unavailable for this run.</div>
+    </div>`;
+  }
+
+  const status = escHtml(String(candidateQueue.status || "NONE"));
+  const sev = String(candidateQueue.severity || "NONE");
+  const summary = candidateQueue.summary || {};
+  const nodes = Array.isArray(candidateQueue.sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
+  const warnings = Array.isArray(candidateQueue.warnings) ? candidateQueue.warnings : [];
+  const advisories = Array.isArray(candidateQueue.advisories) ? candidateQueue.advisories : [];
+  const sleeveFitHtml = _renderSleeveFitDrilldown(candidateQueue);
+
+  const nodeHtml = nodes.map(n => {
+    const nodeLabelMap = {
+      "COMMODITIES.GOLD": "Gold Sleeve",
+      "COMMODITIES.ENERGY": "Energy Sleeve",
+      "COMMODITIES.BROAD_BASKET": "Broad Basket Sleeve",
+    };
+    const direct = Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates : [];
+    const prox = Array.isArray(n.equity_adjacent_proxies) ? n.equity_adjacent_proxies : [];
+    const subs = Array.isArray(n.portfolio_substitutes) ? n.portfolio_substitutes : [];
+    const queueMatches = Array.isArray(n.existing_queue_candidates) ? n.existing_queue_candidates : [];
+    const nodeKey = String(n.node_key || n.node || "UNKNOWN_NODE");
+    const nodeLabel = nodeLabelMap[nodeKey] || nodeKey;
+    return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <strong style="font-size:0.82rem;">${escHtml(nodeLabel)}</strong>
+        <span style="font-size:0.76rem;color:var(--muted);">Actual ${_rrFmtPct(n.actual_pct)} vs Target ${_rrFmtPct(n.target_pct)} (Gap ${_rrFmtPct(n.gap_pp)})</span>
+      </div>
+      <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">Full target gap: <strong>${_rrFmtMoney(n.gap_amount_full_portfolio ?? n.approx_gap_dollars)}</strong> · Deployable-cash-only: <strong>${_rrFmtMoney(n.deployable_cash_fill_amount)}</strong></div>
+
+      <div style="margin-top:8px;">
+        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Direct Completion Candidates</div>
+        ${direct.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${direct.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No direct completion candidates registered.</div>`}
+      </div>
+
+      <div style="margin-top:8px;">
+        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Equity-Adjacent Proxies (Advisory)</div>
+        ${prox.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${prox.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No equity-adjacent proxies listed.</div>`}
+      </div>
+
+      <div style="margin-top:8px;">
+        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Portfolio Substitutes</div>
+        ${subs.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${subs.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No substitutes listed.</div>`}
+      </div>
+
+      ${queueMatches.length ? `<div style="margin-top:8px;font-size:0.74rem;color:var(--muted);">Current capital deployment queue already includes: ${escHtml(queueMatches.map(x => x.symbol).join(", "))}</div>` : ""}
+    </div>`;
+  }).join("");
+
+  return `<div class="panel" style="margin-top:10px;">
+    <p class="panel-title">Hard-Asset Candidate Queue</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
+      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
+      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
+      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
+      <span class="sev-badge ${_rrSeverityClass(sev)}">${status}</span>
+    </div>
+    <div style="font-size:0.8rem;color:var(--text);margin-bottom:8px;">${escHtml(String(candidateQueue.message || "Commodity sleeve completion candidates for operator review."))}</div>
+    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">
+      Total sleeve gap: <strong>${_rrFmtPct(summary.total_gap_pp)}</strong>
+      · Full target gap dollars: <strong>${_rrFmtMoney(summary.gap_amount_full_portfolio ?? summary.approx_gap_dollars)}</strong>
+      · Deployable cash context: <strong>${_rrFmtMoney(summary.deployable_cash)}</strong>
+      · Deployable-cash-only fill: <strong>${_rrFmtMoney(summary.deployable_cash_only_amount ?? summary.deployable_cash)}</strong>
+    </div>
+    ${nodeHtml}
+    ${sleeveFitHtml}
+    <div style="margin-top:8px;font-size:0.75rem;color:var(--muted);">${escHtml(String(candidateQueue.equity_proxy_disclaimer || "Equity proxies are advisory and do not directly fill commodity sleeves unless formally classified."))}</div>
+    ${warnings.length ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">Warnings: ${escHtml(warnings.join(", "))}</div>` : ""}
+    ${advisories.length ? `<div style="margin-top:4px;font-size:0.74rem;color:var(--muted);">Controls: ${escHtml(advisories.join(", "))}</div>` : ""}
+  </div>`;
+}
+
+function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSignal, candidateQueue) {
   if (!commodityGuard && !fragilityWatch) {
     return `<div class="panel" style="margin-top:10px;">
       <p class="panel-title">Hard-Asset Sleeve Review</p>
@@ -1511,6 +2468,21 @@ function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSi
   const macroText = macroEvents.length
     ? `${macroEvents.slice(0, 3).join("; ")}${macroEvents.length > 3 ? "..." : ""}`
     : "No near-window high-impact events";
+
+  const queueNodes = (candidateQueue && Array.isArray(candidateQueue.sleeve_nodes)) ? candidateQueue.sleeve_nodes : [];
+  const directCompletionCandidateCount = queueNodes.reduce(
+    (total, node) => total + (Array.isArray(node.direct_completion_candidates) ? node.direct_completion_candidates.length : 0),
+    0
+  );
+  const commodityCandidatesLabel = directCompletionCandidateCount > 0
+    ? `Yes (${directCompletionCandidateCount} direct)`
+    : g.commodity_candidates_available === true
+      ? "Yes"
+      : g.commodity_candidates_available === false
+        ? "No"
+        : "—";
+
+  const candidateQueueHtml = _renderHardAssetCandidateQueue(candidateQueue);
 
   return `<div class="panel" style="margin-top:10px;">
     <p class="panel-title">Hard-Asset Sleeve Review</p>
@@ -1546,7 +2518,7 @@ function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSi
         <div style="font-size:0.82rem;line-height:1.45;">
           Deployable cash: <strong>${_rrFmtMoney(g.deployment_cash)}</strong><br>
           Equity deployment candidates: <strong>${escHtml(String(g.equity_deployment_count ?? "—"))}</strong><br>
-          Commodity candidates available: <strong>${g.commodity_candidates_available === true ? "Yes" : g.commodity_candidates_available === false ? "No" : "—"}</strong><br>
+          Commodity candidates available: <strong>${escHtml(commodityCandidatesLabel)}</strong><br>
           Tech exposure: <strong>${_rrFmtPct(f.tech_sector_pct)}</strong><br>
           Ultra-mega drift: <strong>${_rrFmtPct(f.ultra_mega_drift_pp)}</strong><br>
           Macro catalyst window: <strong>${f.macro_catalyst_window ? "Yes" : "No"}</strong>
@@ -1558,6 +2530,7 @@ function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSi
     ${choices.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
       ${choices.map(c => `<span class="sev-badge sev-NONE">${escHtml(choiceLabel(c))}</span>`).join("")}
     </div>` : ""}
+    ${candidateQueueHtml}
   </div>`;
 }
 
@@ -1575,6 +2548,12 @@ function _renderRotationRiskPanel(data) {
   const endpointDiag = data._endpoint_diagnostic || null;
   const commodityGuard = data.commodity_fill_guard || null;
   const fragilityWatch = data.rotation_fragility_watch || null;
+  let candidateQueue = data.hard_asset_candidate_queue || data.commodity_sleeve_completion_candidates || null;
+  const hasQueuePayload = candidateQueue && typeof candidateQueue === "object";
+  const hasQueueNodes = hasQueuePayload && Array.isArray(candidateQueue.sleeve_nodes) && candidateQueue.sleeve_nodes.length > 0;
+  if (!hasQueueNodes && commodityGuard) {
+    candidateQueue = _buildClientCandidateQueueFromGuard(commodityGuard);
+  }
   const proxyDiag = data.proxy_diagnostics || null;
 
   const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
@@ -1614,7 +2593,14 @@ function _renderRotationRiskPanel(data) {
       </div>`
     : "";
 
-  const hardAssetReviewHtml = _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, signal);
+  const priorityGate = data.hard_asset_priority_gate || data.commodity_vs_equity_priority_gate || _buildClientPriorityGate(commodityGuard, fragilityWatch, candidateQueue, signal);
+  const queueReady = !!(_lastAnalysisData && _lastAnalysisData.deployment_queue && Array.isArray(_lastAnalysisData.deployment_queue.queue) && _lastAnalysisData.deployment_queue.queue.length);
+  const todayOperatorActionPlan = data.today_operator_action_plan
+    || data.daily_operator_action_plan
+    || (priorityGate && queueReady ? _buildClientTodayOperatorActionPlan(priorityGate, candidateQueue) : null);
+  const priorityGateHtml = _renderHardAssetPriorityGate(priorityGate);
+  const todayOperatorActionPlanHtml = _renderTodayOperatorActionPlan(todayOperatorActionPlan);
+  const hardAssetReviewHtml = _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, signal, candidateQueue);
 
   const proxyDiagHtml = (() => {
     if (!proxyDiag) return "";
@@ -1670,6 +2656,8 @@ function _renderRotationRiskPanel(data) {
     ${missingHtml}
     ${diagHtml}
     ${proxyDiagHtml}
+    ${priorityGateHtml}
+    ${todayOperatorActionPlanHtml}
     ${hardAssetReviewHtml}
     <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
   </div>`;
