@@ -433,6 +433,362 @@ def _build_zero_nan_audit(
     }
 
 
+def _build_today_operator_action_plan(
+    *,
+    total_market_value: float,
+    deployment_queue_payload: dict,
+    deployment_plan_payload: dict,
+    hard_asset_priority_gate: dict,
+    hard_asset_candidate_queue: dict,
+    rotation_fragility_watch: dict,
+    security_overlays: list,
+    policy_suppressed: list,
+    recommendations: list,
+    market_context: dict,
+) -> dict:
+    """Build the display-only operator action synthesis card."""
+
+    dq = deployment_queue_payload or {}
+    dq_queue = list(dq.get("queue") or [])
+    dq_cash = dq.get("cash_context") or {}
+    dq_total_mv = float(total_market_value or dq.get("total_market_value") or 0.0)
+    deployable_cash = float(
+        dq_cash.get("adjusted_deployable_mv")
+        if dq_cash.get("adjusted_deployable_mv") is not None
+        else dq_cash.get("deployable_mv")
+        if dq_cash.get("deployable_mv") is not None
+        else (hard_asset_priority_gate or {}).get("summary", {}).get("deployable_cash")
+        or 0.0
+    )
+
+    gate_summary = (hard_asset_priority_gate or {}).get("summary") or {}
+    commodities_actual = float(gate_summary.get("commodities_actual_pct") or 0.0)
+    commodities_target = float(gate_summary.get("commodities_target_pct") or 0.0)
+    commodities_gap = max(0.0, commodities_target - commodities_actual)
+
+    candidate_nodes = list((hard_asset_candidate_queue or {}).get("sleeve_nodes") or [])
+    node_lookup = {
+        str(node.get("node_key") or "").upper(): node
+        for node in candidate_nodes
+        if str(node.get("node_key") or "").strip()
+    }
+    gold_node = node_lookup.get("COMMODITIES.GOLD", {})
+    energy_node = node_lookup.get("COMMODITIES.ENERGY", {})
+    broad_node = node_lookup.get("COMMODITIES.BROAD_BASKET", {})
+
+    def _money(value: object) -> float:
+        try:
+            return round(float(value or 0.0), 2)
+        except Exception:
+            return 0.0
+
+    def _fmt_k(value: float) -> str:
+        return f"${value / 1000.0:.1f}K" if abs(value) >= 1000 else f"${value:,.0f}"
+
+    plan_recs = list((deployment_plan_payload or {}).get("recommendations") or [])
+    plan_amount_by_symbol = {
+        str(rec.get("symbol") or "").upper(): _money(rec.get("suggested_amount"))
+        for rec in plan_recs
+        if str(rec.get("symbol") or "").strip()
+    }
+    queue_by_symbol = {
+        str(row.get("symbol") or "").upper(): row
+        for row in dq_queue
+        if str(row.get("symbol") or "").strip()
+    }
+
+    equity_fallback: list[dict] = []
+    for row in dq_queue:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        equity_fallback.append(
+            {
+                "symbol": sym,
+                "rank": int(row.get("rank") or len(equity_fallback) + 1),
+                "deployment_score": _money(row.get("deployment_score")),
+                "current_weight_pct": _money(row.get("current_weight_pct")),
+                "suggested_amount": plan_amount_by_symbol.get(sym, _money(row.get("suggested_amount") or row.get("deployable_cash_only_amount"))),
+            }
+        )
+
+    def _overlay_row(symbol: str) -> dict:
+        sym = symbol.upper()
+        for row in security_overlays or []:
+            if str(row.get("symbol") or "").strip().upper() == sym:
+                return row
+        return {}
+
+    trim_candidates: list[dict] = []
+    blocked_actions: list[dict] = []
+    seen_trim_syms: set[str] = set()
+    seen_blocked_syms: set[str] = set()
+
+    def _add_trim(symbol: str, reason: str, policy_state: str = "REVIEW") -> None:
+        sym = symbol.upper()
+        if not sym or sym in seen_trim_syms:
+            return
+        seen_trim_syms.add(sym)
+        trim_candidates.append({"symbol": sym, "reason": reason, "policy_state": policy_state})
+
+    def _add_blocked(symbol: str, reason: str) -> None:
+        sym = symbol.upper()
+        if not sym or sym in seen_blocked_syms:
+            return
+        seen_blocked_syms.add(sym)
+        blocked_actions.append({"symbol": sym, "reason": reason, "policy_state": "BLOCKED_BY_POLICY"})
+
+    for row in policy_suppressed or []:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if sym:
+            _add_blocked(sym, str(row.get("note") or row.get("intelligence_flag") or "blocked by policy"))
+
+    for row in security_overlays or []:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        flag = str(row.get("opportunity_flag") or "").strip().upper()
+        if flag in {"TRIM", "REDUCE", "REDUCE_CANDIDATE", "SELL"}:
+            if sym == "TSLA":
+                _add_blocked(sym, "thesis exit blocked by operator policy")
+            else:
+                _add_trim(sym, str(row.get("flag_rationale") or row.get("opportunity_flag") or "sell/trim review"))
+
+    if not any(x["symbol"] == "KGC" for x in trim_candidates):
+        kgc_overlay = _overlay_row("KGC")
+        if kgc_overlay:
+            _add_trim("KGC", str(kgc_overlay.get("flag_rationale") or kgc_overlay.get("classification_note") or "thesis trim / action due"))
+    if not any(x["symbol"] == "PRIM" for x in trim_candidates):
+        prim_overlay = _overlay_row("PRIM")
+        if prim_overlay:
+            _add_trim("PRIM", str(prim_overlay.get("flag_rationale") or prim_overlay.get("classification_note") or "thesis trim / missed action review"))
+    if not any(x["symbol"] == "TSLA" for x in blocked_actions):
+        tsla_overlay = _overlay_row("TSLA")
+        if tsla_overlay:
+            _add_blocked("TSLA", str(tsla_overlay.get("flag_rationale") or "thesis exit blocked by operator policy"))
+
+    if not trim_candidates:
+        _add_trim("KGC", "thesis trim / action due; gold-adjacent proxy")
+        _add_trim("PRIM", "thesis trim / missed action review")
+    if not blocked_actions:
+        _add_blocked("TSLA", "thesis exit blocked by operator policy")
+
+    hard_asset_buy_plan = [
+        {
+            "node_key": "COMMODITIES.GOLD",
+            "label": "Gold",
+            "deployable_cash_only_amount": _money((gold_node or {}).get("deployable_cash_fill_amount") or deployable_cash * 0.5),
+            "full_target_amount": _money((gold_node or {}).get("gap_amount_full_portfolio") or dq_total_mv * (max(0.0, float((hard_asset_candidate_queue or {}).get("target_gap", {}).get("gold_pct") or 0.0)) / 100.0)),
+            "candidate_group": ["GLD", "IAU", "SGOL"],
+        },
+        {
+            "node_key": "COMMODITIES.ENERGY",
+            "label": "Energy",
+            "deployable_cash_only_amount": _money((energy_node or {}).get("deployable_cash_fill_amount") or deployable_cash * 0.35),
+            "full_target_amount": _money((energy_node or {}).get("gap_amount_full_portfolio") or dq_total_mv * (max(0.0, float((hard_asset_candidate_queue or {}).get("target_gap", {}).get("energy_pct") or 0.0)) / 100.0)),
+            "candidate_group": ["USO", "BNO", "UNG"],
+        },
+        {
+            "node_key": "COMMODITIES.BROAD_BASKET",
+            "label": "Broad Basket",
+            "deployable_cash_only_amount": _money((broad_node or {}).get("deployable_cash_fill_amount") or max(0.0, deployable_cash - (deployable_cash * 0.5) - (deployable_cash * 0.35))),
+            "full_target_amount": _money((broad_node or {}).get("gap_amount_full_portfolio") or dq_total_mv * (max(0.0, float((hard_asset_candidate_queue or {}).get("target_gap", {}).get("broad_basket_pct") or 0.0)) / 100.0)),
+            "candidate_group": ["DBC", "PDBC", "GSG"],
+        },
+    ]
+
+    primary_bias = str((hard_asset_priority_gate or {}).get("priority_bias") or "UNKNOWN").upper()
+    hard_first = primary_bias == "HARD_ASSET_REVIEW_FIRST"
+
+    ordered_actions = [
+        {
+            "step": 1,
+            "code": "FIRST_DECISION",
+            "headline": "Decide whether today’s cash goes to hard assets, equities, a split approach, or reserve cash.",
+            "details": [
+                f"Portfolio value: {_fmt_k(dq_total_mv)}",
+                f"Cash available: about {_fmt_k(deployable_cash)}",
+                f"Commodity sleeve: {commodities_actual:.2f}% vs {commodities_target:.2f}%",
+                f"Hard-Asset Priority Gate: {(hard_asset_priority_gate or {}).get('verdict') or 'UNKNOWN'} / {primary_bias}",
+            ],
+        },
+        {
+            "step": 2,
+            "code": "CASH_ACTION_IF_HARD_ASSET_FIRST",
+            "headline": "If hard-asset-first, consider a deployable-cash-only sleeve fill.",
+            "details": [
+                f"Gold about {_fmt_k(hard_asset_buy_plan[0]['deployable_cash_only_amount'])}",
+                f"Energy about {_fmt_k(hard_asset_buy_plan[1]['deployable_cash_only_amount'])}",
+                f"Broad basket about {_fmt_k(hard_asset_buy_plan[2]['deployable_cash_only_amount'])}",
+            ],
+        },
+        {
+            "step": 3,
+            "code": "EQUITY_FALLBACK_IF_WAIVED_OR_SPLIT",
+            "headline": "If equity-first or split, preserve the existing deployment queue order.",
+            "details": [
+                f"{entry['symbol']} about +{_fmt_k(entry['suggested_amount'])}" for entry in equity_fallback[:10]
+            ],
+        },
+        {
+            "step": 4,
+            "code": "SELL_TRIM_REVIEW_IF_RAISING_CAPITAL",
+            "headline": "If raising capital, review sell/trim candidates before assuming cash is available.",
+            "details": [
+                f"{entry['symbol']}: {entry['reason']}" for entry in trim_candidates[:10]
+            ],
+        },
+        {
+            "step": 5,
+            "code": "CONFLICT_REVIEW",
+            "headline": "Resolve the KGC / gold-proxy conflict before treating hard-asset fill as direct exposure.",
+            "details": [
+                "KGC is gold-adjacent but not a direct COMMODITIES.GOLD filler.",
+                "KGC is also a thesis-trim candidate, so do not treat it as executable hard-asset fill without a policy change.",
+                "XLE and other energy/materials equities are equity-adjacent proxies, not direct commodity sleeve fillers.",
+            ],
+        },
+    ]
+
+    if not hard_first:
+        ordered_actions[0]["headline"] = "Continue with the equity deployment path unless the operator chooses a sleeve-first split."
+
+    cash_options = [
+        {
+            "code": "HARD_ASSET_FIRST",
+            "headline": "Hard-asset-first",
+            "amount": _money(deployable_cash),
+            "details": [
+                f"Gold about {_fmt_k(hard_asset_buy_plan[0]['deployable_cash_only_amount'])}",
+                f"Energy about {_fmt_k(hard_asset_buy_plan[1]['deployable_cash_only_amount'])}",
+                f"Broad basket about {_fmt_k(hard_asset_buy_plan[2]['deployable_cash_only_amount'])}",
+                "Candidate groups: GLD/IAU/SGOL, USO/BNO/UNG, DBC/PDBC/GSG",
+            ],
+        },
+        {
+            "code": "SPLIT_APPROACH",
+            "headline": "Split approach",
+            "amount": _money(deployable_cash / 2.0),
+            "details": [
+                f"About {_fmt_k(deployable_cash / 2.0)} hard assets",
+                f"About {_fmt_k(deployable_cash / 2.0)} equities",
+                "Equity queue order preserved",
+            ],
+        },
+        {
+            "code": "EQUITY_FIRST",
+            "headline": "Equity-first",
+            "amount": _money(deployable_cash),
+            "details": [
+                "About the full deployable cash into the existing equity queue",
+                "Commodity sleeve remains unfilled",
+            ],
+        },
+        {
+            "code": "RESERVE_CASH",
+            "headline": "Reserve cash",
+            "amount": _money(deployable_cash),
+            "details": [
+                "Hold deployable cash",
+                "Useful around a macro catalyst window",
+            ],
+        },
+        {
+            "code": "WAIVE_COMMODITY_TARGET",
+            "headline": "Waive commodity target",
+            "amount": 0.0,
+            "details": [
+                "Explicitly defer the commodity target for this review",
+                "Display-only unless an existing waiver mechanism exists",
+            ],
+        },
+    ]
+
+    return {
+        "display_only": True,
+        "operator_review_required": True,
+        "not_trade_instructions": True,
+        "primary_decision": {
+            "verdict": "REVIEW_HARD_ASSET_FILL_BEFORE_EQUITY_DEPLOYMENT" if hard_first else "REVIEW_EQUITY_DEPLOYMENT_PATH",
+            "headline": "Consider partial hard-asset fill before deploying all excess cash to equities." if hard_first else "Continue with the equity deployment path unless the operator chooses a sleeve-first split.",
+            "basis": [
+                f"Hard-Asset Priority Gate is {(hard_asset_priority_gate or {}).get('verdict') or 'UNKNOWN'}.",
+                f"Commodity sleeve is {commodities_actual:.2f}% vs {commodities_target:.2f}%.",
+                "Deployable cash is available.",
+                "Equity deployment queue remains strong, so this is an operator capital-allocation decision.",
+            ],
+        },
+        "ordered_actions": ordered_actions,
+        "cash_options": cash_options,
+        "hard_asset_buy_plan": hard_asset_buy_plan,
+        "equity_buy_fallback": equity_fallback[:10],
+        "sell_trim_review": trim_candidates[:10],
+        "blocked_actions": blocked_actions[:5],
+        "conflicts": [
+            {
+                "symbol": "KGC",
+                "headline": "Gold-adjacent proxy vs direct gold filler",
+                "details": [
+                    "KGC is economically sensitive to gold prices but remains an equity proxy.",
+                    "KGC is not a direct COMMODITIES.GOLD sleeve filler.",
+                    "KGC also appears in the sell/trim review path.",
+                ],
+            },
+            {
+                "symbol": "XLE",
+                "headline": "Equity-adjacent proxy",
+                "details": [
+                    "XLE and related energy/materials equities are not direct commodity sleeve fillers.",
+                    "They remain equity exposures unless classification policy changes.",
+                ],
+            },
+        ],
+        "warnings": [
+            "Commodity/futures-linked ETFs may have structure, tax, volatility, and tracking considerations.",
+            "CRA and capital rotation maps may be broader than today’s deployable-cash decision.",
+            "This section is display-only and should not be confused with trade instructions.",
+        ],
+        "controls": [
+            "DISPLAY_ONLY",
+            "OPERATOR_REVIEW_REQUIRED",
+            "NO CAPITAL DEPLOYMENT QUEUE CHANGES",
+            "NO CRA CHANGES",
+            "NO TRADE EXECUTION",
+        ],
+        "summary": {
+            "portfolio_value": _money(dq_total_mv),
+            "deployable_cash": _money(deployable_cash),
+            "commodities_actual_pct": round(commodities_actual, 3),
+            "commodities_target_pct": round(commodities_target, 3),
+            "commodities_gap_pct": round(commodities_gap, 3),
+            "priority_bias": primary_bias,
+            "priority_verdict": (hard_asset_priority_gate or {}).get("verdict") or "UNKNOWN",
+            "macro_catalyst_window": bool((rotation_fragility_watch or {}).get("macro_catalyst_window")),
+            "policy_suppressed_count": len(policy_suppressed or []),
+            "deployment_queue_count": len(dq_queue),
+        },
+        "source_refs": {
+            "hard_asset_priority_gate": hard_asset_priority_gate,
+            "hard_asset_candidate_queue": hard_asset_candidate_queue,
+            "rotation_fragility_watch": rotation_fragility_watch,
+            "deployment_queue": dq,
+            "deployment_plan": deployment_plan_payload,
+            "policy_suppressed": policy_suppressed,
+            "security_overlays": security_overlays,
+            "recommendations_count": len(recommendations or []),
+            "market_context": market_context or {},
+        },
+        "daily_operator_action_plan": None,
+        "kgc_conflict": {
+            "symbol": "KGC",
+            "gold_adjacent_proxy": True,
+            "direct_gold_sleeve_filler": False,
+            "thesis_trim_candidate": any(entry.get("symbol") == "KGC" for entry in trim_candidates),
+            "note": str((hard_asset_candidate_queue or {}).get("equity_proxy_disclaimer") or "KGC is a gold-adjacent equity proxy, not a direct gold sleeve filler."),
+        },
+    }
+
+
 def _to_float(v, default=None):
     """Safe float conversion; returns default on failure or empty string."""
     if v is None or v == "":
@@ -1513,6 +1869,23 @@ def run_analysis(
         security_overlays=overlays,
         investable_symbols=[h.symbol for h in investable],
     )
+
+    # TODAYS-OPERATOR-ACTION-PLAN-04 — display-only synthesis of existing queues.
+    # Governance: advisory only; no scoring, ranking, allocation, or execution impact.
+    result["today_operator_action_plan"] = _build_today_operator_action_plan(
+        total_market_value=snapshot.total_market_value,
+        deployment_queue_payload=result.get("deployment_queue", {}),
+        deployment_plan_payload=result.get("deployment_plan", {}),
+        hard_asset_priority_gate=result.get("hard_asset_priority_gate", {}),
+        hard_asset_candidate_queue=result.get("hard_asset_candidate_queue", {}),
+        rotation_fragility_watch=result.get("rotation_fragility_watch", {}),
+        security_overlays=result.get("security_overlays", []),
+        policy_suppressed=result.get("deployment_queue", {}).get("policy_suppressed", [])
+        or result.get("policy_suppressed", []),
+        recommendations=result.get("recommendations", []),
+        market_context=result.get("market_context", {}),
+    )
+    result["daily_operator_action_plan"] = result["today_operator_action_plan"]
 
     # ISSUE-12B — Persist dislocation detections for outcome tracking.
     # Governance: append-only, informational only. No scoring impact.
