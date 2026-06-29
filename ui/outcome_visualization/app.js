@@ -1425,621 +1425,18 @@ function _applyLiveScores(sym, data) {
 // ---------------------------------------------------------------------------
 
 let _refreshPollTimer = null;
-let _readinessBaselineByMode = {};
-let _freshnessFilterState = {
-  cw_das: true,
-  ucf: true,
-  recommendations: true,
-  cra: true,
-};
-let _refreshModeSelectBound = false;
-let _refreshUniverseCounts = {
-  portfolio_holdings: null,
-  research_universe: null,
-  stale_symbols: null,
-  stale_source: "unavailable",
-};
-
-const _REFRESH_MODE_GUIDANCE = {
-  stale_only: {
-    purpose: "Repair stale provider records.",
-    scope: "Stale symbols only.",
-    updates: [
-      "Zacks stale rows",
-      "Danelfin stale rows",
-      "Yahoo stale rows",
-    ],
-    notUpdated: [
-      "No full-universe freshness guarantee",
-      "No candidate-universe rebuild",
-      "No ranking recomputation",
-    ],
-    recommendedUse: "Maintenance and repair.",
-    decisionImpact: {
-      holdings_readiness: "MEDIUM",
-      candidate_readiness: "NONE",
-      cw_das: "NONE",
-      ucf: "NONE",
-      recommendations: "NONE",
-      cra: "NONE",
-      data_confidence: "MEDIUM",
-    },
-    runtime: "Runtime estimate unavailable",
-  },
-  portfolio_signals: {
-    purpose: "Refresh current portfolio holdings.",
-    scope: "Portfolio holdings universe only.",
-    updates: [
-      "Zacks holdings rows",
-      "Danelfin holdings rows",
-      "Yahoo holdings rows",
-      "Holdings-readiness signals",
-    ],
-    notUpdated: [
-      "Research universe freshness",
-      "CW-DAS candidate inputs",
-      "UCF candidate inputs",
-      "Recommendation candidate set",
-      "CRA candidate targets",
-    ],
-    recommendedUse: "Daily portfolio monitoring.",
-    decisionImpact: {
-      holdings_readiness: "HIGH",
-      candidate_readiness: "NONE",
-      cw_das: "NONE",
-      ucf: "NONE",
-      recommendations: "NONE",
-      cra: "NONE",
-      data_confidence: "MEDIUM",
-    },
-    runtime: "~45 minutes (historical)",
-  },
-  rebuild_research_universe: {
-    purpose: "Refresh the research and candidate universe.",
-    scope: "Research universe.",
-    updates: [
-      "Zacks universe rows",
-      "Danelfin universe rows",
-      "Yahoo universe rows",
-      "Candidate freshness surfaces",
-      "CW-DAS/UCF/Recommendations/CRA candidate inputs",
-    ],
-    notUpdated: [],
-    recommendedUse: "Before deploying capital into new positions.",
-    decisionImpact: {
-      holdings_readiness: "HIGH",
-      candidate_readiness: "HIGH",
-      cw_das: "HIGH",
-      ucf: "HIGH",
-      recommendations: "HIGH",
-      cra: "HIGH",
-      data_confidence: "HIGH",
-    },
-    runtime: "~4 hours (historical)",
-  },
-  prepare_portfolio_review: {
-    purpose: "Regenerate portfolio-review artifacts.",
-    scope: "Portfolio review artifacts.",
-    updates: [
-      "Portfolio review report artifacts",
-      "Alignment report surfaces",
-    ],
-    notUpdated: [
-      "No provider-data refresh",
-      "No freshness-state changes",
-    ],
-    recommendedUse: "After data refreshes complete.",
-    decisionImpact: {
-      holdings_readiness: "NONE",
-      candidate_readiness: "NONE",
-      cw_das: "NONE",
-      ucf: "NONE",
-      recommendations: "NONE",
-      cra: "NONE",
-      data_confidence: "NONE",
-    },
-    runtime: "Runtime estimate unavailable",
-  },
-};
-
-function _selectedRefreshMode() {
-  const select = document.getElementById("signalRefreshMode");
-  return select && select.value ? select.value : "stale_only";
-}
-
-function _refreshModeLabel(mode) {
-  return {
-    stale_only: "Refresh Stale Only",
-    portfolio_signals: "Refresh Portfolio Signals",
-    rebuild_research_universe: "Rebuild Research Universe",
-    prepare_portfolio_review: "Prepare Portfolio Review",
-  }[mode] || "Refresh Stale Only";
-}
-
-function _formatCount(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "unavailable";
-  return n.toLocaleString();
-}
-
-function _impactClass(level) {
-  if (level === "HIGH") return "impact-high";
-  if (level === "MEDIUM") return "impact-medium";
-  return "impact-none";
-}
-
-function _computePortfolioHoldingsCount(signalData) {
-  const coverage = signalData && signalData.portfolio_holdings_coverage;
-  const providers = coverage && coverage.providers ? coverage.providers : {};
-  const applicableCounts = Object.keys(providers)
-    .map((key) => Number(providers[key] && providers[key].applicable_holdings))
-    .filter((n) => Number.isFinite(n) && n >= 0);
-  if (applicableCounts.length) {
-    return Math.max(...applicableCounts);
-  }
-
-  const attempted = ["zacks", "danelfin", "yahoo"]
-    .map((key) => Number(signalData && signalData[key] && signalData[key].attempted_count))
-    .filter((n) => Number.isFinite(n) && n >= 0);
-  if (attempted.length) {
-    return Math.max(...attempted);
-  }
-  return null;
-}
-
-function _updateUniverseCountsFromSignalStatus(signalData) {
-  const holdings = _computePortfolioHoldingsCount(signalData);
-  if (Number.isFinite(holdings)) {
-    _refreshUniverseCounts.portfolio_holdings = holdings;
-  }
-}
-
-function _updateUniverseCountsFromTransparency(payload) {
-  const readiness = payload && payload.readiness ? payload.readiness : {};
-  const researchTotal = Number(readiness.research_universe && readiness.research_universe.total);
-  if (Number.isFinite(researchTotal)) {
-    _refreshUniverseCounts.research_universe = researchTotal;
-  }
-  const staleOrMissing = Number(readiness.research_universe && readiness.research_universe.stale_or_missing);
-  if (Number.isFinite(staleOrMissing)) {
-    _refreshUniverseCounts.stale_symbols = staleOrMissing;
-    _refreshUniverseCounts.stale_source = "core stale/missing";
-  }
-}
-
-function _modeUniverseDescriptor(mode) {
-  if (mode === "portfolio_signals") {
-    return {
-      label: "Portfolio Holdings",
-      count: _formatCount(_refreshUniverseCounts.portfolio_holdings),
-      source: "GET /api/signal-status -> portfolio_holdings_coverage.providers[*].applicable_holdings",
-    };
-  }
-  if (mode === "rebuild_research_universe") {
-    return {
-      label: "Research Universe",
-      count: _formatCount(_refreshUniverseCounts.research_universe),
-      source: "GET /api/refresh-transparency -> readiness.research_universe.total",
-    };
-  }
-  if (mode === "stale_only") {
-    return {
-      label: "Stale Symbols",
-      count: _formatCount(_refreshUniverseCounts.stale_symbols),
-      source: "GET /api/refresh-transparency -> readiness.research_universe.stale_or_missing (core stale/missing proxy)",
-    };
-  }
-  return {
-    label: "Portfolio Review Artifacts",
-    count: "unavailable",
-    source: "No provider-universe count for artifact generation mode",
-  };
-}
-
-function _renderRefreshModeDefinitionPanel(statusData) {
-  const panel = document.getElementById("refreshModeDefinitionPanel");
-  if (!panel) return;
-
-  const mode = _selectedRefreshMode();
-  const def = _REFRESH_MODE_GUIDANCE[mode];
-  if (!def) {
-    panel.innerHTML = '<div class="refresh-mode-purpose">Refresh guidance unavailable.</div>';
-    return;
-  }
-
-  const universe = _modeUniverseDescriptor(mode);
-  const activeLabel = statusData && statusData.running ? _refreshModeLabel(statusData.mode) : "None";
-  const selectedLabel = _refreshModeLabel(mode);
-  const impactRows = [
-    ["Holdings Readiness", def.decisionImpact.holdings_readiness],
-    ["Candidate Readiness", def.decisionImpact.candidate_readiness],
-    ["CW-DAS Queue", def.decisionImpact.cw_das],
-    ["UCF Rankings", def.decisionImpact.ucf],
-    ["Recommendations", def.decisionImpact.recommendations],
-    ["CRA Deployments", def.decisionImpact.cra],
-    ["Data Confidence", def.decisionImpact.data_confidence],
-  ];
-
-  const investmentGuidance = mode === "rebuild_research_universe"
-    ? `
-      <div class="investment-guidance">
-        <h5>Investment Decision Guidance</h5>
-        <p>If you are evaluating new purchases, run Rebuild Research Universe before relying on deployment-oriented surfaces.</p>
-        <ul>
-          <li>CW-DAS rankings</li>
-          <li>UCF rankings</li>
-          <li>Recommendation candidates</li>
-          <li>CRA deployment targets</li>
-        </ul>
-      </div>
-    `
-    : "";
-
-  panel.innerHTML = `
-    <div class="refresh-mode-header">
-      <div class="refresh-mode-title">${selectedLabel}</div>
-      <div class="refresh-mode-purpose">${def.purpose}</div>
-    </div>
-    <div class="refresh-state-line"><strong>Active Refresh:</strong> ${activeLabel} &nbsp;|&nbsp; <strong>Selected Next Refresh:</strong> ${selectedLabel}</div>
-    <div class="refresh-mode-grid" style="margin-top: 8px;">
-      <div class="refresh-mode-card">
-        <h5>Universe</h5>
-        <div class="refresh-mode-detail">${def.scope}</div>
-        <div class="refresh-mode-detail" style="margin-top: 4px;">Current Count: <span class="universe-count-value">${universe.count}</span></div>
-        <div class="refresh-mode-detail" style="margin-top: 4px; color: var(--muted);">Count Source: ${universe.source}</div>
-      </div>
-      <div class="refresh-mode-card">
-        <h5>Estimated Workload</h5>
-        <div class="refresh-mode-detail">Providers: ${mode === "prepare_portfolio_review" ? "0" : "3"}</div>
-        <div class="refresh-mode-detail">Expected Runtime: ${def.runtime}</div>
-      </div>
-      <div class="refresh-mode-card">
-        <h5>Updates</h5>
-        <ul class="refresh-mode-list">
-          ${def.updates.map((item) => `<li>${item}</li>`).join("")}
-        </ul>
-      </div>
-      <div class="refresh-mode-card">
-        <h5>Does Not Update</h5>
-        <ul class="refresh-mode-list">
-          ${def.notUpdated.length ? def.notUpdated.map((item) => `<li class="not-updated">${item}</li>`).join("") : '<li>None</li>'}
-        </ul>
-      </div>
-      <div class="refresh-mode-card" style="grid-column: 1 / -1;">
-        <h5>Decision Impact</h5>
-        <div class="impact-matrix">
-          ${impactRows.map(([label, level]) => `<div class="impact-row">${label}: <span class="${_impactClass(level)}">${level}</span></div>`).join("")}
-        </div>
-      </div>
-      <div class="refresh-mode-card" style="grid-column: 1 / -1;">
-        <h5>Recommended Use</h5>
-        <div class="refresh-mode-detail">${def.recommendedUse}</div>
-      </div>
-    </div>
-    ${investmentGuidance}
-  `;
-}
-
-function _ensureRefreshModeSelectionBinding() {
-  if (_refreshModeSelectBound) return;
-  const select = document.getElementById("signalRefreshMode");
-  if (!select) return;
-  _refreshModeSelectBound = true;
-  select.addEventListener("change", () => {
-    const btn = document.getElementById("signalRefreshBtn");
-    if (btn && !btn.disabled) {
-      btn.textContent = _refreshModeLabel(_selectedRefreshMode());
-    }
-    _renderNextIntentSummary();
-    _renderRefreshModeDefinitionPanel(null);
-  });
-}
-
-function _formatUtc(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
-}
-
-function _refreshMetricStatusClass(status) {
-  if (status === "HIGH") return "candidate-status-high";
-  if (status === "MEDIUM") return "candidate-status-medium";
-  return "candidate-status-low";
-}
-
-function _providerCellHtml(info) {
-  const state = String((info && info.state) || "missing").toLowerCase();
-  const date = info && info.date ? String(info.date) : "NA";
-  const cls = state === "fresh" ? "provider-state-fresh" : state === "stale" ? "provider-state-stale" : "provider-state-missing";
-  return `<span class="${cls}">${state.toUpperCase()}</span> · ${date}`;
-}
-
-function _renderNextIntentSummary() {
-  const el = document.getElementById("refreshNextIntentSummary");
-  if (!el) return;
-  el.innerHTML = `<strong>${_refreshModeLabel(_selectedRefreshMode())}</strong>`;
-}
-
-function _renderActiveRefreshState(statusData) {
-  const summaryEl = document.getElementById("refreshActiveStateSummary");
-  const detailsEl = document.getElementById("refreshActiveStateDetails");
-  if (!summaryEl || !detailsEl) return;
-
-  if (!statusData || !statusData.running) {
-    summaryEl.textContent = "No active refresh job.";
-    detailsEl.innerHTML = "";
-    return;
-  }
-
-  const modeLabel = _refreshModeLabel(statusData.mode);
-  const started = _formatUtc(statusData.started_at_utc);
-  const elapsed = statusData.elapsed_sec != null ? `${Number(statusData.elapsed_sec).toFixed(1)}s` : "—";
-  const stage = statusData.provider_stage || "Waiting";
-  const pCur = statusData.stage_progress_current != null ? Number(statusData.stage_progress_current) : null;
-  const pTot = statusData.stage_progress_total != null ? Number(statusData.stage_progress_total) : null;
-  const currentSymbol = statusData.current_symbol || "—";
-  const stageProgress = pCur != null && pTot != null ? `${pCur} / ${pTot}` : "—";
-
-  summaryEl.innerHTML = `<strong>${modeLabel}</strong>`;
-  detailsEl.innerHTML = [
-    `<span class="refresh-insight-pill"><span class="universe-tag">Provider Batch</span>Stage: ${stage}</span>`,
-    `<span class="refresh-insight-pill"><span class="universe-tag">Provider Batch</span>Progress: ${stageProgress}</span>`,
-    `<span class="refresh-insight-pill">Current Symbol: ${currentSymbol}</span>`,
-    `<span class="refresh-insight-pill">Started: ${started}</span>`,
-    `<span class="refresh-insight-pill">Elapsed: ${elapsed}</span>`,
-    `<span class="refresh-insight-pill">Note: Provider-stage progress, not overall completion.</span>`,
-  ].join("");
-}
-
-function _captureReadinessBaseline(mode, readinessMap) {
-  if (!mode || !readinessMap) return;
-  if (_readinessBaselineByMode[mode]) return;
-  _readinessBaselineByMode[mode] = JSON.parse(JSON.stringify(readinessMap));
-}
-
-function _renderCompletionConfidence(statusData, readinessMap) {
-  const banner = document.getElementById("refreshCompletionBanner");
-  if (!banner) return;
-
-  if (!statusData || statusData.running || !statusData.last_report) {
-    banner.style.display = "none";
-    banner.textContent = "";
-    return;
-  }
-
-  const mode = statusData.last_report.refresh_mode;
-  if (mode !== "rebuild_research_universe") {
-    banner.style.display = "none";
-    banner.textContent = "";
-    return;
-  }
-
-  const baseline = _readinessBaselineByMode[mode];
-  const current = readinessMap || {};
-  const labels = {
-    research_universe: "Research Universe",
-    ucf: "UCF",
-    recommendations: "Recommendations",
-  };
-  const deltaParts = Object.keys(labels).map((key) => {
-    const before = baseline && baseline[key] ? Number(baseline[key].core_fresh_pct || 0) : null;
-    const after = current[key] ? Number(current[key].core_fresh_pct || 0) : 0;
-    const beforeText = before == null ? "n/a" : `${before.toFixed(1)}%`;
-    return `${labels[key]}: ${beforeText} -> ${after.toFixed(1)}%`;
-  });
-
-  const providers = statusData.last_report.providers || {};
-  const names = ["zacks", "danelfin", "yahoo"];
-  let submitted = 0;
-  let refreshed = 0;
-  let failed = 0;
-  names.forEach((name) => {
-    const info = providers[name] || {};
-    submitted += Number(info.submitted || 0);
-    refreshed += Number(info.refreshed || 0);
-    failed += Number(info.failed || 0);
-  });
-
-  const runtime = statusData.last_report.runtime_sec != null ? `${Number(statusData.last_report.runtime_sec).toFixed(1)}s` : "—";
-  const exitCode = statusData.exit_code != null ? String(statusData.exit_code) : "—";
-  banner.style.display = "block";
-  banner.textContent = `Rebuild Research Universe Complete. Runtime ${runtime}. Exit code ${exitCode}. Provider counts: submitted ${submitted}, refreshed ${refreshed}, failed ${failed}. Candidate freshness delta: ${deltaParts.join(" | ")}.`;
-}
-
-function _renderCandidateReadiness(transparencyData) {
-  const grid = document.getElementById("candidateReadinessGrid");
-  if (!grid) return;
-  const readiness = (transparencyData && transparencyData.readiness) || {};
-  const metricOrder = [
-    ["research_universe", "Research Universe"],
-    ["cw_das", "CW-DAS Queue"],
-    ["ucf", "UCF Ranked"],
-    ["recommendations", "Recommendations"],
-    ["cra", "CRA Deployments"],
-  ];
-  const cards = metricOrder.map(([key, title]) => {
-    const metric = readiness[key] || { core_fresh_pct: 0, core_fresh: 0, total: 0, stale_or_missing: 0, status: "LOW" };
-    const cls = _refreshMetricStatusClass(metric.status);
-    return `<div class="candidate-metric-card">
-      <div class="candidate-metric-title"><span class="universe-tag">${key === "research_universe" ? "Research Universe" : "Candidate Set"}</span>${title}</div>
-      <div class="candidate-metric-value">${Number(metric.core_fresh_pct || 0).toFixed(1)}%</div>
-      <div class="candidate-metric-meta">${metric.core_fresh || 0}/${metric.total || 0} core fresh · stale/missing ${metric.stale_or_missing || 0}</div>
-      <span class="candidate-status-badge ${cls}">${metric.status || "LOW"}</span>
-    </div>`;
-  });
-  grid.innerHTML = cards.join("");
-}
-
-function _renderRecommendationFreshness(transparencyData) {
-  const filtersEl = document.getElementById("recommendationFreshnessFilters");
-  const bodyEl = document.getElementById("recommendationFreshnessBody");
-  if (!filtersEl || !bodyEl) return;
-
-  const rows = (transparencyData && transparencyData.rows) || [];
-  const filterDefs = [
-    ["cw_das", "CW-DAS"],
-    ["ucf", "UCF"],
-    ["recommendations", "Recommendations"],
-    ["cra", "CRA"],
-  ];
-
-  filtersEl.innerHTML = filterDefs.map(([key, label]) => {
-    const active = _freshnessFilterState[key] ? "active" : "";
-    return `<button class="refresh-filter-chip ${active}" data-filter="${key}" type="button">${label}</button>`;
-  }).join("");
-
-  const filterKeys = Object.keys(_freshnessFilterState).filter((k) => _freshnessFilterState[k]);
-  const filteredRows = rows.filter((row) => filterKeys.some((k) => row.sources && row.sources[k]));
-
-  if (!filteredRows.length) {
-    bodyEl.innerHTML = '<tr><td colspan="7" style="color: var(--muted);">No symbols match selected filters.</td></tr>';
-  } else {
-    bodyEl.innerHTML = filteredRows.map((row) => `
-      <tr>
-        <td>${row.symbol}</td>
-        <td>${_providerCellHtml(row.zacks)}</td>
-        <td>${_providerCellHtml(row.danelfin)}</td>
-        <td>${_providerCellHtml(row.yahoo)}</td>
-        <td>${_providerCellHtml(row.ess)}</td>
-        <td>${_providerCellHtml(row.fmp)}</td>
-        <td>${row.freshness}</td>
-      </tr>
-    `).join("");
-  }
-
-  filtersEl.querySelectorAll("button[data-filter]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const key = btn.getAttribute("data-filter");
-      if (!key) return;
-      _freshnessFilterState[key] = !_freshnessFilterState[key];
-      if (!Object.values(_freshnessFilterState).some(Boolean)) {
-        _freshnessFilterState[key] = true;
-      }
-      _renderRecommendationFreshness(transparencyData);
-    });
-  });
-}
-
-function _renderRefreshStateFromStatus(statusData) {
-  _renderNextIntentSummary();
-  _renderActiveRefreshState(statusData);
-  _renderRefreshBatch(statusData ? statusData.last_report || null : null, statusData || null);
-  _renderRefreshModeDefinitionPanel(statusData || null);
-}
-
-function _loadRefreshTransparency(statusData) {
-  return fetch("/api/refresh-transparency", { cache: "no-store" })
-    .then((r) => r.ok ? r.json() : Promise.reject())
-    .then((payload) => {
-      _updateUniverseCountsFromTransparency(payload);
-      _renderCandidateReadiness(payload);
-      _renderRecommendationFreshness(payload);
-      if (statusData && statusData.mode && statusData.running) {
-        _captureReadinessBaseline(statusData.mode, payload.readiness || {});
-      }
-      _renderCompletionConfidence(statusData || null, payload.readiness || {});
-      _renderRefreshModeDefinitionPanel(statusData || null);
-      return payload;
-    })
-    .catch(() => {
-      const grid = document.getElementById("candidateReadinessGrid");
-      const body = document.getElementById("recommendationFreshnessBody");
-      if (grid) grid.innerHTML = '<div class="candidate-metric-card">Candidate readiness unavailable.</div>';
-      if (body) body.innerHTML = '<tr><td colspan="7" style="color: var(--muted);">Recommendation freshness unavailable.</td></tr>';
-      _renderCompletionConfidence(statusData || null, {});
-      _renderRefreshModeDefinitionPanel(statusData || null);
-      return null;
-    });
-}
-
-function _renderRefreshBatch(report, statusData) {
-  const summaryEl = document.getElementById("refreshBatchSummary");
-  const pillsEl = document.getElementById("refreshBatchPills");
-  if (!summaryEl || !pillsEl) return;
-
-  if (!report || !report.providers) {
-    summaryEl.textContent = "No refresh has run yet.";
-    pillsEl.innerHTML = "";
-    return;
-  }
-
-  const modeLabel = report.refresh_mode_label || _refreshModeLabel(report.refresh_mode);
-  const providers = ["zacks", "danelfin", "yahoo"];
-  let submitted = 0;
-  let succeeded = 0;
-  let failed = 0;
-  const pills = [];
-
-  providers.forEach((provider) => {
-    const info = report.providers[provider];
-    if (!info) return;
-    const providerSubmitted = Number(info.submitted || 0);
-    const providerSucceeded = Number(info.refreshed || 0);
-    const providerFailed = Number(info.failed || 0);
-    submitted += providerSubmitted;
-    succeeded += providerSucceeded;
-    failed += providerFailed;
-    pills.push(`<span class="refresh-insight-pill">${provider}: ${providerSubmitted} submitted / ${providerSucceeded} succeeded / ${providerFailed} failed</span>`);
-  });
-
-  const duration = report.runtime_sec != null ? `${Number(report.runtime_sec).toFixed(1)}s` : "—";
-  const completed = statusData && statusData.completed_at_utc ? _formatUtc(statusData.completed_at_utc) : "—";
-  const exitCode = statusData && statusData.exit_code != null ? String(statusData.exit_code) : "—";
-  summaryEl.textContent = `${modeLabel} · Completed ${completed} · Runtime ${duration} · Submitted ${submitted} · Succeeded ${succeeded} · Failed ${failed} · Exit ${exitCode}`;
-  pillsEl.innerHTML = pills.join("");
-}
-
-function _renderDecisionReadiness(data) {
-  const summaryEl = document.getElementById("decisionReadinessSummary");
-  const pillsEl = document.getElementById("decisionReadinessPills");
-  if (!summaryEl || !pillsEl) return;
-
-  const rows = [];
-  const pills = [];
-  const essState = data.ess && data.ess.badge_state ? String(data.ess.badge_state) : "UNKNOWN";
-  const essCurrent = essState === "FRESH";
-  const essLabel = essState === "FRESH" ? "Current" : essState === "FRESH_PARTIAL" ? "Warning" : essState === "STALE" ? "Stale" : "Unknown";
-  rows.push({ label: "ESS", current: essCurrent, status: essLabel });
-  pills.push(`<span class="refresh-insight-pill">ESS: ${essLabel}</span>`);
-
-  const holdingsProviders = (data.portfolio_holdings_coverage && data.portfolio_holdings_coverage.providers) || {};
-  ["zacks", "danelfin", "yahoo"].forEach((key) => {
-    const providerInfo = holdingsProviders[key] || null;
-    const providerStatus = providerInfo && providerInfo.status ? String(providerInfo.status) : "UNKNOWN";
-    const providerLabel = providerStatus === "COMPLIANT" ? "Current" : providerStatus === "DEGRADED" ? "Warning" : providerStatus === "NON_COMPLIANT" ? "Stale" : "Unknown";
-    rows.push({ label: key, current: providerStatus === "COMPLIANT", status: providerLabel });
-    pills.push(`<span class="refresh-insight-pill">${key.charAt(0).toUpperCase()}${key.slice(1)}: ${providerLabel}</span>`);
-  });
-
-  const readiness = rows.every(row => row.current) ? "HIGH" : rows.some(row => row.status === "Warning") ? "MEDIUM" : "LOW";
-  const readinessCls = readiness === "HIGH" ? "readiness-high" : readiness === "MEDIUM" ? "readiness-medium" : "readiness-low";
-  summaryEl.innerHTML = `Readiness: <span class="${readinessCls}">${readiness}</span>`;
-  pillsEl.innerHTML = pills.join("");
-}
 
 function loadSignalStatus() {
-  _ensureRefreshModeSelectionBinding();
-  // Fetch both signal status and refresh status in parallel, then render with full context
-  Promise.all([
-    fetch("/api/signal-status", { cache: "no-store" }).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-    fetch("/api/signal-refresh/status", { cache: "no-store" }).then(r => r.ok ? r.json() : Promise.reject()),
-  ])
-    .then(([signalData, refreshStatusData]) => {
-      _updateUniverseCountsFromSignalStatus(signalData);
-      // Render with knowledge of whether refresh is running
-      _renderSignalPills(signalData, refreshStatusData && refreshStatusData.running);
-      _renderHoldingsCoverage(signalData.portfolio_holdings_coverage || null);
-      _renderDecisionReadiness(signalData);
-      _renderRefreshStateFromStatus(refreshStatusData);
-      _loadRefreshTransparency(refreshStatusData);
-
-      if (signalData._running) {
+  fetch("/api/signal-status", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(data => {
+      _renderSignalPills(data);
+      _renderHoldingsCoverage(data.portfolio_holdings_coverage || null);
+      if (data._running) {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
-        const mode = _selectedRefreshMode();
-        if (btn) { btn.disabled = true; btn.textContent = `Refresh Running...`; }
-        if (msg) { msg.style.display = ""; msg.textContent = `${_refreshModeLabel(mode)} selected as next intent. Active mode shown in Active Job.`; }
+        if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
+        if (msg) { msg.style.display = ""; msg.textContent = "Refresh in progress (smart mode \u2014 mandatory holdings included). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background."; }
         _startRefreshPoll();
       }
     })
@@ -2048,29 +1445,18 @@ function loadSignalStatus() {
       if (el) el.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Status unavailable \u2014 API not reachable</span>';
       const holdingsEl = document.getElementById("holdingsCoveragePills");
       const holdingsSummaryEl = document.getElementById("holdingsCoverageSummary");
-      const readinessEl = document.getElementById("decisionReadinessSummary");
-      _renderRefreshStateFromStatus(null);
-      _loadRefreshTransparency(null);
       if (holdingsEl) holdingsEl.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Coverage unavailable \u2014 API not reachable</span>';
       if (holdingsSummaryEl) holdingsSummaryEl.textContent = 'Coverage unavailable.';
-      if (readinessEl) readinessEl.textContent = 'Readiness unavailable.';
     });
 }
 
-function _renderSignalPills(data, refreshRunning) {
+function _renderSignalPills(data) {
   const el = document.getElementById("signalStatusPills");
   if (!el) return;
-
-  // If a refresh is currently running, show a placeholder instead of stale data
-  if (refreshRunning) {
-    el.innerHTML = '<div class="signal-pill signal-pill-refreshing"><span class="dot dot-refreshing"></span><div class="pill-body"><div class="pill-main-row"><span class="pill-label">Provider Data</span><span class="pill-status-refreshing">(refreshing)</span></div><div class="pill-detail-row"><span class="pill-coverage">Provider health cards are disabled while refresh is in progress. Check back after refresh completes.</span></div></div></div>';
-    return;
-  }
-
   const holdingsProviders = (data.portfolio_holdings_coverage && data.portfolio_holdings_coverage.providers) || {};
   const providers = ["ess", "zacks", "danelfin", "yahoo"];
-  const labels    = { ess: "ESS", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
-  el.innerHTML = providers.filter(k => k in data).map(key => {
+  const labels = { ess: "ESS / LSEG", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  const renderPill = (key) => {
     const info    = data[key];
     const label   = labels[key];
     const dateStr = info.sourced_date || "—";
@@ -2110,7 +1496,7 @@ function _renderSignalPills(data, refreshRunning) {
     let coverageHtml = "";
     if (info.attempted_count != null) {
       const covPct = info.coverage_pct != null ? info.coverage_pct.toFixed(1) : "—";
-      coverageHtml = `<span class="pill-coverage"><span class="universe-tag">Provider Today Rows</span>${info.with_data_count}/${info.attempted_count} rows · ${covPct}%</span>`;
+      coverageHtml = `<span class="pill-coverage">${info.with_data_count}/${info.attempted_count} rows · ${covPct}%</span>`;
     }
 
     // Degraded fields warning
@@ -2127,16 +1513,13 @@ function _renderSignalPills(data, refreshRunning) {
     let warningHtml = "";
     if (info.coverage_warning_count > 0) {
       const examples = (info.coverage_warning_examples || []).join(", ");
-      const missing = Number(info.coverage_true_missing_count || 0);
-      const stale = Number(info.coverage_stale_count || 0);
-      const noFresh = Number(info.coverage_no_fresh_starmine_count || 0);
-      warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} need attention (missing ${missing}, stale ${stale}, no fresh StarMine ${noFresh})${examples ? ` · ${examples}` : ""}</span>`;
+      warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} holdings absent${examples ? ` · ${examples}` : ""}</span>`;
     }
 
     let holdingsHtml = "";
     const holdingsInfo = holdingsProviders[key] || null;
     if (holdingsInfo && holdingsInfo.status && holdingsInfo.status !== "COMPLIANT") {
-      holdingsHtml = `<span class="pill-degraded"><span class="universe-tag">Holdings</span>Coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
+      holdingsHtml = `<span class="pill-degraded">Holdings coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
     }
 
     const extraLines = [coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
@@ -2152,7 +1535,24 @@ function _renderSignalPills(data, refreshRunning) {
         ${extraLines ? `<div class="pill-detail-row">${extraLines}</div>` : ""}
       </div>
     </div>`;
-  }).join("");
+    };
+
+  const automatedProviders = ["zacks", "danelfin", "yahoo"].filter((k) => k in data);
+  const manualProviders = ["ess"].filter((k) => k in data);
+  const sections = [];
+  if (automatedProviders.length) {
+    sections.push(
+      `<div class="refresh-state-line"><strong>Automated Research Providers</strong></div>` +
+      `<div class="signal-status-row">${automatedProviders.map(renderPill).join("")}</div>`
+    );
+  }
+  if (manualProviders.length) {
+    sections.push(
+      `<div class="refresh-state-line" style="margin-top: 6px;"><strong>Manual Source Freshness</strong></div>` +
+      `<div class="signal-status-row">${manualProviders.map(renderPill).join("")}</div>`
+    );
+  }
+  el.innerHTML = sections.length ? sections.join("") : '<span style="color: var(--muted); font-size: 0.83rem;">No provider freshness data.</span>';
 }
 
 function _renderHoldingsCoverage(coverage) {
@@ -2191,9 +1591,9 @@ function _renderHoldingsCoverage(coverage) {
     const statusLabel = String(status).toLowerCase().replaceAll("_", " ");
 
     const detail = [
-      `<span class="universe-tag">Holdings</span>Applicable: ${info.applicable_holdings}`,
-      `<span class="universe-tag">Holdings</span>Covered today: ${info.covered_today}`,
-      `<span class="universe-tag">Holdings</span>Within threshold: ${info.covered_within_threshold}`,
+      `Applicable: ${info.applicable_holdings}`,
+      `Covered today: ${info.covered_today}`,
+      `Within threshold: ${info.covered_within_threshold}`,
       `Stale: ${info.stale}`,
       `Missing: ${info.missing}`,
       `Not applicable: ${info.not_applicable}`,
@@ -2217,48 +1617,29 @@ function triggerSignalRefresh() {
   const btn = document.getElementById("signalRefreshBtn");
   const msg = document.getElementById("signalRefreshMsg");
   if (!btn || !msg) return;
-  const mode = _selectedRefreshMode();
-  if (mode === "rebuild_research_universe") {
-    const proceed = window.confirm("This will refresh approximately 2,473 research-universe symbols. Historical snapshots and trend history will be retained. This may take significantly longer than holdings-only refresh. Continue?");
-    if (!proceed) {
-      btn.disabled = false;
-      btn.textContent = _refreshModeLabel(mode);
-      return;
-    }
-  }
   // Disable immediately to prevent double-click while the POST is in-flight
   btn.disabled = true;
-  btn.textContent = `Starting ${_refreshModeLabel(mode)}...`;
+  btn.textContent = "Starting…";
 
-  fetch("/api/signal-refresh", {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      intent: mode,
-      requested_by: "operator",
-      source: "outcome_visualization",
-    }),
-  })
+  fetch("/api/signal-refresh", { method: "POST", cache: "no-store" })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(data => {
       msg.style.display = "";
-      _captureReadinessBaseline(data.mode || mode, null);
       if (data.started === false) {
         // Already running — keep button disabled and start polling
-        btn.textContent = "Refresh Running...";
-        msg.textContent = "Refresh already running. Active mode is shown in Active Job.";
+        btn.textContent = "Refreshing\u2026";
+        msg.textContent = "Refresh already running in background.";
         _startRefreshPoll();
         return;
       }
       btn.disabled = true;
-      btn.textContent = "Refresh Running...";
-      msg.textContent = `${_refreshModeLabel(mode)} started. Provider-stage progress appears in Active Job.`;
+      btn.textContent = "Refreshing\u2026";
+      msg.textContent = "Refresh started (coverage-aware mode). Running in background\u2026";
       _startRefreshPoll();
     })
     .catch(() => {
       btn.disabled = false;
-      btn.textContent = _refreshModeLabel(mode);
+      btn.textContent = "Refresh Stale";
       msg.style.display = "";
       msg.textContent = "Could not start refresh \u2014 is the server running with API support?";
     });
@@ -2270,35 +1651,15 @@ function _startRefreshPoll() {
     fetch("/api/signal-refresh/status", { cache: "no-store" })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
-        const msg = document.getElementById("signalRefreshMsg");
-        _renderRefreshStateFromStatus(data);
-        _loadRefreshTransparency(data);
-        if (data.running) {
-          const activeMode = data.mode || _selectedRefreshMode();
-          const modeLabel = _refreshModeLabel(activeMode);
-          const elapsed = data.elapsed_sec != null ? `${Number(data.elapsed_sec).toFixed(1)}s` : "...";
-          const stage = data.provider_stage || "Waiting";
-          const cur = data.stage_progress_current != null ? Number(data.stage_progress_current) : null;
-          const tot = data.stage_progress_total != null ? Number(data.stage_progress_total) : null;
-          const progress = cur != null && tot != null ? `${cur} / ${tot}` : "—";
-          const symbol = data.current_symbol || "—";
-          if (msg) {
-            msg.style.display = "";
-            msg.textContent = `${modeLabel} in progress (${elapsed}) · Stage ${stage} · Provider batch ${progress} · Symbol ${symbol}.`;
-          }
-          return;
-        }
-
         if (!data.running) {
           clearInterval(_refreshPollTimer);
           _refreshPollTimer = null;
           const btn = document.getElementById("signalRefreshBtn");
-          const mode = _selectedRefreshMode();
-          if (btn) { btn.disabled = false; btn.textContent = _refreshModeLabel(mode); }
+          const msg = document.getElementById("signalRefreshMsg");
+          if (btn) { btn.disabled = false; btn.textContent = "Refresh Stale"; }
           if (msg) {
             msg.textContent = _buildRefreshOutcomeMessage(data.last_report || null);
           }
-          _renderRefreshBatch(data.last_report || null, data || null);
           loadSignalStatus();
         }
       })

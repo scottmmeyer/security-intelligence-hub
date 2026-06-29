@@ -6,14 +6,10 @@ Static files are served from the repository root.
 API endpoints:
   GET  /api/signal-status          → JSON: last sourced_date and staleness per provider
   POST /api/signal-refresh         → launch scripts/refresh_signals.py as background process
-    GET  /api/signal-refresh/status  → JSON: running + exit_code + last_report
+  GET  /api/signal-refresh/status  → JSON: {"running": true/false}
   POST /api/portfolio/analyze      → ingest + enrich + align portfolio CSV; returns full analysis
   GET  /api/portfolio/runs         → list all completed portfolio analysis runs
   GET  /api/portfolio/runs/{id}    → load a specific analysis run by run_id
-  GET  /api/cpv/latest             → current portfolio compliance validator results
-  GET  /api/drift/summary          → allocation drift summary (CPV trend table + banner data)
-  GET  /api/drift/timeline         → time series for a single CPV rule (?rule_id=CPV-01)
-  GET  /api/signal-conflicts       → advisory conflict badges for symbols (?symbols=VRT,NUE,...)
 """
 
 from __future__ import annotations
@@ -39,114 +35,20 @@ _SIGNAL_FILES = {
     "danelfin": _REPO_ROOT / "data/signals/danelfin/latest_danelfin.csv",
     "yahoo":    _REPO_ROOT / "data/signals/yahoo/latest_yahoo_supplemental.csv",
 }
-_ESS_SIGNAL_SNAPSHOT = _REPO_ROOT / "data/current/signal_snapshot.csv"
-_ESS_COVERAGE_WARNING = _REPO_ROOT / "data/current/ess_coverage_warning.json"
+_ESS_SIGNAL_SNAPSHOT = _REPO_ROOT / "data" / "current" / "signal_snapshot.csv"
+_ESS_COVERAGE_WARNING = _REPO_ROOT / "data" / "current" / "ess_coverage_warning.json"
 _REFRESH_REPORT_PATH = _REPO_ROOT / "data" / "current" / "last_signal_refresh_report.json"
 
 # Background refresh process handle (module-level so Handler instances share it)
 _refresh_proc: subprocess.Popen | None = None
 _refresh_last_report: dict | None = None
 _refresh_last_exit_code: int | None = None
-_refresh_requested_intent: str | None = None
-_refresh_resolved_intent: str | None = None
-_refresh_universe_scope: str | None = None
-_refresh_estimated_symbol_count: int | None = None
-_refresh_updates: list[str] = []
-_refresh_does_not_update: list[str] = []
-_refresh_research_universe_expected: bool = False
-_refresh_candidate_readiness_expected: bool = False
-_refresh_started_at_utc: str | None = None
-_refresh_completed_at_utc: str | None = None
-
-_REFRESH_INTENT_CATALOG: dict[str, dict[str, object]] = {
-    "portfolio_signals": {
-        "resolved_intent": "portfolio_signals",
-        "refresh_mode": "portfolio_signals",
-        "use_smart": True,
-        "entrypoint": "refresh_signals",
-        "universe_scope": "portfolio_holdings",
-        "updates": [
-            "holdings_readiness",
-            "zacks_holdings_rows",
-            "danelfin_holdings_rows",
-            "yahoo_holdings_rows",
-        ],
-        "does_not_update": [
-            "research_universe_freshness",
-            "cw_das_candidate_inputs",
-            "ucf_candidate_inputs",
-            "recommendation_candidate_set",
-            "cra_candidate_targets",
-        ],
-        "research_universe_freshness_expected": False,
-        "candidate_readiness_expected": False,
-    },
-    "rebuild_research_universe": {
-        "resolved_intent": "rebuild_research_universe",
-        "refresh_mode": "rebuild_research_universe",
-        "use_smart": False,
-        "entrypoint": "refresh_signals",
-        "universe_scope": "research_universe",
-        "updates": [
-            "research_universe_freshness",
-            "cw_das_candidate_inputs",
-            "ucf_candidate_inputs",
-            "recommendation_candidate_set",
-            "cra_candidate_targets",
-        ],
-        "does_not_update": [],
-        "research_universe_freshness_expected": True,
-        "candidate_readiness_expected": True,
-    },
-    "prepare_portfolio_review": {
-        "resolved_intent": "prepare_portfolio_review",
-        "refresh_mode": "prepare_portfolio_review",
-        "use_smart": False,
-        "entrypoint": "prepare_portfolio_review",
-        "universe_scope": "portfolio_review_bundle",
-        "updates": [
-            "portfolio_review_artifacts",
-            "alignment_report_surfaces",
-        ],
-        "does_not_update": [
-            "research_universe_freshness_guarantee",
-        ],
-        "research_universe_freshness_expected": False,
-        "candidate_readiness_expected": False,
-    },
-    "refresh_stale_only": {
-        "resolved_intent": "refresh_stale_only",
-        "refresh_mode": "stale_only",
-        "use_smart": True,
-        "entrypoint": "refresh_signals",
-        "universe_scope": "stale_subset",
-        "updates": [
-            "provider_stale_or_missing_repairs",
-            "holdings_coverage_repairs",
-        ],
-        "does_not_update": [
-            "research_universe_rebuild_guarantee",
-            "cw_das_candidate_inputs_guarantee",
-            "ucf_candidate_inputs_guarantee",
-            "recommendation_candidate_set_guarantee",
-            "cra_candidate_targets_guarantee",
-        ],
-        "research_universe_freshness_expected": False,
-        "candidate_readiness_expected": False,
-    },
-}
 
 # On-demand score fetch jobs keyed by symbol (uppercase)
 _fetch_jobs: dict[str, dict] = {}
 _fetch_lock = threading.Lock()
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
-
-
-class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    """Threaded HTTP server so slow requests do not block unrelated endpoints."""
-
-    daemon_threads = True
 
 
 def _sourced_date(csv_path: Path) -> str | None:
@@ -168,6 +70,17 @@ def _sourced_date(csv_path: Path) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _count_research_universe_rows() -> int | None:
+    csv_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
+    if not csv_path.exists():
+        return None
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            return sum(1 for _ in csv.DictReader(fh))
+    except Exception:
+        return None
 
 
 def _latest_snapshot_date(csv_path: Path) -> str | None:
@@ -193,136 +106,6 @@ def _load_ess_coverage_warning() -> dict:
         return json.loads(_ESS_COVERAGE_WARNING.read_text(encoding="utf-8"))
     except Exception:
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
-
-
-def _normalize_refresh_intent(intent: object | None) -> str:
-    raw = str(intent or "").strip().lower()
-    if not raw:
-        return "portfolio_signals"
-    alias_map = {
-        "stale_only": "refresh_stale_only",
-        "refresh_stale_only": "refresh_stale_only",
-        "portfolio_signals": "portfolio_signals",
-        "rebuild_research_universe": "rebuild_research_universe",
-        "prepare_portfolio_review": "prepare_portfolio_review",
-    }
-    return alias_map.get(raw, "")
-
-
-def _estimate_portfolio_holdings_count() -> int | None:
-    try:
-        if str(_REPO_ROOT) not in sys.path:
-            sys.path.insert(0, str(_REPO_ROOT))
-        from src.portfolio.holdings_coverage import summarize_holdings_coverage
-
-        analysis_runs_root = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
-        base_universe_csv = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
-        counts: list[int] = []
-        for provider_name in ("zacks", "danelfin", "yahoo"):
-            latest_csv = _SIGNAL_FILES.get(provider_name)
-            if latest_csv is None:
-                continue
-            summary = summarize_holdings_coverage(
-                provider=provider_name,
-                latest_csv=latest_csv,
-                analysis_runs_root=analysis_runs_root,
-                base_universe_csv=base_universe_csv,
-                threshold_days=2,
-            )
-            val = int(summary.get("applicable_holdings") or 0)
-            if val > 0:
-                counts.append(val)
-        return max(counts) if counts else None
-    except Exception:
-        return None
-
-
-def _count_research_universe_rows() -> int | None:
-    csv_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
-    if not csv_path.exists():
-        return None
-    try:
-        with csv_path.open("r", encoding="utf-8", newline="") as fh:
-            return sum(1 for _ in csv.DictReader(fh))
-    except Exception:
-        return None
-
-
-def _estimated_count_for_intent(resolved_intent: str) -> int | None:
-    if resolved_intent == "portfolio_signals":
-        return _estimate_portfolio_holdings_count()
-    if resolved_intent == "rebuild_research_universe":
-        return _count_research_universe_rows()
-    if resolved_intent == "prepare_portfolio_review":
-        return _estimate_portfolio_holdings_count()
-    return None
-
-
-def _refresh_metadata_from_report(report: dict | None) -> dict[str, object]:
-    if not isinstance(report, dict):
-        return {}
-    mode = str(report.get("refresh_mode") or "").strip().lower()
-    if mode == "stale_only":
-        resolved = "refresh_stale_only"
-    elif mode in {"portfolio_signals", "rebuild_research_universe", "prepare_portfolio_review"}:
-        resolved = mode
-    else:
-        resolved = ""
-    if not resolved:
-        return {}
-
-    entry = _REFRESH_INTENT_CATALOG.get(resolved) or {}
-    return {
-        "requested_intent": resolved,
-        "resolved_intent": resolved,
-        "universe_scope": entry.get("universe_scope"),
-        "estimated_symbol_count": _estimated_count_for_intent(resolved),
-        "updates": list(entry.get("updates") or []),
-        "does_not_update": list(entry.get("does_not_update") or []),
-        "research_universe_freshness_expected": bool(entry.get("research_universe_freshness_expected")),
-        "candidate_readiness_expected": bool(entry.get("candidate_readiness_expected")),
-    }
-
-
-def _sanitize_nan(obj: object) -> object:
-    """Recursively replace NaN/Inf floats with None so JSON serialization succeeds."""
-    if isinstance(obj, float):
-        import math
-        return None if (math.isnan(obj) or math.isinf(obj)) else obj
-    if isinstance(obj, dict):
-        return {k: _sanitize_nan(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_nan(v) for v in obj]
-    return obj
-
-
-def _attach_explanations(result: dict) -> dict:
-    if not isinstance(result, dict):
-        return result
-    run_id = str(result.get("run_id", "")).strip()
-    if not run_id:
-        return result
-    try:
-        import sys as _sys
-        if str(_REPO_ROOT) not in _sys.path:
-            _sys.path.insert(0, str(_REPO_ROOT))
-        from src.sih.allocation_explainability import (
-            explanations_for_run,
-            refresh_allocation_explanations,
-        )
-
-        refresh_allocation_explanations(
-            analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-            output_root=_REPO_ROOT / "data" / "history" / "explanations",
-        )
-        result["explanations_by_recommendation"] = explanations_for_run(
-            run_id,
-            analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-            output_root=_REPO_ROOT / "data" / "history" / "explanations",
-        )
-    except Exception:
-        result["explanations_by_recommendation"] = {}
-    return result
 
 
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
@@ -478,19 +261,17 @@ def _signal_status() -> dict:
             "stale": sd != today,
             "exists": path.exists(),
         }
-        # ── SI-REFRESH-02: Add coverage metrics ──────────────────────────────
-        # Primary fields define data quality; 0% coverage on any primary field
-        # indicates a silent partial failure even when sourced_date == today.
+
+        # Provider row-level coverage metrics for current sourced_date.
         _PRIMARY_FIELDS: dict[str, list[str]] = {
-            "zacks":    ["zacks_rank", "zacks_score"],
+            "zacks": ["zacks_rank", "zacks_score"],
             "danelfin": ["danelfin_raw", "danelfin_score"],
-            "yahoo":    ["price_target", "analyst_count", "current_price"],
+            "yahoo": ["price_target", "analyst_count", "current_price"],
         }
         _ALL_SCORE_FIELDS: dict[str, list[str]] = {
-            "zacks":    ["zacks_rank", "zacks_score", "abr", "price_target", "eps_growth"],
+            "zacks": ["zacks_rank", "zacks_score", "abr", "price_target", "eps_growth"],
             "danelfin": ["danelfin_raw", "danelfin_score"],
-            "yahoo":    ["price_target", "abr", "analyst_count", "current_price",
-                         "upside_pct", "eps_growth_5yr"],
+            "yahoo": ["price_target", "abr", "analyst_count", "current_price", "upside_pct", "eps_growth_5yr"],
         }
         primary_fields = _PRIMARY_FIELDS.get(name, [])
         all_fields = _ALL_SCORE_FIELDS.get(name, [])
@@ -503,40 +284,26 @@ def _signal_status() -> dict:
                         if str(row.get("sourced_date", "")).strip() == today:
                             today_rows.append(row)
                 attempted = len(today_rows)
-                # "with data" = row has at least one primary field non-empty
                 with_data = sum(
-                    1 for r in today_rows
-                    if any(r.get(f, "").strip() for f in primary_fields)
+                    1 for r in today_rows if any(r.get(f, "").strip() for f in primary_fields)
                 ) if primary_fields else attempted
                 coverage_pct = round(with_data / attempted * 100, 1) if attempted else 0.0
-                # Per-field coverage on score fields
                 field_coverage: dict[str, float] = {}
-                for f in all_fields:
-                    n = sum(1 for r in today_rows if r.get(f, "").strip())
-                    field_coverage[f] = round(n / attempted * 100, 1) if attempted else 0.0
-                # Degraded fields = primary fields with 0% coverage today
+                for field in all_fields:
+                    n = sum(1 for r in today_rows if r.get(field, "").strip())
+                    field_coverage[field] = round(n / attempted * 100, 1) if attempted else 0.0
                 degraded = [f for f in primary_fields if field_coverage.get(f, 100) == 0.0]
-                # All score fields with 0% coverage (for extended reporting)
                 zero_fields = [f for f in all_fields if field_coverage.get(f, 100) == 0.0]
 
-                entry["attempted_count"]     = attempted
-                entry["with_data_count"]     = with_data
-                entry["coverage_pct"]        = coverage_pct
-                entry["primary_field_coverage"] = {
-                    f: field_coverage[f] for f in primary_fields
-                }
-                entry["degraded_fields"]     = degraded  # primary fields at 0%
-                entry["zero_coverage_fields"] = zero_fields  # all fields at 0%
-
-                # Badge state
-                # FRESH: today, ≥95% row coverage, no primary field at 0%
-                # FRESH_PARTIAL: today but coverage <95% OR a primary field at 0%
-                if coverage_pct < 95.0 or degraded:
-                    entry["badge_state"] = "FRESH_PARTIAL"
-                else:
-                    entry["badge_state"] = "FRESH"
+                entry["attempted_count"] = attempted
+                entry["with_data_count"] = with_data
+                entry["coverage_pct"] = coverage_pct
+                entry["primary_field_coverage"] = {f: field_coverage[f] for f in primary_fields}
+                entry["degraded_fields"] = degraded
+                entry["zero_coverage_fields"] = zero_fields
+                entry["badge_state"] = "FRESH_PARTIAL" if coverage_pct < 95.0 or degraded else "FRESH"
             except Exception:
-                entry["badge_state"] = "FRESH"  # degrade gracefully
+                entry["badge_state"] = "FRESH"
         elif sd == today:
             entry["badge_state"] = "FRESH"
         else:
@@ -610,6 +377,213 @@ def _signal_status() -> dict:
     result["ess"] = ess_entry
     return result
 
+def _readiness_status_from_pct(core_fresh_pct: float) -> str:
+    if core_fresh_pct >= 95.0:
+        return "HIGH"
+    if core_fresh_pct >= 80.0:
+        return "MEDIUM"
+    return "LOW"
+
+def _provider_cell(provider_data: dict[str, object], provider_name: str) -> dict[str, str]:
+    sourced_date = str(provider_data.get("sourced_date") or "")
+    badge_state = str(provider_data.get("badge_state") or "")
+    holdings_status = str(provider_data.get("holdings_status") or "")
+    state = "missing"
+    if provider_name == "ess":
+        if badge_state in {"FRESH", "FRESH_PARTIAL"}:
+            state = "fresh"
+        elif badge_state == "STALE" or sourced_date:
+            state = "stale"
+    elif badge_state in {"FRESH", "FRESH_PARTIAL"} and holdings_status == "COMPLIANT":
+        state = "fresh"
+    elif sourced_date:
+        state = "stale"
+    return {
+        "provider": provider_name,
+        "state": state,
+        "date": sourced_date or "NA",
+    }
+
+def _refresh_transparency_payload() -> dict[str, object]:
+    signal_data = _signal_status()
+
+    report = _refresh_last_report if isinstance(_refresh_last_report, dict) else None
+    if report is None and _REFRESH_REPORT_PATH.exists():
+        try:
+            report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            report = None
+
+    providers = report.get("providers") if isinstance(report, dict) else None
+    if not isinstance(providers, dict):
+        providers = {}
+
+    provider_metrics: dict[str, dict[str, int]] = {}
+    warnings: list[str] = []
+    for provider in ("zacks", "danelfin", "yahoo"):
+        info = providers.get(provider)
+        if not isinstance(info, dict):
+            provider_metrics[provider] = {
+                "submitted": 0,
+                "written": 0,
+                "written_refresh_date": 0,
+                "primary_data": 0,
+                "no_coverage": 0,
+                "no_score": 0,
+                "stale_carryover": 0,
+                "true_error": 0,
+                "missing_written": 0,
+                "failed": 0,
+            }
+            continue
+        provider_metrics[provider] = {
+            "submitted": int(info.get("submitted_count") or info.get("submitted") or 0),
+            "written": int(info.get("written_count") or 0),
+            "written_refresh_date": int(info.get("written_refresh_date_count") or info.get("refreshed") or 0),
+            "primary_data": int(info.get("primary_data_count") or 0),
+            "no_coverage": int(info.get("no_coverage_count") or 0),
+            "no_score": int(info.get("no_score_count") or 0),
+            "stale_carryover": int(info.get("stale_carryover_count") or 0),
+            "true_error": int(info.get("true_error_count") or info.get("failed") or 0),
+            "missing_written": int(info.get("missing_written_count") or 0),
+            "failed": int(info.get("failed") or 0),
+        }
+        if provider_metrics[provider]["stale_carryover"] > 0:
+            warnings.append(f"{provider}: stale carryover rows detected")
+        if provider_metrics[provider]["missing_written"] > 0:
+            warnings.append(f"{provider}: missing writes detected")
+
+    research_total = _count_research_universe_rows()
+    if research_total is None or research_total <= 0:
+        research_total = max(
+            int((signal_data.get("zacks") or {}).get("attempted_count") or 0),
+            int((signal_data.get("danelfin") or {}).get("attempted_count") or 0),
+            int((signal_data.get("yahoo") or {}).get("attempted_count") or 0),
+            0,
+        )
+
+    zacks_fresh = int((signal_data.get("zacks") or {}).get("with_data_count") or 0)
+    danelfin_fresh = int((signal_data.get("danelfin") or {}).get("with_data_count") or 0)
+    yahoo_fresh = int((signal_data.get("yahoo") or {}).get("with_data_count") or 0)
+    provider_fresh_counts = [n for n in (zacks_fresh, danelfin_fresh, yahoo_fresh) if n > 0]
+    core_fresh = min(provider_fresh_counts) if provider_fresh_counts else 0
+    stale_or_missing = max(research_total - core_fresh, 0)
+    core_fresh_pct = round((core_fresh / research_total * 100.0), 1) if research_total > 0 else 0.0
+    readiness_status = _readiness_status_from_pct(core_fresh_pct)
+
+    readiness_block = {
+        "core_fresh_pct": core_fresh_pct,
+        "core_fresh": core_fresh,
+        "total": research_total,
+        "stale_or_missing": stale_or_missing,
+        "status": readiness_status,
+    }
+    readiness = {
+        "research_universe": dict(readiness_block),
+        "cw_das": dict(readiness_block),
+        "ucf": dict(readiness_block),
+        "recommendations": dict(readiness_block),
+        "cra": dict(readiness_block),
+    }
+
+    holdings_providers = ((signal_data.get("portfolio_holdings_coverage") or {}).get("providers") or {})
+    symbols: set[str] = set()
+    provider_symbol_maps: dict[str, dict[str, object]] = {}
+    for provider in ("zacks", "danelfin", "yahoo"):
+        p_summary = holdings_providers.get(provider) if isinstance(holdings_providers, dict) else {}
+        p_symbols = p_summary.get("symbols") if isinstance(p_summary, dict) else {}
+        if not isinstance(p_symbols, dict):
+            p_symbols = {}
+        provider_symbol_maps[provider] = p_symbols
+        for symbol, info in p_symbols.items():
+            if isinstance(info, dict) and info.get("applicable"):
+                symbols.add(str(symbol).strip().upper())
+
+    rows: list[dict[str, object]] = []
+    for symbol in sorted(s for s in symbols if s):
+        row = {
+            "symbol": symbol,
+            "zacks": _provider_cell(signal_data.get("zacks") if isinstance(signal_data.get("zacks"), dict) else {}, "zacks"),
+            "danelfin": _provider_cell(signal_data.get("danelfin") if isinstance(signal_data.get("danelfin"), dict) else {}, "danelfin"),
+            "yahoo": _provider_cell(signal_data.get("yahoo") if isinstance(signal_data.get("yahoo"), dict) else {}, "yahoo"),
+            "ess": _provider_cell(signal_data.get("ess") if isinstance(signal_data.get("ess"), dict) else {}, "ess"),
+            "fmp": {"provider": "fmp", "state": "missing", "date": "NA"},
+            "sources": {
+                "cw_das": True,
+                "ucf": True,
+                "recommendations": True,
+                "cra": True,
+            },
+            "freshness": "FRESH",
+        }
+        for provider in ("zacks", "danelfin", "yahoo"):
+            info = provider_symbol_maps[provider].get(symbol)
+            if not isinstance(info, dict):
+                continue
+            cls = str(info.get("classification") or "").upper()
+            if cls in {"STALE", "MISSING", "FAILED"}:
+                row["freshness"] = "STALE"
+                break
+        rows.append(row)
+
+    total_failed = sum(int(v.get("failed") or 0) for v in provider_metrics.values())
+    decision_readiness = {
+        "classification": readiness_status,
+        "core_fresh_pct": core_fresh_pct,
+        "stale_or_missing": stale_or_missing,
+        "has_provider_failures": total_failed > 0,
+    }
+
+    latest_refresh_date = ""
+    if isinstance(report, dict):
+        latest_refresh_date = str(report.get("refresh_date") or report.get("report_date") or "")
+    if not latest_refresh_date:
+        latest_refresh_date = str(
+            max(
+                str((signal_data.get("zacks") or {}).get("sourced_date") or ""),
+                str((signal_data.get("danelfin") or {}).get("sourced_date") or ""),
+                str((signal_data.get("yahoo") or {}).get("sourced_date") or ""),
+            )
+        )
+
+    overall_status = "READY" if readiness_status == "HIGH" and total_failed == 0 else "WARNINGS"
+    if total_failed > 0 and readiness_status == "LOW":
+        overall_status = "DEGRADED"
+
+    ess_info = signal_data.get("ess") if isinstance(signal_data.get("ess"), dict) else {}
+    manual_sources = {
+        "ess_lseg": {
+            "label": "ESS / LSEG Equity Summary Score",
+            "sourced_date": str(ess_info.get("sourced_date") or ""),
+            "badge_state": str(ess_info.get("badge_state") or "UNKNOWN"),
+            "coverage_warning_count": int(ess_info.get("coverage_warning_count") or 0),
+            "status": "GOOD" if str(ess_info.get("badge_state") or "") in {"FRESH", "FRESH_PARTIAL"} else "STALE",
+            "manual_source": True,
+        }
+    }
+
+    return {
+        "status": overall_status,
+        "latest_refresh_date": latest_refresh_date,
+        "provider_counts": provider_metrics,
+        "decision_readiness": decision_readiness,
+        "warnings": warnings,
+        "artifacts": {
+            "refresh_report_path": str(_REFRESH_REPORT_PATH),
+            "refresh_report_exists": _REFRESH_REPORT_PATH.exists(),
+            "refresh_report_mtime_utc": datetime.fromtimestamp(_REFRESH_REPORT_PATH.stat().st_mtime, tz=timezone.utc).isoformat()
+            if _REFRESH_REPORT_PATH.exists()
+            else None,
+        },
+        "readiness": readiness,
+        "rows": rows,
+        "manual_sources": manual_sources,
+        "compatibility": {
+            "endpoint": "/api/refresh-transparency",
+            "note": "Compatibility payload synthesized from /api/signal-status and refresh report artifacts.",
+        },
+    }
+
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static file handler extended with /api/* JSON endpoints."""
@@ -622,962 +596,11 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             data = _signal_status()
             data["_running"] = running
             self._json_response(data)
-        elif path == "/api/pis/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.storage import pis_dashboard_summary, pis_value_timeline
-
-                payload = pis_dashboard_summary(repo_root=_REPO_ROOT)
-                payload["timeline"] = pis_value_timeline()
-                self._json_response(payload)
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "health": {
-                            "first_snapshot_date": "",
-                            "latest_snapshot_date": "",
-                            "snapshot_count": 0,
-                            "missing_days": 0,
-                            "duplicate_uploads_prevented": 0,
-                        },
-                        "lineage": {
-                            "total_sih_analyses_captured": 0,
-                            "latest_par": "",
-                            "latest_mandate": "",
-                            "latest_upload_date": "",
-                        },
-                        "timeline": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/snapshots":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.storage import pis_snapshot_inventory
-
-                self._json_response({"snapshots": pis_snapshot_inventory()})
-            except Exception as exc:
-                self._json_response({"snapshots": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.storage import pis_latest_snapshot_summary
-
-                self._json_response(pis_latest_snapshot_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "snapshot_date": "",
-                        "total_value": 0.0,
-                        "cash": 0.0,
-                        "position_count": 0,
-                        "largest_holdings": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/health":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.storage import pis_snapshot_history_health
-
-                self._json_response(pis_snapshot_history_health())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "first_snapshot_date": "",
-                        "latest_snapshot_date": "",
-                        "snapshot_count": 0,
-                        "missing_days": 0,
-                        "duplicate_uploads_prevented": 0,
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/governance/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.governance import pis_governance_latest
-
-                self._json_response(pis_governance_latest())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "generated_at_utc": "",
-                        "latest_snapshot_date": "",
-                        "status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
-                        "snapshots": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/governance-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.governance import pis_governance_summary
-
-                self._json_response(pis_governance_summary())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "generated_at_utc": "",
-                        "total_snapshots": 0,
-                        "status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
-                        "daily": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/canonical/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.canonical_daily import pis_canonical_latest
-
-                self._json_response(pis_canonical_latest())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "generated_at_utc": "",
-                        "latest": {
-                            "snapshot_date": "",
-                            "canonical_snapshot_id": "",
-                            "governance_status": "",
-                            "selection_policy": "",
-                            "selection_reason": "",
-                            "source_file": "",
-                            "portfolio_value": 0.0,
-                            "cash": 0.0,
-                            "position_count": 0,
-                        },
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/canonical/history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.canonical_daily import pis_canonical_history
-
-                self._json_response(pis_canonical_history())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "generated_at_utc": "",
-                        "history": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/canonical-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.canonical_daily import pis_canonical_summary
-
-                self._json_response(pis_canonical_summary())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "generated_at_utc": "",
-                        "total_dates": 0,
-                        "selected_dates": 0,
-                        "unselected_dates": 0,
-                        "selected_status_counts": {"PASS": 0, "WARNING": 0, "REJECT": 0},
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/status":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.storage import summarize_portfolio_history
-
-                self._json_response(summarize_portfolio_history())
-            except Exception as exc:
-                self._json_response({"error": str(exc), "snapshot_count": 0, "position_count": 0, "account_count": 0}, 200)
-        elif path == "/api/pis/changes/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.change_detection import pis_changes_latest
-
-                self._json_response(pis_changes_latest(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "summary": None,
-                        "new_positions": [],
-                        "exited_positions": [],
-                        "increased_positions": [],
-                        "reduced_positions": [],
-                        "unchanged_positions": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/change-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.change_detection import pis_change_summary
-
-                self._json_response(pis_change_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"summary": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/lineage/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.recommendation_lineage import pis_lineage_latest
-
-                self._json_response(pis_lineage_latest(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"summary": None, "matches": [], "unmatched": [], "source_breakdown": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/lineage-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.recommendation_lineage import pis_lineage_summary
-
-                self._json_response(pis_lineage_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"summary": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/attribution/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.performance_attribution import pis_attribution_latest
-
-                self._json_response(pis_attribution_latest(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "summary": None,
-                        "records": [],
-                        "top_winning_recommendations": [],
-                        "top_losing_recommendations": [],
-                        "source_performance": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/attribution/history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.performance_attribution import pis_attribution_history
-
-                self._json_response(pis_attribution_history(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"summary": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/attribution-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.performance_attribution import pis_attribution_summary
-
-                self._json_response(pis_attribution_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "summary": {
-                            "snapshot_count": 0,
-                            "matched_recommendations": 0,
-                            "winner_count": 0,
-                            "neutral_count": 0,
-                            "loser_count": 0,
-                            "total_directional_attribution": 0.0,
-                            "average_directional_return_pct": 0.0,
-                        },
-                        "top_winning_recommendations": [],
-                        "top_losing_recommendations": [],
-                        "source_performance": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/benchmark-attribution/returns":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.benchmark_attribution import pis_benchmark_returns
-
-                self._json_response(pis_benchmark_returns())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "benchmark_symbol": "SPY",
-                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
-                        "generated_at_utc": "",
-                        "series": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/benchmark-attribution/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.benchmark_attribution import pis_benchmark_latest
-
-                self._json_response(pis_benchmark_latest())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "benchmark_symbol": "SPY",
-                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
-                        "latest_portfolio_excess_return": None,
-                        "top_positive_alpha_recommendations": [],
-                        "worst_negative_alpha_recommendations": [],
-                        "source_alpha_ranking": [],
-                        "quality": {
-                            "included_rows": 0,
-                            "excluded_rows": 0,
-                            "excluded_reason_counts": {},
-                        },
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/benchmark-attribution/recommendations":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.benchmark_attribution import pis_benchmark_recommendations
-
-                self._json_response(pis_benchmark_recommendations())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "benchmark_symbol": "SPY",
-                        "records": [],
-                        "quality": {
-                            "included_rows": 0,
-                            "excluded_rows": 0,
-                            "excluded_reason_counts": {},
-                        },
-                        "generated_at_utc": "",
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/benchmark-attribution/sources":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.benchmark_attribution import pis_benchmark_sources
-
-                self._json_response(pis_benchmark_sources())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "benchmark_symbol": "SPY",
-                        "source_summary": [],
-                        "quality": {
-                            "included_rows": 0,
-                            "excluded_rows": 0,
-                            "excluded_reason_counts": {},
-                        },
-                        "generated_at_utc": "",
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/benchmark-attribution-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.benchmark_attribution import pis_benchmark_summary
-
-                self._json_response(pis_benchmark_summary())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "benchmark_symbol": "SPY",
-                        "alignment_policy": "NEAREST_PRIOR_TRADING_DAY",
-                        "summary": {
-                            "interval_count": 0,
-                            "ok_interval_count": 0,
-                            "missing_interval_count": 0,
-                            "latest_snapshot_date": "",
-                            "average_benchmark_return_pct": 0.0,
-                            "average_portfolio_return_pct": 0.0,
-                            "average_excess_return_pct": 0.0,
-                        },
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/pis/allocation-drift/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_drift import pis_allocation_drift_summary
-
-                self._json_response(pis_allocation_drift_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"dates_available": 0, "current_date": None, "prior_date": None,
-                     "improving_count": 0, "worsening_count": 0, "stable_count": 0,
-                     "most_improved_node": None, "most_deteriorated_node": None,
-                     "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/allocation-drift/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_drift import pis_allocation_drift_latest
-
-                self._json_response(pis_allocation_drift_latest(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"dates_available": 0, "current_date": None, "nodes": [], "error": str(exc)},
-                    200,
-                )
-        elif path == "/api/pis/allocation-drift/history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_drift import pis_allocation_drift_history
-
-                self._json_response(pis_allocation_drift_history(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"dates": [], "nodes": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/action-attribution/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.action_attribution import pis_action_attribution_summary
-
-                self._json_response(pis_action_attribution_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"total_attribution_records": 0, "followed_count": 0, "ignored_count": 0,
-                     "opposed_count": 0, "expired_count": 0, "partially_followed_count": 0,
-                     "follow_rate_pct": 0.0, "ignore_rate_pct": 0.0, "oppose_rate_pct": 0.0,
-                     "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/action-attribution/recommendations":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.action_attribution import pis_action_attribution_recommendations
-
-                self._json_response(pis_action_attribution_recommendations(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total": 0, "records": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/action-attribution/sources":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.action_attribution import pis_action_attribution_sources
-
-                self._json_response(pis_action_attribution_sources(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"scorecards": [], "missed_opportunities": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/dor/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.dislocation_outcome_review import pis_dor_summary
-
-                self._json_response(pis_dor_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"total_dil_records": 0, "followed_count": 0, "ignored_count": 0,
-                     "winner_count": 0, "loser_count": 0, "follow_rate_pct": 0.0,
-                     "win_rate_pct": 0.0, "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/dor/cohorts":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.dislocation_outcome_review import pis_dor_cohorts
-
-                self._json_response(pis_dor_cohorts(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"cohorts": [], "missed_winners": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/dor/recommendations":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.dislocation_outcome_review import pis_dor_recommendations
-
-                self._json_response(pis_dor_recommendations(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total": 0, "records": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/policy/current":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_version_diff import pis_policy_current
-
-                self._json_response(pis_policy_current(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"policy_id": "", "node_count": 0, "run_count": 0,
-                     "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/policy/history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_version_diff import pis_policy_history
-
-                self._json_response(pis_policy_history(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"version_count": 0, "versions": [], "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/policy/diff":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_version_diff import pis_policy_diff
-
-                self._json_response(pis_policy_diff(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"versions_compared": 0, "has_changes": False, "diffs": [],
-                     "observations": [], "error": str(exc)}, 200,
-                )
-        # ── AI-004B: Policy Change Intelligence ──────────────────────────────
-        elif path == "/api/pis/policy/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_change_summary import policy_summary
-                self._json_response(policy_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"change_count": 0, "has_changes": False, "error": str(exc)}, 200)
-        elif path == "/api/pis/policy/impact":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_change_summary import policy_impact
-                self._json_response(policy_impact(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"rec_impact": {}, "before_after": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/policy/timeline":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_change_summary import policy_timeline
-                self._json_response(policy_timeline(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"timeline": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/pis/policy/version/"):
-            raw_vid = path[len("/api/pis/policy/version/"):].strip()
-            if not raw_vid:
-                self._json_response({"error": "version_id required"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.policy_change_summary import policy_version
-                self._json_response(policy_version(raw_vid, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"version_id": raw_vid, "error": str(exc)}, 200)
-        elif path == "/api/pis/compliance/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_compliance import pis_compliance_summary
-
-                self._json_response(pis_compliance_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {"total_nodes": 0, "currently_compliant": 0, "currently_warning": 0,
-                     "currently_non_compliant": 0, "observations": [], "error": str(exc)}, 200,
-                )
-        elif path == "/api/pis/compliance/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_compliance import pis_compliance_latest
-
-                self._json_response(pis_compliance_latest(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"nodes": [], "observations": [], "error": str(exc)}, 200)
-        elif path == "/api/pis/compliance/history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.allocation_compliance import pis_compliance_history
-
-                self._json_response(pis_compliance_history(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"dates": [], "nodes": [], "error": str(exc)}, 200)
-        # ── MEI: Market Event Intelligence ───────────────────────────────────
-        elif path == "/api/mei/events":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.events import mei_events
-
-                self._json_response(mei_events(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"events": [], "total_events": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/events/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.events import mei_events_summary
-
-                self._json_response(mei_events_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"events_next_14_days": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/exposures":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.exposures import mei_exposures
-
-                self._json_response(mei_exposures(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"event_exposures": [], "error": str(exc)}, 200)
-        elif path == "/api/mei/exposures/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.exposures import mei_exposures_summary
-
-                self._json_response(mei_exposures_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total_events_analyzed": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/recommendation-context":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.recommendation_context import mei_recommendation_context
-
-                self._json_response(mei_recommendation_context(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"items": [], "total_recommendations": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/recommendation-context/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.recommendation_context import mei_recommendation_context_summary
-
-                self._json_response(mei_recommendation_context_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total_recommendations": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/event-history":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_history import mei_event_history
-
-                self._json_response(mei_event_history(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"events": [], "total_events_tracked": 0, "error": str(exc)}, 200)
-        elif path == "/api/mei/event-history/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_history import mei_event_history_summary
-
-                self._json_response(mei_event_history_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total_events_tracked": 0, "error": str(exc)}, 200)
-        elif path.startswith("/api/mei/security/"):
-            symbol = path[len("/api/mei/security/"):].strip().upper()
-            if not symbol or not _SYMBOL_RE.match(symbol):
-                self._json_response({"error": "invalid or missing symbol"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.security_profiles import mei_security_profile
-
-                self._json_response(mei_security_profile(symbol, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"symbol": symbol, "sensitivities": {}, "error": str(exc)}, 200)
-        elif path.startswith("/api/mei/security/"):
-            symbol = path[len("/api/mei/security/"):].strip().upper()
-            if not symbol or not _SYMBOL_RE.match(symbol):
-                self._json_response({"error": "invalid or missing symbol"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.security_profiles import mei_security_profile
-
-                self._json_response(mei_security_profile(symbol, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"symbol": symbol, "sensitivities": {}, "error": str(exc)}, 200)
-        # ── MEI-002: Event Outcome Attribution ───────────────────────────────
-        elif path == "/api/mei/outcomes":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_outcome_tracker import mei_outcomes
-                self._json_response(mei_outcomes(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"event_count": 0, "outcomes": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/mei/outcomes/"):
-            raw_eid = path[len("/api/mei/outcomes/"):].strip()
-            if not raw_eid:
-                self._json_response({"error": "event_id required"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_outcome_tracker import mei_outcome_by_event
-                self._json_response(mei_outcome_by_event(raw_eid, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 200)
-        elif path == "/api/mei/event-impact":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_outcome_tracker import mei_event_impact
-                self._json_response(mei_event_impact(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"effectiveness": [], "error": str(exc)}, 200)
-        elif path == "/api/mei/outcome-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_outcome_tracker import mei_outcome_summary
-                self._json_response(mei_outcome_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"event_count": 0, "error": str(exc)}, 200)
-        # ── end MEI ──────────────────────────────────────────────────────────
-        elif path == "/api/pis/refresh/status":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.artifact_freshness import artifact_freshness_report
-
-                self._json_response(artifact_freshness_report())
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "latest_pass_snapshot_date": "",
-                        "latest_canonical_date": "",
-                        "latest_change_date": "",
-                        "latest_lineage_date": "",
-                        "latest_attribution_date": "",
-                        "latest_benchmark_date": "",
-                        "canonical_status": "MISSING",
-                        "change_status": "MISSING",
-                        "lineage_status": "MISSING",
-                        "attribution_status": "MISSING",
-                        "benchmark_status": "MISSING",
-                        "overall_refresh_status": "MISSING",
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/explanations/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.allocation_explainability import explanations_latest, refresh_allocation_explanations
-
-                refresh_allocation_explanations(
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                )
-                self._json_response(explanations_latest(
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                ))
-            except Exception as exc:
-                self._json_response({"analysis_run_id": "", "snapshot_date": "", "explanations": [], "summary": None, "error": str(exc)}, 200)
-        elif path == "/api/explanations/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.allocation_explainability import explanation_summary, refresh_allocation_explanations
-
-                refresh_allocation_explanations(
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                )
-                self._json_response(explanation_summary(
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                ))
-            except Exception as exc:
-                self._json_response({"history": [], "source_summary": {}, "error": str(exc)}, 200)
-        elif path.startswith("/api/explanations/"):
-            recommendation_id = path[len("/api/explanations/"):].strip()
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.allocation_explainability import explanation_for_recommendation, refresh_allocation_explanations
-
-                refresh_allocation_explanations(
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                )
-                self._json_response(explanation_for_recommendation(
-                    recommendation_id,
-                    analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
-                    output_root=_REPO_ROOT / "data" / "history" / "explanations",
-                ))
-            except Exception as exc:
-                self._json_response({"explanation": None, "error": str(exc)}, 200)
-        elif path.startswith("/api/pis/lineage/"):
-            snapshot_id = path[len("/api/pis/lineage/"):].strip()
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.recommendation_lineage import pis_lineage_for_snapshot
-
-                self._json_response(pis_lineage_for_snapshot(snapshot_id, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"summary": None, "matches": [], "unmatched": [], "source_breakdown": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/pis/changes/"):
-            snapshot_id = path[len("/api/pis/changes/"):].strip()
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.change_detection import pis_changes_for_snapshot
-
-                self._json_response(pis_changes_for_snapshot(snapshot_id, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "summary": None,
-                        "new_positions": [],
-                        "exited_positions": [],
-                        "increased_positions": [],
-                        "reduced_positions": [],
-                        "unchanged_positions": [],
-                        "error": str(exc),
-                    },
-                    200,
-                )
+        elif path == "/api/refresh-transparency":
+            self._json_response(_refresh_transparency_payload())
         elif path == "/api/signal-refresh/status":
             running = _refresh_proc is not None and _refresh_proc.poll() is None
-            global _refresh_last_report, _refresh_last_exit_code
-            global _refresh_completed_at_utc
-            if _refresh_proc is not None and not running:
-                _refresh_last_exit_code = _refresh_proc.poll()
-                if _refresh_last_report is None and _REFRESH_REPORT_PATH.exists():
-                    try:
-                        _refresh_last_report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
-                    except Exception:
-                        _refresh_last_report = None
-                if _refresh_completed_at_utc is None:
-                    _refresh_completed_at_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-            metadata = {
-                "requested_intent": _refresh_requested_intent,
-                "resolved_intent": _refresh_resolved_intent,
-                "universe_scope": _refresh_universe_scope,
-                "estimated_symbol_count": _refresh_estimated_symbol_count,
-                "updates": list(_refresh_updates),
-                "does_not_update": list(_refresh_does_not_update),
-                "research_universe_freshness_expected": _refresh_research_universe_expected,
-                "candidate_readiness_expected": _refresh_candidate_readiness_expected,
-            }
-            if not metadata.get("resolved_intent"):
-                metadata.update(_refresh_metadata_from_report(_refresh_last_report))
-
-            elapsed = None
-            if running and _refresh_started_at_utc:
-                try:
-                    started = datetime.fromisoformat(_refresh_started_at_utc)
-                    elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-                except Exception:
-                    elapsed = None
-
-            self._json_response({
-                "running": running,
-                "exit_code": _refresh_last_exit_code,
-                "last_report": _refresh_last_report,
-                "mode": metadata.get("resolved_intent"),
-                "started_at_utc": _refresh_started_at_utc,
-                "completed_at_utc": _refresh_completed_at_utc,
-                "elapsed_sec": elapsed,
-                "provider_stage": None,
-                "stage_progress_current": None,
-                "stage_progress_total": None,
-                "current_symbol": None,
-                "last_log_line": "",
-                "recent_log_lines": [],
-                **metadata,
-            })
+            self._json_response({"running": running})
         elif path == "/api/score-fetch/status":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -1591,386 +614,6 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"status": "not_found", "symbol": sym})
             else:
                 self._json_response(job)
-        # ── ISSUE-12D: Signal Conflict Review endpoints ────────────────────────
-        elif path == "/api/conflict-review/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.signal_conflict_review import load_or_refresh
-                data = load_or_refresh(_REPO_ROOT)
-                self._json_response({
-                    "meta": data["meta"],
-                    "learning": data["learning"],
-                })
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 200)
-        elif path == "/api/conflict-review/outcomes":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.signal_conflict_review import load_or_refresh
-                data = load_or_refresh(_REPO_ROOT)
-                self._json_response(data.get("outcomes", {}))
-            except Exception as exc:
-                self._json_response({"patterns": [], "error": str(exc)}, 200)
-        elif path == "/api/conflict-review/scorecard":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.signal_conflict_review import load_or_refresh
-                data = load_or_refresh(_REPO_ROOT)
-                self._json_response(data.get("scorecard", {}))
-            except Exception as exc:
-                self._json_response({"scorecard": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/conflict-review/symbol/"):
-            raw_sym = path[len("/api/conflict-review/symbol/"):].strip().upper()
-            if not raw_sym or not _SYMBOL_RE.match(raw_sym):
-                self._json_response({"error": "invalid or missing symbol"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.signal_conflict_review import load_or_refresh, symbol_deep_dive
-                data = load_or_refresh(_REPO_ROOT)
-                dive = symbol_deep_dive(raw_sym, data["inventory"])
-                self._json_response(dive)
-            except Exception as exc:
-                self._json_response({"symbol": raw_sym, "error": str(exc)}, 200)
-        elif path == "/api/conflict-review/refresh":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.signal_conflict_review import refresh_conflict_data
-                meta = refresh_conflict_data(_REPO_ROOT)
-                self._json_response({"ok": True, **meta})
-            except Exception as exc:
-                self._json_response({"ok": False, "error": str(exc)}, 200)
-        elif path == "/api/conflict-review/alpha":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.conflict_alpha_analysis import conflict_alpha_report
-                self._json_response(conflict_alpha_report(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"patterns": [], "leaders": [], "laggards": [],
-                                     "error": str(exc)}, 200)
-        elif path.startswith("/api/conflict-review/security-alpha/"):
-            raw_sym = path[len("/api/conflict-review/security-alpha/"):].strip().upper()
-            if not raw_sym or not _SYMBOL_RE.match(raw_sym):
-                self._json_response({"error": "invalid or missing symbol"}, 400)
-                return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.security_conflict_alpha import get_security_conflict_alpha
-                from urllib.parse import parse_qs, urlparse as _urlparse2
-                qs3 = parse_qs(_urlparse2(self.path).query)
-                sca = get_security_conflict_alpha(
-                    raw_sym,
-                    repo_root=_REPO_ROOT,
-                    ess_text=qs3.get("ess", [None])[0],
-                    zacks_score=float(qs3["zacks"][0]) if "zacks" in qs3 else None,
-                    yahoo_consensus=qs3.get("yahoo", [None])[0],
-                )
-                self._json_response(sca)
-            except Exception as exc:
-                self._json_response({"symbol": raw_sym, "error": str(exc)}, 200)
-        elif path == "/api/conflict-review/security-alpha-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.security_conflict_alpha import security_alpha_summary
-                self._json_response(security_alpha_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"status": "ERROR", "securities": {},
-                                     "error": str(exc)}, 200)
-        # ── Predictive Intelligence EPIC endpoints ────────────────────────────
-        elif path == "/api/predictive/pattern-persistence":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.pattern_persistence import all_pattern_persistence
-                self._json_response(all_pattern_persistence(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total_symbols": 0, "error": str(exc)}, 200)
-        elif path.startswith("/api/predictive/pattern-persistence/"):
-            raw_sym = path[len("/api/predictive/pattern-persistence/"):].strip().upper()
-            if not raw_sym or not _SYMBOL_RE.match(raw_sym):
-                self._json_response({"error": "invalid symbol"}, 400); return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.pattern_persistence import symbol_pattern_persistence
-                self._json_response(symbol_pattern_persistence(raw_sym, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"symbol": raw_sym, "error": str(exc)}, 200)
-        elif path == "/api/predictive/forward-estimate":
-            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
-            params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
-            sym = params.get("symbol", "").strip().upper()
-            if not sym:
-                self._json_response({"error": "symbol required"}, 400); return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.forward_return_estimate import forward_estimate
-                self._json_response(forward_estimate(sym, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"symbol": sym, "error": str(exc)}, 200)
-        elif path == "/api/predictive/event-triggers":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.event_triggered_refresh import check_pending_refresh_triggers
-                self._json_response(check_pending_refresh_triggers(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"pending_count": 0, "pending": [], "error": str(exc)}, 200)
-        elif path == "/api/predictive/funding-effectiveness":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.funding_source_effectiveness import funding_effectiveness_study
-                self._json_response(funding_effectiveness_study(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"category_outcomes": {}, "error": str(exc)}, 200)
-        elif path == "/api/predictive/mei-calibration":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.event_sensitivity_calibration import calibrate_sensitivities
-                self._json_response(calibrate_sensitivities(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"calibrations": [], "error": str(exc)}, 200)
-        elif path == "/api/predictive/scenario":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.portfolio_scenario import scenario_from_cra
-                self._json_response(scenario_from_cra(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"status": "ERROR", "error": str(exc)}, 200)
-        # ── DISLOCATION-06: Calibration ───────────────────────────────────────
-        elif path == "/api/predictive/calibration":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.conflict_alpha_calibration import calibration_summary
-                self._json_response(calibration_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"status": "ERROR", "patterns": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/predictive/calibration/"):
-            raw_pat = path[len("/api/predictive/calibration/"):].strip().upper()
-            if not raw_pat:
-                self._json_response({"error": "pattern required"}, 400); return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.conflict_alpha_calibration import pattern_calibration
-                self._json_response(pattern_calibration(raw_pat, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"pattern": raw_pat, "error": str(exc)}, 200)
-        elif path == "/api/predictive/confidence-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.conflict_alpha_calibration import confidence_summary
-                self._json_response(confidence_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"confidence_counts": {}, "error": str(exc)}, 200)
-        # ── DISLOCATION-07: Directional Accuracy ──────────────────────────────
-        elif path == "/api/predictive/directional-accuracy":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.directional_accuracy import directional_accuracy
-                self._json_response(directional_accuracy(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"status": "ERROR", "patterns": [], "error": str(exc)}, 200)
-        elif path.startswith("/api/predictive/directional-accuracy/"):
-            raw_pat = path[len("/api/predictive/directional-accuracy/"):].strip().upper()
-            if not raw_pat:
-                self._json_response({"error": "pattern required"}, 400); return
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.directional_accuracy import pattern_directional
-                self._json_response(pattern_directional(raw_pat, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"pattern": raw_pat, "error": str(exc)}, 200)
-        elif path == "/api/predictive/directional-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.directional_accuracy import directional_summary
-                self._json_response(directional_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"patterns": [], "error": str(exc)}, 200)
-        elif path == "/api/drift/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.portfolio.drift_analyzer import compute_drift_summary
-                self._json_response(compute_drift_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 500)
-        elif path.startswith("/api/drift/timeline"):
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.portfolio.drift_analyzer import compute_drift_timeline
-                from urllib.parse import parse_qs, urlparse
-                qs = parse_qs(urlparse(self.path).query)
-                rule_id = qs.get("rule_id", ["CPV-01"])[0]
-                self._json_response(compute_drift_timeline(rule_id=rule_id, repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 500)
-        # ── PA-006B: Allocation Drift Intelligence ────────────────────────────
-        elif path == "/api/drift/trends":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.drift_trend_analyzer import drift_trends
-                self._json_response(drift_trends(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"trend_counts": {}, "nodes": [], "error": str(exc)}, 200)
-        elif path == "/api/drift/priorities":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.drift_trend_analyzer import drift_priorities
-                self._json_response(drift_priorities(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"top10": [], "error": str(exc)}, 200)
-        elif path == "/api/drift/chronic":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.drift_trend_analyzer import drift_chronic
-                self._json_response(drift_chronic(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"chronic": [], "error": str(exc)}, 200)
-        elif path == "/api/drift/momentum":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.drift_trend_analyzer import drift_momentum
-                self._json_response(drift_momentum(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"nodes": [], "error": str(exc)}, 200)
-        elif path == "/api/drift/intelligence-summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.drift_trend_analyzer import drift_intelligence_summary
-                self._json_response(drift_intelligence_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response({"total_nodes": 0, "violation_nodes": 0, "error": str(exc)}, 200)
-        elif path.startswith("/api/signal-conflicts"):
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from urllib.parse import parse_qs, urlparse as _urlparse
-                from src.portfolio.signal_conflict_classifier import get_conflicts_for_symbols
-                import yaml as _yaml
-                qs2 = parse_qs(_urlparse(self.path).query)
-                raw_syms = qs2.get("symbols", [""])[0]
-                symbols = [s.strip().upper() for s in raw_syms.split(",") if s.strip()]
-                if not symbols:
-                    self._json_response({"error": "symbols query parameter required"}, 400)
-                else:
-                    _pol_path = _REPO_ROOT / "config" / "allocation_policy.yaml"
-                    _config = {}
-                    if _pol_path.exists():
-                        try:
-                            _config = _yaml.safe_load(_pol_path.read_text(encoding="utf-8")) or {}
-                        except Exception:
-                            pass
-                    conflicts = get_conflicts_for_symbols(symbols, repo_root=_REPO_ROOT, config=_config)
-                    self._json_response({"conflicts": conflicts})
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 500)
-        elif path == "/api/rotation-risk/summary":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.rotation_risk_monitor import rotation_risk_summary
-
-                self._json_response(rotation_risk_summary(repo_root=_REPO_ROOT))
-            except Exception as exc:
-                self._json_response(
-                    {
-                        "status": "DATA_UNAVAILABLE",
-                        "diagnostic_id": "ROTATION-RISK-01",
-                        "diagnostic_name": "Tech-to-hard-assets rotation monitor",
-                        "signal": "DATA_UNAVAILABLE",
-                        "headline": "Rotation monitor unavailable due to runtime error.",
-                        "error": str(exc),
-                    },
-                    200,
-                )
-        elif path == "/api/cpv/latest":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                import json as _json
-                # Find latest PAR compliance.json
-                manifest_path = _REPO_ROOT / "data/portfolio_ingestion/manifest.json"
-                compliance_payload = None
-                if manifest_path.exists():
-                    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
-                    portfolios = [
-                        p for p in (manifest.get("portfolios") or [])
-                        if len(str(p.get("snapshot_date", "")).strip()) == 10
-                        and str(p.get("snapshot_date", "")).strip()[4:5] == "-"
-                    ]
-                    if portfolios:
-                        latest_run_id = max(
-                            portfolios,
-                            key=lambda p: (str(p.get("snapshot_date", "")), str(p.get("created_at_utc", ""))),
-                        ).get("run_id", "")
-                        compliance_path = (
-                            _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
-                            / latest_run_id / "compliance.json"
-                        )
-                        if compliance_path.exists():
-                            compliance_payload = _json.loads(compliance_path.read_text(encoding="utf-8"))
-                if compliance_payload is None:
-                    self._json_response({"error": "No compliance data available"}, 404)
-                else:
-                    self._json_response(compliance_payload)
-            except Exception as exc:
-                self._json_response({"error": str(exc)}, 500)
         elif path == "/api/portfolio/runs":
             try:
                 manifest_path = _REPO_ROOT / "data/portfolio_ingestion/manifest.json"
@@ -1996,7 +639,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 if result is None:
                     self._json_response({"error": "run not found"}, 404)
                 else:
-                    self._json_response(_attach_explanations(result))
+                    self._json_response(result)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
         elif path == "/api/operator/tax-state":
@@ -2048,241 +691,6 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     "policies": [_dc.asdict(p) for p in all_active.values()],
                     "snapshot": registry.policy_snapshot(),
                 })
-        elif path == "/api/cra/proposal":
-            # GET /api/cra/proposal
-            # Returns a RotationProposal built from the latest COMPLETE PAR run.
-            # Reads: deployment_queue.json, security_overlays.csv, holdings.csv,
-            #        alignment.csv, run_metadata.json, concentration.json,
-            #        snapshot.json, portfolio_alignment_state.json (optional).
-            # Does NOT modify any upstream artifacts.
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.portfolio.cra.rotation_proposal_builder import build_proposal_from_manifest
-                manifest_path  = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
-                runs_root      = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
-                tax_state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
-
-                if not manifest_path.exists():
-                    self._json_response(
-                        {"error": "No portfolio manifest found. Run a portfolio analysis first."},
-                        404,
-                    )
-                    return
-
-                proposal = build_proposal_from_manifest(
-                    manifest_path=manifest_path,
-                    runs_root=runs_root,
-                    tax_state_path=tax_state_path if tax_state_path.exists() else None,
-                )
-
-                if proposal is None:
-                    self._json_response(
-                        {"error": "No COMPLETE portfolio analysis run found. Run a portfolio analysis first."},
-                        404,
-                    )
-                    return
-
-                self._json_response(proposal.to_dict())
-            except FileNotFoundError as exc:
-                self._json_response({"error": f"Required PAR files missing: {exc}"}, 404)
-            except Exception as exc:
-                import traceback as _tb
-                log.error("CRA proposal error: %s\n%s", exc, _tb.format_exc())
-                self._json_response({"error": f"CRA proposal generation failed: {exc}"}, 500)
-
-        elif path == "/api/security-metadata":
-            # GET /api/security-metadata
-            # Returns {symbol → {sector, industry, country, quote_type,
-            #   market_cap_bucket, long_name, hq, business_summary}}
-            # Merges security_metadata + analytical_universe + company_profile.
-            # Display-only — no scoring impact.
-            try:
-                import sys as _sys, csv as _csv
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.scoring.fetch_security_metadata import load_latest_security_metadata
-                metadata: dict = load_latest_security_metadata()
-
-                # Enrich with market_cap_bucket from analytical universe
-                au_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
-                if au_path.exists():
-                    with au_path.open("r", encoding="utf-8", newline="") as _fh:
-                        for _row in _csv.DictReader(_fh):
-                            _sym = str(_row.get("symbol", "")).strip().upper()
-                            if _sym:
-                                if _sym not in metadata:
-                                    metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
-                                metadata[_sym]["market_cap_bucket"] = str(_row.get("market_cap_bucket") or "")
-                                metadata[_sym]["security_type"]    = str(_row.get("security_type") or "")
-                                if not metadata[_sym].get("country"):
-                                    metadata[_sym]["country"] = str(_row.get("country") or "")
-
-                # Enrich with company profile (name, HQ, business description)
-                from src.scoring.fetch_company_profile import load_latest_company_profile, _compose_hq
-                from src.scoring.fmp_universe_enrichment import load_fmp_enriched_universe
-                _COUNTRY_ABBREV = {"United States": "USA"}
-                company_profiles = load_latest_company_profile()
-                for _sym, _prof in company_profiles.items():
-                    if _sym not in metadata:
-                        metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
-                    metadata[_sym]["long_name"] = str(_prof.get("long_name") or "")
-                    _raw_country = str(_prof.get("country") or "")
-                    _disp_country = _COUNTRY_ABBREV.get(_raw_country, _raw_country)
-                    metadata[_sym]["hq"] = _compose_hq(
-                        str(_prof.get("city") or ""),
-                        str(_prof.get("state") or ""),
-                        _disp_country,
-                    )
-                    metadata[_sym]["business_summary"] = str(_prof.get("business_summary") or "")
-
-                # Enrich with FMP fundamental data (Phase 8.0B.1B.5 — display only)
-                fmp_enriched = load_fmp_enriched_universe()
-                for _sym, _frow in fmp_enriched.items():
-                    if _sym not in metadata:
-                        metadata[_sym] = {"sector": "", "industry": "", "country": "", "quote_type": ""}
-                    metadata[_sym]["fmp_coverage"]          = str(_frow.get("fmp_coverage_status") or "")
-                    metadata[_sym]["fmp_ev_ebitda"]         = str(_frow.get("ev_ebitda_ttm") or "")
-                    metadata[_sym]["fmp_fcf_yield"]         = str(_frow.get("fcf_yield_ttm") or "")
-                    metadata[_sym]["fmp_roe"]               = str(_frow.get("roe_ttm") or "")
-                    metadata[_sym]["fmp_roic"]              = str(_frow.get("roic_ttm") or "")
-                    metadata[_sym]["fmp_revenue_growth"]    = str(_frow.get("revenue_growth_q1_yoy") or "")
-                    metadata[_sym]["fmp_eps_growth"]        = str(_frow.get("eps_growth_q1_yoy") or "")
-                    metadata[_sym]["fmp_revenue_accel"]     = str(_frow.get("revenue_acceleration") or "")
-                    metadata[_sym]["fmp_beat_rate"]         = str(_frow.get("beat_rate_8q") or "")
-                    metadata[_sym]["fmp_beats_8q"]          = str(_frow.get("beats_last_8q") or "")
-                    metadata[_sym]["fmp_latest_surprise"]   = str(_frow.get("latest_eps_surprise_pct") or "")
-                    metadata[_sym]["fmp_net_buy_score"]     = str(_frow.get("net_buy_score") or "")
-                    metadata[_sym]["fmp_consensus"]         = str(_frow.get("consensus_label") or "")
-                    metadata[_sym]["fmp_buy_count"]         = str(_frow.get("buy_count") or "")
-                    metadata[_sym]["fmp_hold_count"]        = str(_frow.get("hold_count") or "")
-                    metadata[_sym]["fmp_sell_count"]        = str(_frow.get("sell_count") or "")
-
-                self._json_response(metadata)
-            except Exception as exc:
-                self._json_response({}, 200)  # fail-open: empty dict on error
-
-        elif path == "/api/cra/draft":
-            # GET /api/cra/draft — load saved CRA proposal draft (404 if none)
-            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
-            if not draft_path.exists():
-                self._json_response({"error": "No saved draft found"}, 404)
-            else:
-                try:
-                    draft = json.loads(draft_path.read_text(encoding="utf-8"))
-                    self._json_response(draft)
-                except Exception as exc:
-                    self._json_response({"error": f"Failed to load draft: {exc}"}, 500)
-
-        elif path.startswith("/api/cra/draft/export"):
-            # GET /api/cra/draft/export?format=csv|md — export saved draft
-            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
-            if not draft_path.exists():
-                self._json_response({"error": "No saved draft to export"}, 404)
-                return
-            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
-            params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
-            fmt = params.get("format", "csv").lower().strip()
-            try:
-                draft = json.loads(draft_path.read_text(encoding="utf-8"))
-                as_of = draft.get("as_of_date", "draft")
-                if fmt == "csv":
-                    import csv as _csv, io as _io
-                    output = _io.StringIO()
-                    w = _csv.writer(output)
-                    # Header
-                    w.writerow(["CRA Proposal", as_of, draft.get("proposal_id", ""), draft.get("cra_version", "1.0")])
-                    w.writerow([])
-                    # Sources
-                    w.writerow(["section", "symbol", "category", "priority",
-                                 "estimated_proceeds", "sizing_pct", "tax_bucket",
-                                 "tax_annotation", "evidence_summary"])
-                    for s in draft.get("sources", []):
-                        w.writerow(["SOURCE", s.get("symbol"), s.get("category"),
-                                    s.get("priority"), s.get("estimated_proceeds"),
-                                    s.get("sizing_pct"), s.get("tax_bucket"),
-                                    s.get("tax_annotation"), s.get("evidence_summary")])
-                    w.writerow([])
-                    # Targets
-                    w.writerow(["section", "rank", "symbol", "narrative_tier",
-                                 "deployment_score", "suggested_amount", "projected_weight_pct"])
-                    for t in draft.get("deployments", []):
-                        w.writerow(["TARGET", t.get("rank"), t.get("symbol"),
-                                    t.get("narrative_tier"), t.get("deployment_score"),
-                                    t.get("suggested_amount"),
-                                    f"{float(t.get('projected_weight_pct', 0))*100:.2f}%"])
-                    w.writerow([])
-                    # Impact
-                    imp = draft.get("impact", {})
-                    w.writerow(["section", "alignment_before", "alignment_after",
-                                 "alignment_delta", "concentration_before",
-                                 "concentration_after", "narrative"])
-                    w.writerow(["IMPACT", imp.get("alignment_score_before"),
-                                 imp.get("alignment_score_after"), imp.get("alignment_delta"),
-                                 imp.get("concentration_before"), imp.get("concentration_after"),
-                                 imp.get("impact_narrative")])
-                    csv_bytes = output.getvalue().encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/csv; charset=utf-8")
-                    self.send_header("Content-Disposition", f'attachment; filename="cra_proposal_{as_of}.csv"')
-                    self.send_header("Content-Length", str(len(csv_bytes)))
-                    self.end_headers()
-                    self.wfile.write(csv_bytes)
-                elif fmt in ("md", "markdown"):
-                    lines = [
-                        f"# Capital Rotation Advisor — Proposal",
-                        f"",
-                        f"**As of:** {as_of}  ·  **Proposal ID:** {draft.get('proposal_id', '—')}",
-                        f"**Status:** {draft.get('proposal_status', '—')}  ·  **CRA Version:** {draft.get('cra_version', '1.0')}",
-                        f"",
-                    ]
-                    # Sources by category
-                    cat_labels = {
-                        "SIGNAL_DETERIORATION": "Signal Deterioration",
-                        "STRATEGIC_EXIT": "Strategic Exit",
-                        "OVERWEIGHT_REDUCTION": "Exposure Reduction",
-                        "TAX_AWARE_EXIT": "Tax-Aware Exit",
-                        "LOW_CONVICTION_REDUCTION": "Low Conviction Reduction",
-                    }
-                    lines += [f"## Capital Sources  (Est. Pool: ${draft.get('total_capital_pool', 0):,.0f})", ""]
-                    for cat_key, cat_label in cat_labels.items():
-                        cat_src = [s for s in draft.get("sources", []) if s.get("category") == cat_key]
-                        if cat_src:
-                            lines += [f"### {cat_label}", "| Symbol | Est. Proceeds | Tax | Evidence |", "| --- | --- | --- | --- |"]
-                            for s in cat_src:
-                                lines.append(f"| {s.get('symbol')} | ${float(s.get('estimated_proceeds', 0)):,.0f} | {s.get('tax_bucket','—')} | {s.get('evidence_summary', '')} |")
-                            lines.append("")
-                    # Targets
-                    lines += ["## Deployment Targets", "", "| Rank | Symbol | Tier | Score | Add | Proj. Weight |", "| --- | --- | --- | --- | --- | --- |"]
-                    for t in draft.get("deployments", []):
-                        tier_short = "CCL" if "CORE" in t.get("narrative_tier","") else "HCA"
-                        lines.append(f"| #{t.get('rank')} | {t.get('symbol')} | {tier_short} | {t.get('deployment_score')} | ${float(t.get('suggested_amount', 0)):,.0f} | {float(t.get('projected_weight_pct', 0))*100:.1f}% |")
-                    lines.append("")
-                    # Impact
-                    imp = draft.get("impact", {})
-                    lines += [
-                        "## Portfolio Impact Estimate",
-                        "",
-                        f"- Alignment: {imp.get('alignment_score_before', '—')} → {imp.get('alignment_score_after', '—')} ({'+' if float(imp.get('alignment_delta', 0)) >= 0 else ''}{imp.get('alignment_delta', 0):.1f})",
-                        f"- Concentration: {imp.get('concentration_before', '—')} → {imp.get('concentration_after', '—')}",
-                        f"- {imp.get('impact_narrative', '')}",
-                        "",
-                        "---",
-                        "*Advisory guidance only — not trade instructions. Generated by Security Intelligence Hub.*",
-                    ]
-                    md_bytes = "\n".join(lines).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                    self.send_header("Content-Disposition", f'attachment; filename="cra_proposal_{as_of}.md"')
-                    self.send_header("Content-Length", str(len(md_bytes)))
-                    self.end_headers()
-                    self.wfile.write(md_bytes)
-                else:
-                    self._json_response({"error": f"Unsupported format: {fmt}"}, 400)
-            except Exception as exc:
-                self._json_response({"error": f"Export failed: {exc}"}, 500)
-
         elif path == "/api/portfolio/archetype-targets":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -2347,199 +755,17 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # type: ignore[override]
         path = self.path.split("?")[0]
-        if path == "/api/cra/draft":
-            # POST /api/cra/draft — save proposal (+ optional operator_include_map) as draft
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(length) if length else b"{}"
-                payload = json.loads(body)
-            except Exception:
-                self._json_response({"error": "invalid JSON body"}, 400)
-                return
-            if not payload:
-                self._json_response({"error": "empty payload"}, 400)
-                return
-            # Inject saved_at_utc timestamp
-            from datetime import datetime as _dt, timezone as _tz
-            payload["saved_at_utc"] = _dt.now(_tz.utc).isoformat(timespec="seconds")
-            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
-            draft_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = draft_path.with_suffix(".tmp")
-            try:
-                tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-                tmp.replace(draft_path)
-                self._json_response({"saved": True, "proposal_id": payload.get("proposal_id")})
-            except Exception as exc:
-                self._json_response({"error": f"Failed to save draft: {exc}"}, 500)
-        elif path == "/api/signal-refresh":
+        if path == "/api/signal-refresh":
             global _refresh_proc
-            global _refresh_last_report, _refresh_last_exit_code
-            global _refresh_requested_intent, _refresh_resolved_intent
-            global _refresh_universe_scope, _refresh_estimated_symbol_count
-            global _refresh_updates, _refresh_does_not_update
-            global _refresh_research_universe_expected, _refresh_candidate_readiness_expected
-            global _refresh_started_at_utc, _refresh_completed_at_utc
             if _refresh_proc is not None and _refresh_proc.poll() is None:
-                self._json_response({
-                    "accepted": False,
-                    "started": False,
-                    "reason": "already running",
-                    "job_status": "running",
-                    "requested_intent": _refresh_requested_intent,
-                    "resolved_intent": _refresh_resolved_intent,
-                    "universe_scope": _refresh_universe_scope,
-                    "estimated_symbol_count": _refresh_estimated_symbol_count,
-                    "updates": list(_refresh_updates),
-                    "does_not_update": list(_refresh_does_not_update),
-                    "research_universe_freshness_expected": _refresh_research_universe_expected,
-                    "candidate_readiness_expected": _refresh_candidate_readiness_expected,
-                })
+                self._json_response({"started": False, "reason": "already running"})
                 return
-
-            payload: dict = {}
-            content_length = int(self.headers.get("Content-Length", "0") or "0")
-            if content_length > 0:
-                try:
-                    raw = self.rfile.read(content_length)
-                    payload = json.loads(raw.decode("utf-8")) if raw else {}
-                    if not isinstance(payload, dict):
-                        raise ValueError("JSON body must be an object")
-                except Exception:
-                    self._json_response(
-                        {
-                            "accepted": False,
-                            "error": "invalid JSON body",
-                        },
-                        400,
-                    )
-                    return
-
-            requested = payload.get("intent")
-            if requested is None:
-                requested = payload.get("mode")
-            normalized = _normalize_refresh_intent(requested)
-            if not normalized:
-                allowed = sorted(_REFRESH_INTENT_CATALOG.keys())
-                self._json_response(
-                    {
-                        "accepted": False,
-                        "error": "unknown refresh intent",
-                        "requested_intent": str(requested),
-                        "allowed_intents": allowed,
-                    },
-                    400,
-                )
-                return
-
-            intent_cfg = _REFRESH_INTENT_CATALOG[normalized]
-            resolved_intent = str(intent_cfg.get("resolved_intent") or normalized)
-            entrypoint = str(intent_cfg.get("entrypoint") or "refresh_signals")
-            refresh_mode = str(intent_cfg.get("refresh_mode") or "")
-            use_smart = bool(intent_cfg.get("use_smart"))
-            estimated_count = _estimated_count_for_intent(resolved_intent)
-
-            if entrypoint == "prepare_portfolio_review":
-                cmd = [
-                    sys.executable,
-                    str(_REPO_ROOT / "scripts" / "prepare_portfolio_review.py"),
-                    "--report-path",
-                    str(_REFRESH_REPORT_PATH),
-                ]
-            else:
-                cmd = [
-                    sys.executable,
-                    str(_REPO_ROOT / "scripts" / "refresh_signals.py"),
-                    "--mode",
-                    refresh_mode,
-                ]
-                if use_smart:
-                    cmd.append("--smart")
-                cmd.extend([
-                    "--report-path",
-                    str(_REFRESH_REPORT_PATH),
-                ])
-
-            _refresh_last_report = None
-            _refresh_last_exit_code = None
-            _refresh_requested_intent = normalized
-            _refresh_resolved_intent = resolved_intent
-            _refresh_universe_scope = str(intent_cfg.get("universe_scope") or "unknown")
-            _refresh_estimated_symbol_count = estimated_count
-            _refresh_updates = list(intent_cfg.get("updates") or [])
-            _refresh_does_not_update = list(intent_cfg.get("does_not_update") or [])
-            _refresh_research_universe_expected = bool(intent_cfg.get("research_universe_freshness_expected"))
-            _refresh_candidate_readiness_expected = bool(intent_cfg.get("candidate_readiness_expected"))
-            _refresh_started_at_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            _refresh_completed_at_utc = None
-            try:
-                if _REFRESH_REPORT_PATH.exists():
-                    _REFRESH_REPORT_PATH.unlink()
-            except Exception:
-                pass
             _refresh_proc = subprocess.Popen(
-                cmd,
+                [sys.executable, str(_REPO_ROOT / "scripts/refresh_signals.py"), "--smart"],
                 cwd=str(_REPO_ROOT),
                 env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
             )
-            self._json_response(
-                {
-                    "accepted": True,
-                    "started": True,
-                    "job_status": "started",
-                    "requested_intent": _refresh_requested_intent,
-                    "resolved_intent": _refresh_resolved_intent,
-                    "universe_scope": _refresh_universe_scope,
-                    "estimated_symbol_count": _refresh_estimated_symbol_count,
-                    "updates": list(_refresh_updates),
-                    "does_not_update": list(_refresh_does_not_update),
-                    "research_universe_freshness_expected": _refresh_research_universe_expected,
-                    "candidate_readiness_expected": _refresh_candidate_readiness_expected,
-                    "mode": _refresh_resolved_intent,
-                    "source": str(payload.get("source") or "outcome_visualization"),
-                    "requested_by": str(payload.get("requested_by") or "operator"),
-                }
-            )
-        elif path == "/api/pis/refresh":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.refresh_orchestrator import refresh_derived_artifacts
-
-                result = refresh_derived_artifacts(repo_root=_REPO_ROOT)
-                self._json_response(result)
-            except Exception as exc:
-                self._json_response({"error": str(exc), "refreshed": [], "skipped": []}, 200)
-        elif path == "/api/mei/outcomes/refresh":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.mei.event_outcome_tracker import refresh_event_outcomes
-                meta = refresh_event_outcomes(repo_root=_REPO_ROOT)
-                self._json_response(meta)
-            except Exception as exc:
-                self._json_response({"ok": False, "error": str(exc)}, 200)
-        elif path == "/api/predictive/calibration/refresh":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.conflict_alpha_calibration import refresh_calibration
-                meta = refresh_calibration(repo_root=_REPO_ROOT)
-                self._json_response(meta)
-            except Exception as exc:
-                self._json_response({"ok": False, "error": str(exc)}, 200)
-        elif path == "/api/predictive/directional-refresh":
-            try:
-                import sys as _sys
-                if str(_REPO_ROOT) not in _sys.path:
-                    _sys.path.insert(0, str(_REPO_ROOT))
-                from src.sih.predictive.directional_accuracy import refresh_directional
-                meta = refresh_directional(repo_root=_REPO_ROOT)
-                self._json_response(meta)
-            except Exception as exc:
-                self._json_response({"ok": False, "error": str(exc)}, 200)
+            self._json_response({"started": True})
         elif path == "/api/score-fetch":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -2582,7 +808,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     _sys.path.insert(0, str(_REPO_ROOT))
                 from src.portfolio.runner import run_analysis
                 result = run_analysis(portfolio_csv, source_filename, snapshot_date, mandate_type)
-                self._json_response(_attach_explanations(result))
+                self._json_response(result)
             except Exception as exc:
                 self._json_response({"status": "REJECTED", "error": str(exc)}, 422)
         elif path == "/api/portfolio/deployment-plan":
@@ -2801,35 +1027,13 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def do_DELETE(self) -> None:  # type: ignore[override]
-        path = self.path.split("?")[0]
-        if path == "/api/cra/draft":
-            # DELETE /api/cra/draft — clear saved draft
-            draft_path = _REPO_ROOT / "data" / "operator" / "cra_draft.json"
-            if draft_path.exists():
-                draft_path.unlink()
-                self._json_response({"deleted": True})
-            else:
-                self._json_response({"deleted": False, "reason": "no draft exists"}, 404)
-        else:
-            self.send_error(404)
-
     def _json_response(self, data: dict, status: int = 200) -> None:
-        try:
-            body = json.dumps(_sanitize_nan(data), allow_nan=False).encode("utf-8")
-        except (TypeError, ValueError) as exc:
-            body = json.dumps({"error": f"serialization_error: {exc}"}).encode("utf-8")
-            status = 500
-
-        try:
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            # Client disconnected before response flush; avoid noisy traceback.
-            return
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, fmt: str, *args: object) -> None:  # type: ignore[override]
         # Suppress noisy polling requests from the UI
@@ -2847,26 +1051,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    _ThreadingTCPServer.allow_reuse_address = True
-    with _ThreadingTCPServer(("127.0.0.1", args.port), _Handler) as httpd:
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(("127.0.0.1", args.port), _Handler) as httpd:
         print("Outcome UI server started")
         print(f"Repository root: {_REPO_ROOT}")
         print(f"Open: http://127.0.0.1:{args.port}/ui/outcome_visualization/index.html")
         try:
             os.chdir(_REPO_ROOT)
-            # Run PIS derived-artifact refresh once at startup without blocking
-            # the HTTP listener.  The refresh chain is idempotent — if all
-            # artifacts are already current it exits immediately.
-            if str(_REPO_ROOT) not in sys.path:
-                sys.path.insert(0, str(_REPO_ROOT))
-            from src.pis.refresh_orchestrator import trigger_startup_refresh
-            _pis_startup_thread = threading.Thread(
-                target=trigger_startup_refresh,
-                kwargs={"repo_root": _REPO_ROOT},
-                daemon=True,
-                name="pis-startup-refresh",
-            )
-            _pis_startup_thread.start()
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nStopping server...")

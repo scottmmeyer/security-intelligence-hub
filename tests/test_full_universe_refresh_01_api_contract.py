@@ -5,6 +5,7 @@ import socket
 import sys
 import threading
 import urllib.error
+import socketserver
 import urllib.request
 from contextlib import closing
 from pathlib import Path
@@ -15,6 +16,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import scripts.run_outcome_ui as run_outcome_ui
+
+
+def _server_class():
+    return getattr(run_outcome_ui, "_ThreadingTCPServer", socketserver.TCPServer)
 
 
 class _DummyProc:
@@ -51,7 +56,7 @@ def _reset_refresh_globals() -> None:
 def _post_signal_refresh(payload: dict) -> tuple[int, dict, list[str]]:
     _reset_refresh_globals()
     port = _free_port()
-    server = run_outcome_ui._ThreadingTCPServer(("127.0.0.1", port), run_outcome_ui._Handler)
+    server = _server_class()(("127.0.0.1", port), run_outcome_ui._Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -82,7 +87,7 @@ def _post_signal_refresh(payload: dict) -> tuple[int, dict, list[str]]:
 def _post_signal_refresh_error(payload: dict) -> tuple[int, dict]:
     _reset_refresh_globals()
     port = _free_port()
-    server = run_outcome_ui._ThreadingTCPServer(("127.0.0.1", port), run_outcome_ui._Handler)
+    server = _server_class()(("127.0.0.1", port), run_outcome_ui._Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -99,6 +104,22 @@ def _post_signal_refresh_error(payload: dict) -> tuple[int, dict]:
     except urllib.error.HTTPError as exc:
         body = json.loads(exc.read().decode("utf-8"))
         return exc.code, body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        _reset_refresh_globals()
+
+
+def _get_json(path: str) -> tuple[int, dict]:
+    _reset_refresh_globals()
+    port = _free_port()
+    server = _server_class()(("127.0.0.1", port), run_outcome_ui._Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
     finally:
         server.shutdown()
         server.server_close()
@@ -161,3 +182,56 @@ def test_signal_refresh_prepare_portfolio_review_reports_expected_updates():
     assert "portfolio_review_artifacts" in body["updates"]
     assert "research_universe_freshness_guarantee" in body["does_not_update"]
     assert "prepare_portfolio_review.py" in " ".join(cmd)
+
+
+def test_refresh_transparency_endpoint_contract_compatibility():
+    status, body = _get_json("/api/refresh-transparency")
+
+    assert status == 200
+    assert "status" in body
+    assert "latest_refresh_date" in body
+    assert "provider_counts" in body
+    assert "decision_readiness" in body
+    assert "warnings" in body
+    assert "artifacts" in body
+    assert "readiness" in body
+    assert "rows" in body
+    assert "manual_sources" in body
+    assert "compatibility" in body
+    assert body["compatibility"]["endpoint"] == "/api/refresh-transparency"
+    assert "ess_lseg" in body["manual_sources"]
+    assert "manual_source" in body["manual_sources"]["ess_lseg"]
+    assert body["manual_sources"]["ess_lseg"]["manual_source"] is True
+
+    readiness = body["readiness"]
+    for key in ("research_universe", "cw_das", "ucf", "recommendations", "cra"):
+        assert key in readiness
+        metric = readiness[key]
+        assert "core_fresh_pct" in metric
+        assert "core_fresh" in metric
+        assert "total" in metric
+        assert "stale_or_missing" in metric
+        assert "status" in metric
+
+    signal_status_code, signal_status_body = _get_json("/api/signal-status")
+    refresh_status_code, refresh_status_body = _get_json("/api/signal-refresh/status")
+    assert signal_status_code == 200
+    assert refresh_status_code == 200
+    assert "_running" in signal_status_body
+    assert "running" in refresh_status_body
+
+
+def test_signal_status_exposes_ess_and_holdings_coverage_contract():
+    status, body = _get_json("/api/signal-status")
+
+    assert status == 200
+    assert "ess" in body
+    assert "badge_state" in body["ess"]
+    assert "sourced_date" in body["ess"]
+    assert "portfolio_holdings_coverage" in body
+    coverage = body["portfolio_holdings_coverage"]
+    assert "providers" in coverage
+    providers = coverage["providers"]
+    for key in ("zacks", "danelfin", "yahoo"):
+        assert key in providers
+        assert "applicable_holdings" in providers[key]
