@@ -115,9 +115,13 @@ _ALIAS_MAP: dict[str, str] = {
     "GOLD":                             "COMMODITIES.GOLD",
     "PRECIOUS METALS":                  "COMMODITIES.GOLD",
     "ENERGY":                           "COMMODITIES.ENERGY",
+    "BROAD COMMODITY":                  "COMMODITIES.BROAD_BASKET",
+    "BROAD_COMMODITY":                  "COMMODITIES.BROAD_BASKET",
     "BROAD COMMODITIES":                "COMMODITIES.BROAD_BASKET",
     "BROAD BASKET":                     "COMMODITIES.BROAD_BASKET",
     "BROAD_BASKET":                     "COMMODITIES.BROAD_BASKET",
+    "COMMODITIES.BROAD_COMMODITY":      "COMMODITIES.BROAD_BASKET",
+    "COMMODITIES.BROAD":                "COMMODITIES.BROAD_BASKET",
     # ── Cash aliases ──────────────────────────────────────────────────────────
     "CASH AND EQUIVALENTS":             "CASH",
     "CASH EQUIVALENT":                  "CASH",

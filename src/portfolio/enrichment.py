@@ -63,7 +63,13 @@ _ETF_OVERRIDES: dict[str, dict] = {
     # Commodities
     "GLD":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Gold",         industry="Gold"),
     "IAU":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Gold",         industry="Gold"),
+    "SGOL":  dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Gold",         industry="Gold"),
+    "USO":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Energy",       industry="Energy"),
+    "BNO":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Energy",       industry="Energy"),
+    "UNG":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Energy",       industry="Energy"),
+    "DBC":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Broad Basket", industry="ALL"),
     "PDBC":  dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Broad Commodity", industry="ALL"),
+    "GSG":   dict(asset_class="COMMODITIES", geography="GLOBAL",     market_cap_bucket="N/A",    mega_subtier="N/A", sector="Broad Basket", industry="ALL"),
     "XLE":   dict(asset_class="EQUITIES",   geography="US",          market_cap_bucket="MEGA",   mega_subtier="N/A", sector="Energy",       industry="Oil & Gas"),
     "XLF":   dict(asset_class="EQUITIES",   geography="US",          market_cap_bucket="MEGA",   mega_subtier="N/A", sector="Financials",   industry="ALL"),
     "XLK":   dict(asset_class="EQUITIES",   geography="US",          market_cap_bucket="MEGA",   mega_subtier="N/A", sector="Technology",   industry="ALL"),
