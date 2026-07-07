@@ -69,6 +69,22 @@ _REFRESH_MODES = {
     REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE,
 }
 
+_PROVIDER_PRIMARY_FIELDS: dict[str, tuple[str, ...]] = {
+    "zacks": ("zacks_rank", "zacks_score"),
+    "danelfin": ("danelfin_raw", "danelfin_score"),
+    "yahoo": ("price_target", "analyst_count", "current_price"),
+}
+
+_PROVIDER_STATUS_FIELDS: tuple[str, ...] = (
+    "status",
+    "coverage_status",
+    "signal_coverage_status",
+    "provider_status",
+    "fetch_status",
+    "error_code",
+    "reason",
+)
+
 
 # ---------------------------------------------------------------------------
 # Staleness detection
@@ -207,10 +223,10 @@ def _normalize_refresh_mode(refresh_mode: str | None) -> str:
 
 def _refresh_mode_label(refresh_mode: str) -> str:
     return {
-        REFRESH_MODE_STALE_ONLY: "Refresh Stale Only",
-        REFRESH_MODE_PORTFOLIO_SIGNALS: "Refresh Portfolio Signals",
-        REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "Rebuild Research Universe",
-    }.get(refresh_mode, "Refresh Stale Only")
+        REFRESH_MODE_STALE_ONLY: "stale_only",
+        REFRESH_MODE_PORTFOLIO_SIGNALS: "portfolio_signals",
+        REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "rebuild_research_universe",
+    }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
 
 
 def _provider_state(*, research_fresh: bool, holdings_status: str) -> str:
@@ -243,22 +259,131 @@ def _compute_provider_metrics(
     runtime_sec: float,
     fetch_stats: dict[str, int] | None = None,
 ) -> dict[str, object]:
-    symbols_after = coverage_after.get("symbols") or {}
-    refreshed = 0
-    for symbol in submitted_symbols:
-        info = symbols_after.get(symbol)
-        if isinstance(info, dict) and info.get("classification") == "COVERED_TODAY":
-            refreshed += 1
     submitted = len(submitted_symbols)
-    failed = max(submitted - refreshed, 0)
+    refresh_date = date.today().isoformat()
+
+    latest_csv_by_provider = {
+        "zacks": _ZACKS_DIR / "latest_zacks.csv",
+        "danelfin": _DANELFIN_DIR / "latest_danelfin.csv",
+        "yahoo": _YAHOO_DIR / "latest_yahoo_supplemental.csv",
+    }
+    latest_csv = latest_csv_by_provider.get(provider)
+    primary_fields = _PROVIDER_PRIMARY_FIELDS.get(provider, ())
+
+    rows_by_symbol: dict[str, list[dict[str, str]]] = {}
+    if latest_csv is not None and latest_csv.exists():
+        with latest_csv.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                symbol = str(row.get("symbol", "")).strip().upper()
+                if not symbol:
+                    continue
+                rows_by_symbol.setdefault(symbol, []).append(dict(row))
+
+    def _pick_row(symbol_rows: list[dict[str, str]]) -> dict[str, str] | None:
+        if not symbol_rows:
+            return None
+        today_rows = [r for r in symbol_rows if str(r.get("sourced_date", "")).strip() == refresh_date]
+        if today_rows:
+            # Prefer row with primary data when multiple same-day rows exist.
+            for row in today_rows:
+                if any(str(row.get(field, "")).strip() for field in primary_fields):
+                    return row
+            return today_rows[0]
+        # Fall back to most recent sourced_date row.
+        return max(symbol_rows, key=lambda r: str(r.get("sourced_date", "")).strip())
+
+    def _status_tokens(row: dict[str, str]) -> set[str]:
+        tokens: set[str] = set()
+        for field in _PROVIDER_STATUS_FIELDS:
+            raw = str(row.get(field, "")).strip().upper()
+            if raw:
+                tokens.add(raw)
+        return tokens
+
+    written_count = 0
+    written_refresh_date_count = 0
+    primary_data_count = 0
+    no_coverage_count = 0
+    no_score_count = 0
+    stale_carryover_count = 0
+    explicit_error_count = 0
+    duplicate_count = 0
+
+    for symbol in submitted_symbols:
+        symbol_rows = rows_by_symbol.get(symbol, [])
+        if not symbol_rows:
+            continue
+        written_count += 1
+        if len(symbol_rows) > 1:
+            duplicate_count += 1
+
+        row = _pick_row(symbol_rows)
+        if row is None:
+            continue
+
+        sourced_date = str(row.get("sourced_date", "")).strip()
+        has_primary_data = any(str(row.get(field, "")).strip() for field in primary_fields)
+        tokens = _status_tokens(row)
+
+        if sourced_date == refresh_date:
+            written_refresh_date_count += 1
+        elif sourced_date:
+            stale_carryover_count += 1
+
+        if has_primary_data:
+            primary_data_count += 1
+
+        if "NO_COVERAGE_AVAILABLE" in tokens:
+            no_coverage_count += 1
+        elif "NO_SCORE_AVAILABLE" in tokens:
+            no_score_count += 1
+        elif not has_primary_data:
+            # Current provider files encode terminal no-coverage as empty primary fields.
+            no_coverage_count += 1
+
+        if tokens & {
+            "FAILED",
+            "ERROR",
+            "PARSE_ERROR",
+            "RATE_LIMIT",
+            "TIMEOUT",
+            "BLOCKED",
+            "CAPTCHA",
+        }:
+            explicit_error_count += 1
+
+    empty_primary_data_count = max(written_count - primary_data_count, 0)
+    missing_written_count = max(submitted - written_count, 0)
+    true_error_count = explicit_error_count + missing_written_count
+    failed = true_error_count
+    refreshed = written_refresh_date_count
     applicable_before = int(coverage_before.get("applicable_holdings") or 0)
     skipped = max(applicable_before - submitted, 0)
+    skipped_checkpoint = int((fetch_stats or {}).get("skipped_checkpoint", 0))
     skipped_already_covered = int((fetch_stats or {}).get("skipped_already_covered", 0))
     retried_failed_checkpoint = int((fetch_stats or {}).get("retried_failed_checkpoint", 0))
+    requested_count = int((fetch_stats or {}).get("requested", submitted) or submitted)
+    attempted_count = int((fetch_stats or {}).get("attempted", submitted) or submitted)
     return {
         "provider": provider,
         "mode": mode,
+        "refresh_date": refresh_date,
+        "submitted_count": submitted,
+        "written_count": written_count,
+        "written_refresh_date_count": written_refresh_date_count,
+        "primary_data_count": primary_data_count,
+        "empty_primary_data_count": empty_primary_data_count,
+        "no_coverage_count": no_coverage_count,
+        "no_score_count": no_score_count,
+        "stale_carryover_count": stale_carryover_count,
+        "true_error_count": true_error_count,
+        "missing_written_count": missing_written_count,
+        "duplicate_count": duplicate_count,
+        "pending_count": 0,
+        "requested_count": requested_count,
+        "attempted_count": attempted_count,
         "submitted": submitted,
+        "skipped_checkpoint": skipped_checkpoint,
         "skipped_already_covered": skipped_already_covered,
         "retried_failed_checkpoint": retried_failed_checkpoint,
         "refreshed": refreshed,
@@ -268,6 +393,15 @@ def _compute_provider_metrics(
         "coverage_after": _coverage_snapshot(coverage_after),
         "runtime_sec": round(runtime_sec, 4),
     }
+
+
+def _provider_report_research_fresh(metrics: dict[str, object], fallback: bool) -> bool:
+    submitted = int(metrics.get("submitted_count") or metrics.get("submitted") or 0)
+    if submitted <= 0:
+        return fallback
+    missing = int(metrics.get("missing_written_count") or 0)
+    stale = int(metrics.get("stale_carryover_count") or 0)
+    return missing == 0 and stale == 0
 
 
 def _merge_forced_symbols(
@@ -331,7 +465,7 @@ def _refresh_zacks(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
@@ -339,11 +473,13 @@ def _refresh_zacks(
 
     active_holdings = _load_portfolio_equity_holdings()
     forced = _load_portfolio_provider_holdings("zacks")
-    mode = refresh_mode
+    mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
+        mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
+        mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
     elif research_stale:
         symbols = build_smart_refresh_list(
             universe_csv=_BASE_UNIVERSE,
@@ -351,6 +487,7 @@ def _refresh_zacks(
             forced_symbols=forced or None,
         )
     else:
+        mode = "coverage_repair"
         symbols = repair_targets
     if not symbols:
         if verbose:
@@ -366,29 +503,37 @@ def _refresh_zacks(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
         return False
 
     if verbose:
-        if refresh_mode == REFRESH_MODE_STALE_ONLY:
+        if mode == "coverage_repair":
             print(
                 f"[refresh_signals] Zacks: research fresh but holdings {coverage_before.get('status')} "
                 f"— refreshing {len(symbols)} stale/missing applicable holdings."
             )
-        elif refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS and forced:
+        elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
+            print(
+                f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            print(
+                f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} universe symbols."
+            )
+        elif forced:
             print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols "
                   f"({len(forced)}/{len(active_holdings)} provider-applicable active holdings + smart refresh).")
         else:
-            print(f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode).lower()} — fetching {len(symbols)} symbols.")
+            print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols.")
     if not dry_run:
         fetch_result = fetch_zacks_scores_for_symbols(
             symbols,
             output_dir=_ZACKS_DIR,
             verbose=verbose,
-            force_retry_symbols=set(symbols) if refresh_mode == REFRESH_MODE_STALE_ONLY else None,
+            force_retry_symbols=set(symbols) if mode == "coverage_repair" else None,
             collect_stats=True,
         )
         fetch_stats = fetch_result[1] if isinstance(fetch_result, tuple) else None
@@ -406,7 +551,7 @@ def _refresh_zacks(
             fetch_stats=fetch_stats,
         )
         metrics["state"] = _provider_state(
-            research_fresh=not research_stale,
+              research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
             holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
         )
         return True, metrics
@@ -443,7 +588,7 @@ def _refresh_danelfin(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
@@ -451,15 +596,18 @@ def _refresh_danelfin(
 
     active_holdings = _load_portfolio_equity_holdings()
     forced = forced_symbols if forced_symbols is not None else _load_portfolio_provider_holdings("danelfin")
-    mode = refresh_mode
+    mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
+        mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
+        mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
     elif research_stale:
         base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
         symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
     else:
+        mode = "coverage_repair"
         symbols = repair_targets
     if not symbols:
         if verbose:
@@ -475,7 +623,7 @@ def _refresh_danelfin(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
@@ -483,24 +631,32 @@ def _refresh_danelfin(
 
     mode_label = "smart (bullish only)" if smart else "full universe"
     if verbose:
-        if refresh_mode == REFRESH_MODE_STALE_ONLY:
+        if mode == "coverage_repair":
             print(
                 f"[refresh_signals] Danelfin: research fresh but holdings {coverage_before.get('status')} "
                 f"— refreshing {len(symbols)} stale/missing applicable holdings."
             )
-        elif refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS and forced:
+        elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             print(
-                f"[refresh_signals] Danelfin: portfolio signals — fetching {len(symbols)} symbols "
+                f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            print(
+                f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols ({mode_label})."
+            )
+        elif smart and forced:
+            print(
+                f"[refresh_signals] Danelfin: stale — fetching {len(symbols)} symbols "
                 f"({len(forced)}/{len(active_holdings)} provider-applicable active holdings + {mode_label})."
             )
         else:
-            print(f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode).lower()} — fetching {len(symbols)} symbols ({mode_label}).")
+            print(f"[refresh_signals] Danelfin: stale — fetching {len(symbols)} symbols ({mode_label}).")
     if not dry_run:
         fetch_result = fetch_danelfin_scores_for_symbols(
             symbols,
             output_dir=_DANELFIN_DIR,
             verbose=verbose,
-            force_retry_symbols=set(symbols) if refresh_mode == REFRESH_MODE_STALE_ONLY else None,
+            force_retry_symbols=set(symbols) if mode == "coverage_repair" else None,
             collect_stats=True,
         )
         fetch_stats = fetch_result[1] if isinstance(fetch_result, tuple) else None
@@ -518,7 +674,7 @@ def _refresh_danelfin(
             fetch_stats=fetch_stats,
         )
         metrics["state"] = _provider_state(
-            research_fresh=not research_stale,
+              research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
             holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
         )
         return True, metrics
@@ -555,7 +711,7 @@ def _refresh_yahoo(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
@@ -563,15 +719,18 @@ def _refresh_yahoo(
 
     active_holdings = _load_portfolio_equity_holdings()
     forced = forced_symbols if forced_symbols is not None else _load_portfolio_provider_holdings("yahoo")
-    mode = refresh_mode
+    mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
+        mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
+        mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
     elif research_stale:
         base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
         symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
     else:
+        mode = "coverage_repair"
         symbols = repair_targets
     if not symbols:
         if verbose:
@@ -587,7 +746,7 @@ def _refresh_yahoo(
                 runtime_sec=time.perf_counter() - t0,
             )
             metrics["state"] = _provider_state(
-                research_fresh=not research_stale,
+                  research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
                 holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
             )
             return False, metrics
@@ -595,24 +754,32 @@ def _refresh_yahoo(
 
     mode_label = "smart (bullish only)" if smart else "full universe"
     if verbose:
-        if refresh_mode == REFRESH_MODE_STALE_ONLY:
+        if mode == "coverage_repair":
             print(
                 f"[refresh_signals] Yahoo: research fresh but holdings {coverage_before.get('status')} "
                 f"— refreshing {len(symbols)} stale/missing applicable holdings."
             )
-        elif refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS and forced:
+        elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             print(
-                f"[refresh_signals] Yahoo: portfolio signals — fetching {len(symbols)} symbols "
+                f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            print(
+                f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols ({mode_label})."
+            )
+        elif smart and forced:
+            print(
+                f"[refresh_signals] Yahoo: stale — fetching {len(symbols)} symbols "
                 f"({len(forced)}/{len(active_holdings)} provider-applicable active holdings + {mode_label})."
             )
         else:
-            print(f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode).lower()} — fetching {len(symbols)} symbols ({mode_label}).")
+            print(f"[refresh_signals] Yahoo: stale — fetching {len(symbols)} symbols ({mode_label}).")
     if not dry_run:
         fetch_result = fetch_yahoo_supplemental_for_symbols(
             symbols,
             output_dir=_YAHOO_DIR,
             verbose=verbose,
-            force_retry_symbols=set(symbols) if refresh_mode == REFRESH_MODE_STALE_ONLY else None,
+            force_retry_symbols=set(symbols) if mode == "coverage_repair" else None,
             collect_stats=True,
         )
         fetch_stats = fetch_result[1] if isinstance(fetch_result, tuple) else None
@@ -630,7 +797,7 @@ def _refresh_yahoo(
             fetch_stats=fetch_stats,
         )
         metrics["state"] = _provider_state(
-            research_fresh=not research_stale,
+              research_fresh=_provider_report_research_fresh(metrics, fallback=not research_stale),
             holdings_status=str(coverage_before.get("status") or "UNKNOWN"),
         )
         return True, metrics
@@ -711,6 +878,7 @@ def ensure_signals_fresh(
     *,
     dry_run: bool = False,
     verbose: bool = True,
+    refresh_mode: str = REFRESH_MODE_STALE_ONLY,
     smart: bool = False,
 ) -> dict[str, bool]:
     """Check freshness and fetch stale signal caches.
@@ -737,6 +905,7 @@ def ensure_signals_fresh(
         providers=providers,
         dry_run=dry_run,
         verbose=verbose,
+        refresh_mode=refresh_mode,
         smart=smart,
     )
     return {
@@ -750,15 +919,14 @@ def ensure_signals_fresh_with_report(
     *,
     dry_run: bool = False,
     verbose: bool = True,
-    smart: bool = False,
     refresh_mode: str = REFRESH_MODE_STALE_ONLY,
+    smart: bool = False,
 ) -> dict[str, object]:
     """Check freshness and fetch stale/coverage-degraded providers with report."""
     triggered: dict[str, bool] = {}
     provider_report: dict[str, dict[str, object]] = {}
     t0 = time.perf_counter()
     provider_set = {p.lower() for p in providers}
-    refresh_mode = _normalize_refresh_mode(refresh_mode)
 
     if "zacks" in provider_set:
         z = _refresh_zacks(
@@ -814,8 +982,6 @@ def ensure_signals_fresh_with_report(
         "triggered": triggered,
         "providers": provider_report,
         "smart": bool(smart),
-        "refresh_mode": refresh_mode,
-        "refresh_mode_label": _refresh_mode_label(refresh_mode),
         "dry_run": bool(dry_run),
         "runtime_sec": round(time.perf_counter() - t0, 4),
     }
@@ -852,10 +1018,10 @@ if __name__ == "__main__":
         help="Fetch only BULLISH/VERY_BULLISH symbols for Danelfin and Yahoo (~300 vs ~2800).",
     )
     parser.add_argument(
-        "--mode",
+        "--refresh-mode",
         choices=sorted(_REFRESH_MODES),
         default=REFRESH_MODE_STALE_ONLY,
-        help="Operator refresh intent: stale_only, portfolio_signals, or rebuild_research_universe.",
+        help="Refresh mode compatibility switch.",
     )
     parser.add_argument(
         "--fmp-mode",
@@ -874,8 +1040,8 @@ if __name__ == "__main__":
         providers=args.providers,
         dry_run=args.dry_run,
         verbose=not args.quiet,
+        refresh_mode=args.refresh_mode,
         smart=args.smart,
-        refresh_mode=args.mode,
     )
 
     results = report.get("triggered") or {}

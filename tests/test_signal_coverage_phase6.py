@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from datetime import timedelta
 from pathlib import Path
 
 from scripts import refresh_signals as rs
@@ -47,14 +48,17 @@ def _zacks_headers() -> list[str]:
 
 
 def test_provider_fresh_but_coverage_degraded_triggers_targeted_refresh(tmp_path, monkeypatch):
+    today = rs.date.today()
+    fresh = today.isoformat()
+    stale = (today - timedelta(days=3)).isoformat()
     analysis_runs, universe, zdir = _setup_holdings_and_universe(tmp_path)
     latest = zdir / "latest_zacks.csv"
     _write_csv(
         latest,
         _zacks_headers(),
         [
-            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-12"},
-            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-09"},
+            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": fresh},
+            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": stale},
         ],
     )
 
@@ -72,7 +76,7 @@ def test_provider_fresh_but_coverage_degraded_triggers_targeted_refresh(tmp_path
                 "abr": "",
                 "price_target": "",
                 "eps_growth": "",
-                "sourced_date": "2026-06-12",
+                    "sourced_date": fresh,
             }
         _write_csv(latest, _zacks_headers(), list(by.values()))
 
@@ -92,14 +96,15 @@ def test_provider_fresh_but_coverage_degraded_triggers_targeted_refresh(tmp_path
 
 
 def test_provider_fresh_and_coverage_compliant_skips(tmp_path, monkeypatch):
+    fresh = rs.date.today().isoformat()
     analysis_runs, universe, zdir = _setup_holdings_and_universe(tmp_path)
     latest = zdir / "latest_zacks.csv"
     _write_csv(
         latest,
         _zacks_headers(),
         [
-            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-12"},
-            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-12"},
+            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": fresh},
+            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": fresh},
         ],
     )
 
@@ -116,13 +121,14 @@ def test_provider_fresh_and_coverage_compliant_skips(tmp_path, monkeypatch):
 
 
 def test_provider_fresh_with_missing_applicable_symbol_submits_missing(tmp_path, monkeypatch):
+    fresh = rs.date.today().isoformat()
     analysis_runs, universe, zdir = _setup_holdings_and_universe(tmp_path)
     latest = zdir / "latest_zacks.csv"
     _write_csv(
         latest,
         _zacks_headers(),
         [
-            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-12"},
+            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": fresh},
         ],
     )
 
@@ -144,13 +150,14 @@ def test_provider_fresh_with_missing_applicable_symbol_submits_missing(tmp_path,
 
 
 def test_research_stale_mode_keeps_research_refresh_behavior(tmp_path, monkeypatch):
+    stale = (rs.date.today() - timedelta(days=3)).isoformat()
     analysis_runs, universe, zdir = _setup_holdings_and_universe(tmp_path)
     latest = zdir / "latest_zacks.csv"
     _write_csv(
         latest,
         _zacks_headers(),
         [
-            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-11"},
+            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": stale},
         ],
     )
 
@@ -170,14 +177,17 @@ def test_research_stale_mode_keeps_research_refresh_behavior(tmp_path, monkeypat
 
 
 def test_ensure_signals_fresh_with_report_exposes_provider_activity(tmp_path, monkeypatch):
+    today = rs.date.today()
+    fresh = today.isoformat()
+    stale = (today - timedelta(days=3)).isoformat()
     analysis_runs, universe, zdir = _setup_holdings_and_universe(tmp_path)
     latest = zdir / "latest_zacks.csv"
     _write_csv(
         latest,
         _zacks_headers(),
         [
-            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-12"},
-            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-06-10"},
+            {"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": fresh},
+            {"symbol": "TSM", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": stale},
         ],
     )
 
@@ -201,3 +211,94 @@ def test_ensure_signals_fresh_with_report_exposes_provider_activity(tmp_path, mo
     assert "submitted" in report["providers"]["zacks"]
     assert "coverage_before" in report["providers"]["zacks"]
     assert "coverage_after" in report["providers"]["zacks"]
+
+
+def test_provider_metrics_separate_no_coverage_from_failed(tmp_path, monkeypatch):
+    today = rs.date.today().isoformat()
+    ydir = tmp_path / "signals" / "yahoo"
+    latest = ydir / "latest_yahoo_supplemental.csv"
+    _write_csv(
+        latest,
+        ["symbol", "price_target", "abr", "analyst_count", "eps_growth_5yr", "current_price", "upside_pct", "sourced_date"],
+        [
+            {
+                "symbol": "AAA",
+                "price_target": "",
+                "abr": "",
+                "analyst_count": "",
+                "eps_growth_5yr": "",
+                "current_price": "",
+                "upside_pct": "",
+                "sourced_date": today,
+            },
+            {
+                "symbol": "BBB",
+                "price_target": "120.0",
+                "abr": "",
+                "analyst_count": "10",
+                "eps_growth_5yr": "",
+                "current_price": "100.0",
+                "upside_pct": "",
+                "sourced_date": today,
+            },
+        ],
+    )
+
+    monkeypatch.setattr(rs, "_YAHOO_DIR", ydir)
+    metrics = rs._compute_provider_metrics(
+        provider="yahoo",
+        mode="coverage_repair",
+        submitted_symbols=["AAA", "BBB"],
+        coverage_before={"applicable_holdings": 2},
+        coverage_after={"applicable_holdings": 2},
+        runtime_sec=0.01,
+        fetch_stats={"requested": 2, "attempted": 2},
+    )
+
+    assert metrics["submitted"] == 2
+    assert metrics["written_count"] == 2
+    assert metrics["written_refresh_date_count"] == 2
+    assert metrics["primary_data_count"] == 1
+    assert metrics["empty_primary_data_count"] == 1
+    assert metrics["no_coverage_count"] == 1
+    assert metrics["missing_written_count"] == 0
+    assert metrics["true_error_count"] == 0
+    assert metrics["failed"] == 0
+
+
+def test_provider_metrics_missing_write_counts_as_true_error(tmp_path, monkeypatch):
+    today = rs.date.today().isoformat()
+    zdir = tmp_path / "signals" / "zacks"
+    latest = zdir / "latest_zacks.csv"
+    _write_csv(
+        latest,
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [
+            {
+                "symbol": "AAA",
+                "zacks_rank": "1",
+                "zacks_score": "5",
+                "abr": "",
+                "price_target": "",
+                "eps_growth": "",
+                "sourced_date": today,
+            },
+        ],
+    )
+
+    monkeypatch.setattr(rs, "_ZACKS_DIR", zdir)
+    metrics = rs._compute_provider_metrics(
+        provider="zacks",
+        mode="research_refresh",
+        submitted_symbols=["AAA", "BBB"],
+        coverage_before={"applicable_holdings": 2},
+        coverage_after={"applicable_holdings": 2},
+        runtime_sec=0.01,
+        fetch_stats={"requested": 2, "attempted": 2},
+    )
+
+    assert metrics["submitted"] == 2
+    assert metrics["written_count"] == 1
+    assert metrics["missing_written_count"] == 1
+    assert metrics["true_error_count"] == 1
+    assert metrics["failed"] == 1
