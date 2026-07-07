@@ -11,6 +11,7 @@ import socket
 import threading
 import urllib.request
 from contextlib import closing
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer
@@ -45,6 +46,7 @@ def _proposal(*, populated: bool) -> RotationProposal:
         reduction_score=88.4 if populated else 0.0,
         reduction_reason="Overweight reduction" if populated else "",
         policy_alignment_reason="Concentrated-alpha rotation" if populated else "",
+        source_intent="OVERWEIGHT_REPAIR" if populated else "UNKNOWN",
     )
 
     target = RotationDeploymentTarget(
@@ -117,6 +119,25 @@ def _fetch_cra_payload(proposal: RotationProposal) -> dict:
         thread.join(timeout=2)
 
 
+def _fetch_json(path: str, patchers: list | None = None) -> dict:
+    port = _free_port()
+    server = _ThreadingTCPServer(("127.0.0.1", port), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with ExitStack() as stack:
+            for p in patchers or []:
+                stack.enter_context(p)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+                assert resp.status == 200
+                return json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_cra_api_payload_includes_source_contract_fields():
     payload = _fetch_cra_payload(_proposal(populated=True))
     source = payload["sources"][0]
@@ -125,6 +146,9 @@ def test_cra_api_payload_includes_source_contract_fields():
     assert source["reduction_score"] == 88.4
     assert source["reduction_reason"] == "Overweight reduction"
     assert source["policy_alignment_reason"] == "Concentrated-alpha rotation"
+    assert source["source_intent"] == "OVERWEIGHT_REPAIR"
+    assert "source_intent_summary" in payload
+    assert payload["source_intent_summary"]["OVERWEIGHT_REPAIR"]["count"] == 1
 
 
 def test_cra_api_payload_includes_target_contract_fields():
@@ -148,6 +172,7 @@ def test_cra_api_payload_preserves_empty_field_contracts():
     assert source["reduction_score"] == 0.0
     assert source["reduction_reason"] == ""
     assert source["policy_alignment_reason"] == ""
+    assert source["source_intent"] == "UNKNOWN"
 
     assert target["funding_source_symbol"] == ""
     assert target["funding_source_category"] == ""
@@ -155,3 +180,45 @@ def test_cra_api_payload_preserves_empty_field_contracts():
     assert target["funding_source_reason"] == ""
     assert target["funding_source_alternatives"] == []
     assert target["funding_policy_alignment_reason"] == ""
+
+
+def test_cra_api_returns_degraded_json_when_builder_raises():
+    payload = _fetch_json(
+        "/api/cra/proposal",
+        patchers=[
+            patch("scripts.run_outcome_ui._build_cra_payload", side_effect=RuntimeError("boom")),
+        ],
+    )
+
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "cra_endpoint_error"
+    assert "Capital Rotation Advisor data is unavailable" in payload["message"]
+    assert isinstance(payload.get("warnings"), list)
+
+
+def test_operator_priorities_alias_routes_return_json_contract():
+    degraded = {
+        "status": "unavailable",
+        "reason": "operator_action_plan_missing",
+        "message": "Operator action plan unavailable - backend returned degraded state.",
+        "run_id": "PAR-TEST",
+        "today_operator_action_plan": {},
+        "warnings": ["Operator action plan unavailable"],
+        "updated_at_utc": None,
+    }
+
+    payload_a = _fetch_json(
+        "/api/operator-priorities",
+        patchers=[patch("scripts.run_outcome_ui._build_operator_priorities_payload", return_value=degraded)],
+    )
+    payload_b = _fetch_json(
+        "/api/portfolio-operator-priorities",
+        patchers=[patch("scripts.run_outcome_ui._build_operator_priorities_payload", return_value=degraded)],
+    )
+
+    assert payload_a["status"] == "unavailable"
+    assert payload_b["status"] == "unavailable"
+    assert payload_a["reason"] == "operator_action_plan_missing"
+    assert payload_b["reason"] == "operator_action_plan_missing"
+    assert payload_a["run_id"] == "PAR-TEST"
+    assert payload_b["run_id"] == "PAR-TEST"
