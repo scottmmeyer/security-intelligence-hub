@@ -6969,13 +6969,26 @@ function renderReductionQueuePlaceholder() {
   if (!el) return;
   el.innerHTML = `<div class="rq-section"><div class="rq-panel">
     <div class="rq-header">
-      <span class="rq-title">Reduction Queue — Top 10</span>
-      <span class="rq-advisory">Loading capital source data…</span>
+      <span class="rq-title">Reduction Queue - Top 10</span>
+      <span class="rq-advisory">Loading capital source data...</span>
     </div>
-    <div class="rq-loading">Waiting for CRA capital sources…</div>
+    <div class="rq-loading">Waiting for CRA capital sources...</div>
   </div></div>`;
 }
 
+function renderReductionQueueUnavailable(message, reason) {
+  const el = document.getElementById("reductionQueueContainer");
+  if (!el) return;
+  const msg = message || "CRA unavailable - capital source data not loaded.";
+  const why = reason ? `Reason: ${reason}` : "Reason: backend returned degraded state";
+  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
+    <div class="rq-header">
+      <span class="rq-title">Reduction Queue - Top 10</span>
+      <span class="rq-advisory">CRA unavailable</span>
+    </div>
+    <div class="rq-no-data">CRA unavailable - capital source data not loaded.<br>${escHtml(msg)}<br><small>${escHtml(why)}</small></div>
+  </div></div>`;
+}
 const _RQ_PRIORITY_ORDER = { URGENT: 0, HIGH: 1, MODERATE: 2, LOW: 3, DEFER: 4 };
 const _RQ_CATEGORY_LABELS = {
   SIGNAL_DETERIORATION:   "Signal Deterioration",
@@ -9180,7 +9193,7 @@ async function loadCRAProposal() {
   const content = document.getElementById("craContent");
   if (!section || !content) return;
 
-  content.innerHTML = `<div class="cra-loading">Loading Capital Rotation Advisor…</div>`;
+  content.innerHTML = `<div class="cra-loading">Loading Capital Rotation Advisor...</div>`;
   section.style.display = "block";
 
   const btn = document.getElementById("craRefreshBtn");
@@ -9188,12 +9201,33 @@ async function loadCRAProposal() {
 
   try {
     const resp = await fetch("/api/cra/proposal");
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: "Network error" }));
-      content.innerHTML = `<div class="cra-error">${escHtml(err.error || "Failed to load CRA proposal")}</div>`;
+    let payload = null;
+    const ct = (resp.headers.get("content-type") || "").toLowerCase();
+
+    if (ct.includes("application/json")) {
+      payload = await resp.json();
+    } else {
+      const txt = await resp.text().catch(() => "");
+      payload = {
+        status: "unavailable",
+        reason: "non_json_response",
+        message: `CRA endpoint returned non-JSON response (HTTP ${resp.status}).`,
+        endpoint: "/api/cra/proposal",
+        raw: (txt || "").slice(0, 200),
+      };
+    }
+
+    if (!resp.ok || (payload && payload.status === "unavailable")) {
+      const reason = (payload && payload.reason) ? String(payload.reason) : `http_${resp.status}`;
+      const msg = (payload && payload.message)
+        ? String(payload.message)
+        : `CRA unavailable - backend returned degraded state (HTTP ${resp.status}).`;
+      content.innerHTML = `<div class="cra-error">${escHtml(msg)}<br><small>Reason: ${escHtml(reason)}</small></div>`;
+      renderReductionQueueUnavailable(msg, reason);
       return;
     }
-    _craProposal = await resp.json();
+
+    _craProposal = payload;
     _renderCRAProposal(_craProposal);
     _craEnableButtons(true);
 
@@ -9218,14 +9252,13 @@ async function loadCRAProposal() {
     // Check for stale draft with matching run_id for Include/Skip restore
     _craCheckDraft(_craProposal.run_id);
   } catch (e) {
-    content.innerHTML = `<div class="cra-error">CRA error: ${escHtml(String(e))}</div>`;
+    const msg = `CRA unavailable - backend returned degraded state (${String(e)})`;
+    content.innerHTML = `<div class="cra-error">${escHtml(msg)}</div>`;
+    renderReductionQueueUnavailable(msg, "fetch_exception");
   } finally {
     if (btn) btn.disabled = false;
   }
 }
-
-// ── CRA Persistence & Export ──────────────────────────────────────────────────
-
 function _craEnableButtons(on) {
   for (const id of ["craSaveBtn","craExportCsvBtn","craExportMdBtn","craCopyBtn"]) {
     const el = document.getElementById(id);
