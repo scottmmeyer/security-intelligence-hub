@@ -18,13 +18,16 @@ import argparse
 import concurrent.futures
 import csv
 import http.server
+import io
 import json
+import math
 import os
 import re
 import socketserver
 import subprocess
 import sys
 import threading
+from urllib.parse import parse_qs
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -106,6 +109,166 @@ def _load_ess_coverage_warning() -> dict:
         return json.loads(_ESS_COVERAGE_WARNING.read_text(encoding="utf-8"))
     except Exception:
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
+
+
+def _statement_gain_loss_latest_payload() -> tuple[dict, int]:
+    """Return latest statement gain/loss artifact payload with graceful fallback."""
+    artifacts_dir = _REPO_ROOT / "artifacts" / "statement_gain_loss"
+    latest_pointer = artifacts_dir / "latest.json"
+    history_index = artifacts_dir / "history" / "statement_gain_loss_index.json"
+
+    def _unavailable(reason: str, message: str, warnings: list[str]) -> tuple[dict, int]:
+        return {
+            "status": "unavailable",
+            "reason": reason,
+            "message": message,
+            "statement_date": None,
+            "statement_period": {"start": None, "end": None},
+            "portfolio_ytd_change_in_investment_value": None,
+            "accounts": [],
+            "combined_realized_net_gain_loss_ytd": None,
+            "warnings": warnings,
+            "scoring_impact": "none",
+        }, 200
+
+    def _read_json(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _build_available(payload: dict) -> tuple[dict, int]:
+        statement_period = payload.get("statement_period") or {}
+        portfolio_summary = payload.get("portfolio_summary") or {}
+        accounts = payload.get("accounts") or []
+        derived_totals = payload.get("derived_totals") or {}
+        source_provenance = payload.get("source_provenance") or []
+        provenance_kinds = sorted(
+            {
+                str(item.get("source_provenance", "")).strip()
+                for item in source_provenance
+                if str(item.get("source_provenance", "")).strip()
+            }
+        )
+
+        response_accounts = []
+        for item in accounts:
+            response_accounts.append(
+                {
+                    "account_number": item.get("account_number"),
+                    "realized_net_gain_loss_ytd": item.get("realized_net_gain_loss_ytd"),
+                    "change_in_investment_value_ytd": item.get("change_in_investment_value_ytd"),
+                    "ending_value": item.get("ending_value"),
+                }
+            )
+
+        return {
+            "status": "available",
+            "statement_date": payload.get("statement_date"),
+            "statement_period": {
+                "start": statement_period.get("start"),
+                "end": statement_period.get("end"),
+            },
+            "portfolio_ytd_change_in_investment_value": portfolio_summary.get("change_in_investment_value_ytd"),
+            "accounts": response_accounts,
+            "combined_realized_net_gain_loss_ytd": derived_totals.get(
+                "combined_realized_net_gain_loss_ytd_all_accounts"
+            ),
+            "source_provenance": source_provenance,
+            "source_provenance_summary": {
+                "source_count": len(source_provenance),
+                "provenance_types": provenance_kinds,
+            },
+            "warnings": payload.get("warnings") or [
+                "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+            ],
+            "scoring_impact": "none",
+        }, 200
+
+    if not artifacts_dir.exists():
+        return _unavailable(
+            "artifact_directory_missing",
+            "Statement gain/loss artifact directory does not exist.",
+            [
+                "No statement artifact found.",
+                "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+            ],
+        )
+
+    candidate_path: Path | None = None
+    payload_from_pointer: dict | None = None
+
+    if latest_pointer.exists():
+        try:
+            payload_from_pointer = _read_json(latest_pointer)
+        except Exception as exc:
+            return _unavailable(
+                "artifact_invalid",
+                f"Failed to parse latest pointer artifact: {exc}",
+                [
+                    "Statement latest pointer exists but is unreadable.",
+                    "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+                ],
+            )
+
+    if payload_from_pointer is None and history_index.exists():
+        try:
+            history_payload = _read_json(history_index)
+        except Exception as exc:
+            return _unavailable(
+                "history_index_invalid",
+                f"Failed to parse statement history index: {exc}",
+                [
+                    "Statement history index exists but is unreadable.",
+                    "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+                ],
+            )
+        entries = history_payload.get("entries") or []
+        if entries:
+            latest_entry = sorted(entries, key=lambda e: str(e.get("statement_date") or ""))[-1]
+            resolved = Path(str(latest_entry.get("json_artifact_path") or ""))
+            if not resolved.is_absolute():
+                resolved = _REPO_ROOT / resolved
+            candidate_path = resolved
+
+    if payload_from_pointer is None and candidate_path is None:
+        dated_candidates = sorted(artifacts_dir.glob("*/STATEMENT_GAIN_LOSS_*.json"), reverse=True)
+        if dated_candidates:
+            candidate_path = dated_candidates[0]
+        else:
+            flat_candidates = sorted(artifacts_dir.glob("STATEMENT_GAIN_LOSS_*.json"), reverse=True)
+            if flat_candidates:
+                candidate_path = flat_candidates[0]
+
+    if payload_from_pointer is None:
+        if candidate_path is None:
+            return _unavailable(
+                "artifact_missing",
+                "No statement gain/loss JSON artifacts found.",
+                [
+                    "No statement artifact found.",
+                    "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+                ],
+            )
+        if not candidate_path.exists():
+            return _unavailable(
+                "artifact_missing",
+                f"Statement artifact referenced by history was not found: {candidate_path}",
+                [
+                    "History index referenced a missing statement artifact.",
+                    "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+                ],
+            )
+        try:
+            payload_from_pointer = _read_json(candidate_path)
+        except Exception as exc:
+            return _unavailable(
+                "artifact_invalid",
+                f"Failed to parse statement artifact: {exc}",
+                [
+                    "Statement artifact exists but is unreadable.",
+                    "Main portfolio statement aggregates X20 and Z35. Joint account Z26 is separate and must not be double counted unless explicitly included.",
+                ],
+            )
+
+    return _build_available(payload_from_pointer)
 
 
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
@@ -585,6 +748,180 @@ def _refresh_transparency_payload() -> dict[str, object]:
     }
 
 
+def _sanitize_for_json(obj):
+    """Recursively convert NaN/Infinity to null for valid JSON serialization."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    return obj
+
+
+def _latest_completed_run_id() -> str | None:
+    manifest_path = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        portfolios = manifest.get("portfolios", [])
+        completed = [p for p in portfolios if p.get("status") == "COMPLETE" and p.get("run_id")]
+        if not completed:
+            return None
+        return str(completed[-1].get("run_id"))
+    except Exception:
+        return None
+
+
+def _operator_priorities_unavailable_payload(*, reason: str, message: str, run_id: str | None = None) -> dict:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "message": message,
+        "run_id": run_id,
+        "today_operator_action_plan": {},
+        "warnings": [
+            "Operator action plan unavailable; do not execute sell-funded rotation from this panel.",
+        ],
+        "updated_at_utc": None,
+    }
+
+
+def _cra_unavailable_payload(*, reason: str, message: str, run_id: str | None = None) -> dict:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "message": message,
+        "run_id": run_id,
+        "actions": [],
+        "capital_sources": [],
+        "sources": [],
+        "deployments": [],
+        "warnings": [
+            "CRA unavailable; do not execute sell-funded rotation from this panel.",
+        ],
+        "updated_at_utc": None,
+    }
+
+
+def _cra_draft_path() -> Path:
+    return _REPO_ROOT / "data" / "operator" / "cra_draft.json"
+
+
+def _build_cra_payload() -> dict:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from src.portfolio.cra.rotation_proposal_builder import (
+        build_proposal_from_manifest,
+        build_rotation_proposal,
+    )
+
+    manifest_path = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
+    runs_root = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+    tax_state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
+
+    proposal = build_proposal_from_manifest(
+        manifest_path=manifest_path,
+        runs_root=runs_root,
+        tax_state_path=tax_state_path,
+    )
+    if proposal is not None:
+        return proposal.to_dict()
+
+    run_id = _latest_completed_run_id()
+    if not run_id:
+        return _cra_unavailable_payload(
+            reason="latest_run_missing",
+            message="Capital Rotation Advisor data is unavailable for the latest run.",
+        )
+
+    run_dir = runs_root / run_id
+    if not run_dir.exists():
+        return _cra_unavailable_payload(
+            reason="run_artifact_missing",
+            message="Capital Rotation Advisor artifacts are missing for the latest run.",
+            run_id=run_id,
+        )
+
+    tax_state = None
+    if tax_state_path.exists():
+        try:
+            tax_state = json.loads(tax_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            tax_state = None
+
+    strategic_profiles = None
+    sp_path = run_dir / "strategic_profiles.json"
+    if sp_path.exists():
+        try:
+            _sp = json.loads(sp_path.read_text(encoding="utf-8"))
+            if isinstance(_sp, list):
+                strategic_profiles = _sp
+            elif isinstance(_sp, dict):
+                strategic_profiles = _sp.get("profiles")
+        except Exception:
+            strategic_profiles = None
+
+    try:
+        proposal = build_rotation_proposal(
+            run_dir=run_dir,
+            tax_state=tax_state,
+            strategic_profiles=strategic_profiles,
+        )
+        return proposal.to_dict()
+    except Exception:
+        return _cra_unavailable_payload(
+            reason="capital_rotation_artifact_missing",
+            message="Capital Rotation Advisor data is unavailable for the latest run.",
+            run_id=run_id,
+        )
+
+
+def _build_operator_priorities_payload(run_id: str | None = None) -> dict:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+    from src.portfolio.runner import load_analysis_run
+
+    resolved_run_id = run_id or _latest_completed_run_id()
+    if not resolved_run_id:
+        return _operator_priorities_unavailable_payload(
+            reason="latest_run_missing",
+            message="No completed portfolio analysis run is available.",
+        )
+
+    result = load_analysis_run(resolved_run_id)
+    if not isinstance(result, dict):
+        return _operator_priorities_unavailable_payload(
+            reason="run_not_found",
+            message="Portfolio operator priorities are unavailable for the requested run.",
+            run_id=resolved_run_id,
+        )
+
+    plan = result.get("today_operator_action_plan") or result.get("daily_operator_action_plan")
+    if not isinstance(plan, dict) or not plan:
+        return _operator_priorities_unavailable_payload(
+            reason="operator_action_plan_missing",
+            message="Operator action plan unavailable — backend returned degraded state.",
+            run_id=resolved_run_id,
+        )
+
+    return {
+        "status": "ok",
+        "run_id": resolved_run_id,
+        "snapshot_date": (result.get("run_metadata") or {}).get("snapshot_date"),
+        "today_operator_action_plan": plan,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static file handler extended with /api/* JSON endpoints."""
 
@@ -664,6 +1001,9 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             if not isinstance(syms, list):
                 syms = []
             self._json_response({"strategic_exit_symbols": syms})
+        elif path == "/api/statement-gain-loss/latest":
+            payload, status = _statement_gain_loss_latest_payload()
+            self._json_response(payload, status)
         elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
             # GET /api/operator/policies         → all active policies
             # GET /api/operator/policies/{sym}   → single symbol policy
@@ -691,6 +1031,118 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     "policies": [_dc.asdict(p) for p in all_active.values()],
                     "snapshot": registry.policy_snapshot(),
                 })
+        elif path == "/api/cra/proposal":
+            try:
+                self._json_response(_build_cra_payload())
+            except Exception as exc:
+                self._json_response(_cra_unavailable_payload(
+                    reason="cra_endpoint_error",
+                    message=f"Capital Rotation Advisor data is unavailable: {exc}",
+                ))
+        elif path == "/api/cra/draft":
+            draft_path = _cra_draft_path()
+            if not draft_path.exists():
+                self._json_response({"error": "draft not found"}, 404)
+                return
+            try:
+                draft = json.loads(draft_path.read_text(encoding="utf-8"))
+                self._json_response(draft)
+            except Exception as exc:
+                self._json_response({"error": f"invalid draft payload: {exc}"}, 500)
+        elif path == "/api/cra/draft/export":
+            draft_path = _cra_draft_path()
+            if not draft_path.exists():
+                self._json_response({"error": "draft not found"}, 404)
+                return
+            try:
+                draft = json.loads(draft_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self._json_response({"error": f"invalid draft payload: {exc}"}, 500)
+                return
+
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            fmt = (parse_qs(query).get("format", ["csv"])[0] or "csv").lower()
+
+            if fmt == "md":
+                lines = [
+                    f"# CRA Draft ({draft.get('run_id', 'N/A')})",
+                    "",
+                    f"Status: {draft.get('proposal_status', 'N/A')}",
+                    f"As of: {draft.get('as_of_date', 'N/A')}",
+                    "",
+                    "## Capital Sources",
+                ]
+                for s in draft.get("sources", []) or []:
+                    lines.append(f"- {s.get('symbol', 'N/A')}: {s.get('category', 'N/A')} · {s.get('priority', 'N/A')}")
+                lines.append("")
+                lines.append("## Deployments")
+                for d in draft.get("deployments", []) or []:
+                    lines.append(f"- #{d.get('rank', '?')} {d.get('symbol', 'N/A')}: ${float(d.get('suggested_amount') or 0):,.0f}")
+                body = "\n".join(lines).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Disposition", "attachment; filename=cra_draft.md")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(["section", "rank", "symbol", "category", "priority", "estimated_proceeds", "suggested_amount"])
+                for s in draft.get("sources", []) or []:
+                    writer.writerow([
+                        "source", "", s.get("symbol", ""), s.get("category", ""), s.get("priority", ""),
+                        s.get("estimated_proceeds", ""), "",
+                    ])
+                for d in draft.get("deployments", []) or []:
+                    writer.writerow([
+                        "deployment", d.get("rank", ""), d.get("symbol", ""), "", "", "", d.get("suggested_amount", ""),
+                    ])
+                body = buf.getvalue().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv; charset=utf-8")
+                self.send_header("Content-Disposition", "attachment; filename=cra_draft.csv")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        elif path in {"/api/operator-priorities", "/api/portfolio-operator-priorities"}:
+            try:
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                run_id = (parse_qs(query).get("run_id", [""])[0] or "").strip()
+                payload = _build_operator_priorities_payload(run_id=run_id or None)
+                self._json_response(payload)
+            except Exception as exc:
+                self._json_response(_operator_priorities_unavailable_payload(
+                    reason="operator_priorities_endpoint_error",
+                    message=f"Operator action plan unavailable — backend returned degraded state: {exc}",
+                ))
+        elif path == "/api/portfolio-alignment/latest":
+            try:
+                run_id = _latest_completed_run_id()
+                if not run_id:
+                    self._json_response(_operator_priorities_unavailable_payload(
+                        reason="latest_run_missing",
+                        message="No completed portfolio analysis run is available.",
+                    ))
+                    return
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.portfolio.runner import load_analysis_run
+                result = load_analysis_run(run_id)
+                if not isinstance(result, dict):
+                    self._json_response(_operator_priorities_unavailable_payload(
+                        reason="run_not_found",
+                        message="Portfolio alignment payload unavailable for latest run.",
+                        run_id=run_id,
+                    ))
+                else:
+                    self._json_response(result)
+            except Exception as exc:
+                self._json_response(_operator_priorities_unavailable_payload(
+                    reason="portfolio_alignment_latest_error",
+                    message=f"Portfolio alignment payload unavailable: {exc}",
+                ))
         elif path == "/api/portfolio/archetype-targets":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -750,6 +1202,170 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 })
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/drift/intelligence-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.drift_trend_analyzer import drift_intelligence_summary
+
+                self._json_response(drift_intelligence_summary(_REPO_ROOT))
+            except Exception:
+                self._json_response({
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "trend_counts": {},
+                    "top_priority": None,
+                    "most_chronic": None,
+                    "most_improving": None,
+                    "most_deteriorating": None,
+                    "total_nodes": 0,
+                    "violation_nodes": 0,
+                    "structural_count": 0,
+                    "chronic_count": 0,
+                    "governance_note": "Display-only intelligence unavailable.",
+                })
+        elif path == "/api/drift/priorities":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.drift_trend_analyzer import drift_priorities
+
+                self._json_response(drift_priorities(_REPO_ROOT))
+            except Exception:
+                self._json_response({"generated_at": datetime.now(timezone.utc).isoformat(), "top10": []})
+        elif path == "/api/drift/chronic":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.drift_trend_analyzer import drift_chronic
+
+                self._json_response(drift_chronic(_REPO_ROOT))
+            except Exception:
+                self._json_response({"generated_at": datetime.now(timezone.utc).isoformat(), "chronic": []})
+        elif path == "/api/drift/momentum":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.drift_trend_analyzer import drift_momentum
+
+                self._json_response(drift_momentum(_REPO_ROOT))
+            except Exception:
+                self._json_response({"generated_at": datetime.now(timezone.utc).isoformat(), "nodes": []})
+        elif path == "/api/conflict-review/summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.signal_conflict_review import load_or_refresh
+
+                payload = load_or_refresh(_REPO_ROOT)
+                self._json_response({
+                    "meta": payload.get("meta", {}),
+                    "learning": payload.get("learning", {}),
+                })
+            except Exception:
+                self._json_response({"meta": {}, "learning": {}})
+        elif path == "/api/conflict-review/outcomes":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.signal_conflict_review import load_or_refresh
+
+                payload = load_or_refresh(_REPO_ROOT)
+                self._json_response(payload.get("outcomes", {"patterns": []}))
+            except Exception:
+                self._json_response({"patterns": []})
+        elif path == "/api/conflict-review/scorecard":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.signal_conflict_review import load_or_refresh
+
+                payload = load_or_refresh(_REPO_ROOT)
+                self._json_response(payload.get("scorecard", {"scorecard": []}))
+            except Exception:
+                self._json_response({"scorecard": []})
+        elif path == "/api/conflict-review/alpha":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.conflict_alpha_analysis import conflict_alpha_report
+
+                self._json_response(conflict_alpha_report(_REPO_ROOT))
+            except Exception:
+                self._json_response({"status": "NO_DATA", "patterns": []})
+        elif path.startswith("/api/conflict-review/symbol/"):
+            symbol = path.split("/")[-1].strip().upper()
+            if not symbol or not _SYMBOL_RE.match(symbol):
+                self._json_response({"error": "invalid symbol"}, 400)
+                return
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.signal_conflict_review import load_or_refresh, symbol_deep_dive
+
+                payload = load_or_refresh(_REPO_ROOT)
+                inventory = payload.get("inventory", [])
+                self._json_response(symbol_deep_dive(symbol, inventory))
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/conflict-review/security-alpha-summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.security_conflict_alpha import security_alpha_summary
+
+                self._json_response(security_alpha_summary(_REPO_ROOT))
+            except Exception:
+                self._json_response({"status": "NO_PAR_DATA", "securities": {}})
+        elif path == "/api/predictive/calibration":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.predictive.conflict_alpha_calibration import calibration_summary
+
+                self._json_response(calibration_summary(_REPO_ROOT))
+            except Exception:
+                self._json_response({"patterns": []})
+        elif path == "/api/predictive/directional-accuracy":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.predictive.directional_accuracy import directional_accuracy
+
+                self._json_response(directional_accuracy(_REPO_ROOT))
+            except Exception:
+                self._json_response({"patterns": [], "overall": {}, "comparative": {}})
+        elif path == "/api/signal-conflicts":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.portfolio.signal_conflict_classifier import get_conflicts_for_symbols
+
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                qs = parse_qs(query)
+                symbols_raw = ",".join(qs.get("symbols", []))
+                symbols = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
+                if not symbols:
+                    self._json_response({})
+                else:
+                    self._json_response(get_conflicts_for_symbols(symbols, _REPO_ROOT))
+            except Exception:
+                self._json_response({})
+        elif path == "/api/security-metadata":
+            # Optional enrichment endpoint; fail-open to an empty mapping.
+            self._json_response({})
         else:
             super().do_GET()
 
@@ -866,6 +1482,32 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(result)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/predictive/directional-refresh":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.sih.predictive.directional_accuracy import refresh_directional
+
+                self._json_response(refresh_directional(_REPO_ROOT))
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/cra/draft":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+                if not isinstance(payload, dict):
+                    raise ValueError("draft payload must be a JSON object")
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+
+            draft_path = _cra_draft_path()
+            draft_path.parent.mkdir(parents=True, exist_ok=True)
+            payload["_saved_at_utc"] = datetime.now(timezone.utc).isoformat()
+            draft_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self._json_response({"ok": True, "path": str(draft_path)})
         elif path == "/api/operator/tax-state":
             # POST: save operator tax context to persistent file
             try:
@@ -1028,7 +1670,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def _json_response(self, data: dict, status: int = 200) -> None:
-        body = json.dumps(data).encode()
+        clean_data = _sanitize_for_json(data)
+        body = json.dumps(clean_data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -1048,11 +1691,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def main() -> int:
     args = parse_args()
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", args.port), _Handler) as httpd:
+    with _ThreadingTCPServer(("127.0.0.1", args.port), _Handler) as httpd:
         print("Outcome UI server started")
         print(f"Repository root: {_REPO_ROOT}")
         print(f"Open: http://127.0.0.1:{args.port}/ui/outcome_visualization/index.html")
