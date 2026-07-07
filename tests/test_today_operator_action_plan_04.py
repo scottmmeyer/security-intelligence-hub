@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from src.sih.rotation_risk_monitor import rotation_risk_summary
+from src.portfolio.runner import _empty_operator_action_plan
 from tests.test_commodity_fill_guard import _seed_alignment, _seed_common, _seed_deployment_queue
 
 
@@ -94,3 +95,20 @@ def test_today_operator_action_plan_display_only_and_ordered_actions(tmp_path: P
 
     # No mutation of queue artifact
     assert before == after
+
+
+def test_degraded_operator_action_plan_payload_shape_is_stable() -> None:
+    plan = _empty_operator_action_plan()
+
+    assert plan.get("display_only") is True
+    assert plan.get("operator_review_required") is True
+    assert plan.get("not_trade_instructions") is True
+    assert isinstance(plan.get("primary_decision"), dict)
+    assert plan["primary_decision"].get("verdict") == "UNAVAILABLE"
+    assert isinstance(plan.get("ordered_actions"), list)
+    assert isinstance(plan.get("hard_asset_buy_plan"), list)
+    assert isinstance(plan.get("equity_buy_fallback"), list)
+    assert isinstance(plan.get("sell_trim_review"), list)
+    assert isinstance(plan.get("blocked_actions"), list)
+    assert isinstance(plan.get("warnings"), list)
+    assert isinstance(plan.get("controls"), list)
