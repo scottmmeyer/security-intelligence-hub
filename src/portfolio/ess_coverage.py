@@ -7,12 +7,18 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from src.models.provider_health_models import EssCoverageGapDetail, EssCoverageGapWarning
-from src.portfolio.fidelity_signal import FidelitySignal, load_fidelity_signals
-from src.portfolio.holdings_coverage import (
-    classify_provider_applicability,
-    load_base_universe_symbols,
+from src.models.provider_health_models import (
+    EssCoverageGapDetail,
+    EssCoverageGapWarning,
+    GAP_TYPE_NO_COVERAGE_AVAILABLE,
+    GAP_TYPE_NO_FRESH_STARMINE,
+    GAP_TYPE_NO_SCORE_AVAILABLE,
+    GAP_TYPE_ORDER,
+    GAP_TYPE_STALE_ESS,
+    GAP_TYPE_TRUE_MISSING,
 )
+from src.portfolio.fidelity_signal import FidelitySignal, load_fidelity_signals
+from src.portfolio.holdings_coverage import load_base_universe_symbols
 
 
 def load_latest_equity_holdings(analysis_runs_root: Path) -> dict[str, dict[str, str]]:
@@ -40,60 +46,17 @@ def load_latest_equity_holdings(analysis_runs_root: Path) -> dict[str, dict[str,
     return holdings
 
 
-def _load_signal_rows_by_symbol(signal_snapshot_path: Path) -> dict[str, list[dict[str, Any]]]:
-    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
-    with signal_snapshot_path.open("r", encoding="utf-8", newline="") as fh:
-        for row in csv.DictReader(fh):
-            sym = str(row.get("symbol") or "").strip().upper()
-            if not sym:
-                continue
-            rows_by_symbol.setdefault(sym, []).append(dict(row))
-    return rows_by_symbol
-
-
-def _has_fresh_starmine(rows: list[dict[str, Any]]) -> bool:
-    for row in rows:
-        domain = str(row.get("coverage_domain") or "").strip().upper()
-        ess_text = str(row.get("starmine_ess_text") or "").strip().upper()
-        if domain == "STARMINE_COVERED" and ess_text:
-            return True
-    return False
-
-
-def _has_non_starmine_analyst_coverage(rows: list[dict[str, Any]]) -> bool:
-    """Check if any row explicitly marks this symbol as non-StarMine analyst covered."""
-    for row in rows:
-        domain = str(row.get("coverage_domain") or "").strip().upper()
-        if domain == "NON_STARMINE_ANALYST":
-            return True
-    return False
-
-
-def _load_latest_historical_signals(history_root: Path) -> dict[str, FidelitySignal]:
-    latest_by_symbol: dict[str, FidelitySignal] = {}
-    if not history_root.exists():
-        return latest_by_symbol
-
-    snapshot_files = sorted(history_root.glob("snapshot_date=*/run_id=*/signal_snapshots.csv"))
-    for snapshot_file in snapshot_files:
-        if not snapshot_file.exists():
-            continue
-        for signal in load_fidelity_signals(snapshot_file).values():
-            existing = latest_by_symbol.get(signal.symbol)
-            if existing is None or signal.refresh_date > existing.refresh_date:
-                latest_by_symbol[signal.symbol] = signal
-    return latest_by_symbol
-
-
 def build_ess_coverage_gap_warning(
     *,
+    incoming_ess_symbols: set[str] | None = None,
+    incoming_rows: list[dict[str, object]] | None = None,
     snapshot_date: date,
     signal_snapshot_path: Path,
     analysis_runs_root: Path,
     base_universe_csv: Path | None = None,
     prior_signals: dict[str, FidelitySignal] | None = None,
 ) -> EssCoverageGapWarning | None:
-    """Classify held-position ESS coverage gaps against merged effective signal state."""
+    """Classify held-position ESS coverage gaps while preserving subtype diagnostics."""
     holdings = load_latest_equity_holdings(analysis_runs_root)
     if not holdings or not signal_snapshot_path.exists():
         return None
@@ -102,60 +65,106 @@ def build_ess_coverage_gap_warning(
         base_universe_csv = Path("data/current/base_equity_universe.csv")
     base_universe_symbols = load_base_universe_symbols(base_universe_csv)
 
+    if incoming_rows is None:
+        incoming_rows = []
+        if signal_snapshot_path.exists():
+            with signal_snapshot_path.open("r", encoding="utf-8", newline="") as fh:
+                incoming_rows = [dict(row) for row in csv.DictReader(fh)]
+    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for row in incoming_rows:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if sym:
+            rows_by_symbol.setdefault(sym, []).append(dict(row))
+
+    if incoming_ess_symbols is None:
+        incoming_ess_symbols = set()
+        if signal_snapshot_path.exists():
+            with signal_snapshot_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    row_snapshot_date = str(row.get("snapshot_date") or "").strip()
+                    sym = str(row.get("symbol") or "").strip().upper()
+                    domain = str(row.get("coverage_domain") or "").strip().upper()
+                    ess_text = str(row.get("starmine_ess_text") or "").strip().upper()
+                    if (
+                        row_snapshot_date == snapshot_date.isoformat()
+                        and sym
+                        and domain == "STARMINE_COVERED"
+                        and ess_text
+                    ):
+                        incoming_ess_symbols.add(sym)
+
     prior_ess = load_fidelity_signals(signal_snapshot_path)
-    data_root = analysis_runs_root.parents[1] if len(analysis_runs_root.parents) >= 2 else analysis_runs_root
-    historical_ess = _load_latest_historical_signals(data_root / "history" / "signals")
-    rows_by_symbol = _load_signal_rows_by_symbol(signal_snapshot_path)
-    concern_rows: list[tuple[float, EssCoverageGapDetail]] = []
-    true_missing_symbols: list[str] = []
-    stale_symbols: list[str] = []
-    no_fresh_symbols: list[str] = []
+    gap_rows: list[tuple[float, EssCoverageGapDetail]] = []
+    by_gap_type: dict[str, list[str]] = {k: [] for k in GAP_TYPE_ORDER}
+
+    def _status_tokens(row: dict[str, Any]) -> set[str]:
+        fields = (
+            "status",
+            "coverage_status",
+            "signal_coverage_status",
+            "provider_status",
+            "fetch_status",
+            "error_code",
+            "reason",
+        )
+        tokens: set[str] = set()
+        for field in fields:
+            val = str(row.get(field) or "").strip().upper()
+            if val:
+                tokens.add(val)
+        return tokens
 
     for sym, holding in holdings.items():
-        is_applicable, _reason = classify_provider_applicability(
-            holding,
-            provider="zacks",
-            base_universe_symbols=base_universe_symbols,
-        )
-        if not is_applicable:
+        previous = prior_ess.get(sym) or (prior_signals or {}).get(sym)
+        security_type = str(holding.get("security_type") or "").strip().upper()
+        if security_type in {"ETF", "MUTUAL FUND", "CONTRA_ENTRY"}:
+            continue
+        # Preserve compatibility: when security_type is missing, do not hard-exclude
+        # by base-universe membership for stale previously-covered names (legacy
+        # holdings snapshots often omit that column).
+        if security_type and base_universe_symbols and sym not in base_universe_symbols:
+            continue
+        if (not security_type) and base_universe_symbols and sym not in base_universe_symbols and previous is None:
+            continue
+
+        if sym in incoming_ess_symbols:
             continue
 
         symbol_rows = rows_by_symbol.get(sym, [])
-        previous = prior_ess.get(sym) or historical_ess.get(sym) or (prior_signals or {}).get(sym)
+        gap_type = ""
+        reason = ""
 
-        # Check if current rows have NON_STARMINE_ANALYST coverage.
-        # If so, provider has explicitly declared this symbol is not StarMine-scored NOW.
-        # This should never be classified as STALE — only as NO_FRESH_STARMINE,
-        # even if there is old historical StarMine data.
-        has_non_starmine = _has_non_starmine_analyst_coverage(symbol_rows)
+        tokens = set()
+        for row in symbol_rows:
+            tokens |= _status_tokens(row)
 
-        if not symbol_rows:
-            if previous is not None:
-                gap_type = "STALE_ESS"
-                stale_symbols.append(sym)
-            else:
-                gap_type = "TRUE_MISSING"
-                true_missing_symbols.append(sym)
+        domain_values = {str(row.get("coverage_domain") or "").strip().upper() for row in symbol_rows}
+        has_non_starmine = "NON_STARMINE_ANALYST" in domain_values
+        has_rows = bool(symbol_rows)
+
+        if "NO_SCORE_AVAILABLE" in tokens:
+            gap_type = GAP_TYPE_NO_SCORE_AVAILABLE
+            reason = "Holding has provider row but no score available in latest incoming ESS view."
+        elif "NO_COVERAGE_AVAILABLE" in tokens:
+            gap_type = GAP_TYPE_NO_COVERAGE_AVAILABLE
+            reason = "Holding has provider row but no coverage available in latest incoming ESS view."
         elif has_non_starmine:
-            # Provider explicitly marked as non-StarMine in CURRENT snapshot.
-            # Classify as NO_FRESH_STARMINE, regardless of historical data.
-            gap_type = "NO_FRESH_STARMINE"
-            no_fresh_symbols.append(sym)
+            gap_type = GAP_TYPE_NO_FRESH_STARMINE
+            reason = "Holding is marked NON_STARMINE_ANALYST in latest incoming ESS view."
+        elif previous is None and not has_rows:
+            gap_type = GAP_TYPE_TRUE_MISSING
+            reason = "Holding is ESS-applicable but was never covered and is absent from latest incoming ESS file."
         elif previous is not None:
-            # Symbol has prior ESS data. Check if it's fresh by date.
-            last_ess_date = str(previous.refresh_date)
-            if last_ess_date < snapshot_date.isoformat():
-                # Prior ESS is old (stale).
-                gap_type = "STALE_ESS"
-                stale_symbols.append(sym)
+            last_date = str(previous.refresh_date or "").strip()
+            if last_date and last_date < snapshot_date.isoformat():
+                gap_type = GAP_TYPE_STALE_ESS
+                reason = "Holding had prior ESS coverage but latest incoming ESS file is missing a fresh covered row."
             else:
-                # Prior ESS is current/fresh — not a concern.
-                continue
+                gap_type = GAP_TYPE_TRUE_MISSING
+                reason = "Holding had prior ESS coverage but is absent from latest incoming ESS file."
         else:
-            # No prior ESS, no NON_STARMINE_ANALYST, but has rows.
-            # This shouldn't happen for applicable equities, but classify as NO_FRESH_STARMINE.
-            gap_type = "NO_FRESH_STARMINE"
-            no_fresh_symbols.append(sym)
+            gap_type = GAP_TYPE_NO_FRESH_STARMINE
+            reason = "Holding has incoming provider rows but no fresh StarMine ESS coverage."
 
         company_name = (
             (holding.get("description") or "").strip()
@@ -174,7 +183,9 @@ def build_ess_coverage_gap_warning(
             except ValueError:
                 days_stale = 0
 
-        concern_rows.append(
+        by_gap_type[gap_type].append(sym)
+
+        gap_rows.append(
             (
                 -pct,
                 EssCoverageGapDetail(
@@ -184,25 +195,31 @@ def build_ess_coverage_gap_warning(
                     current_ess_posture=str(previous.ess_text) if previous else "UNKNOWN",
                     days_stale=days_stale,
                     gap_type=gap_type,
+                    reason=reason,
                 ),
             )
         )
 
-    if not concern_rows:
+    if not gap_rows:
         return None
 
-    ordered = [detail for _, detail in sorted(concern_rows, key=lambda item: (item[0], item[1].symbol))]
+    ordered = [detail for _, detail in sorted(gap_rows, key=lambda item: (item[0], item[1].symbol))]
     return EssCoverageGapWarning(
         snapshot_date=snapshot_date.isoformat(),
         warning_count=len(ordered),
         example_symbols=tuple(detail.symbol for detail in ordered[:3]),
         gaps=tuple(ordered),
-        true_missing_count=len(true_missing_symbols),
-        stale_coverage_count=len(stale_symbols),
-        no_fresh_starmine_count=len(no_fresh_symbols),
-        true_missing_symbols=tuple(sorted(true_missing_symbols)),
-        stale_coverage_symbols=tuple(sorted(stale_symbols)),
-        no_fresh_starmine_symbols=tuple(sorted(no_fresh_symbols)),
+        true_missing_count=len(by_gap_type[GAP_TYPE_TRUE_MISSING]),
+        stale_coverage_count=len(by_gap_type[GAP_TYPE_STALE_ESS]),
+        no_fresh_starmine_count=len(by_gap_type[GAP_TYPE_NO_FRESH_STARMINE]),
+        no_score_available_count=len(by_gap_type[GAP_TYPE_NO_SCORE_AVAILABLE]),
+        no_coverage_available_count=len(by_gap_type[GAP_TYPE_NO_COVERAGE_AVAILABLE]),
+        true_missing_symbols=tuple(sorted(by_gap_type[GAP_TYPE_TRUE_MISSING])),
+        stale_coverage_symbols=tuple(sorted(by_gap_type[GAP_TYPE_STALE_ESS])),
+        no_fresh_starmine_symbols=tuple(sorted(by_gap_type[GAP_TYPE_NO_FRESH_STARMINE])),
+        no_score_available_symbols=tuple(sorted(by_gap_type[GAP_TYPE_NO_SCORE_AVAILABLE])),
+        no_coverage_available_symbols=tuple(sorted(by_gap_type[GAP_TYPE_NO_COVERAGE_AVAILABLE])),
+        counts_by_gap_type={k: len(v) for k, v in by_gap_type.items()},
     )
 
 
@@ -223,15 +240,23 @@ def write_ess_coverage_warning(
             "true_missing_count": 0,
             "stale_coverage_count": 0,
             "no_fresh_starmine_count": 0,
+            "no_score_available_count": 0,
+            "no_coverage_available_count": 0,
             "example_symbols": [],
             "true_missing_symbols": [],
             "stale_coverage_symbols": [],
             "no_fresh_starmine_symbols": [],
+            "no_score_available_symbols": [],
+            "no_coverage_available_symbols": [],
+            "counts_by_gap_type": {
+                GAP_TYPE_TRUE_MISSING: 0,
+                GAP_TYPE_STALE_ESS: 0,
+                GAP_TYPE_NO_FRESH_STARMINE: 0,
+                GAP_TYPE_NO_SCORE_AVAILABLE: 0,
+                GAP_TYPE_NO_COVERAGE_AVAILABLE: 0,
+            },
             "gaps": [],
-            "summary_message": (
-                "ESS Coverage Warning — 0 holdings require ESS attention "
-                "(missing=0, stale=0, no_fresh_starmine=0)."
-            ),
+            "summary_message": "ESS Coverage Warning — 0 holdings absent from latest ESS file.",
         }
     else:
         payload = asdict(warning)

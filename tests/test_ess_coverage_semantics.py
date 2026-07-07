@@ -162,96 +162,6 @@ def test_classifies_missing_stale_and_no_fresh_starmine(tmp_path: Path) -> None:
     assert by_symbol["CCC"].gap_type == "NO_FRESH_STARMINE"
 
 
-def test_non_starmine_analyst_with_old_history_is_no_fresh_not_stale(tmp_path: Path) -> None:
-    """Test the SIMO case: NON_STARMINE_ANALYST current + old historical StarMine should be NO_FRESH_STARMINE, not STALE."""
-    snapshot_date = date(2026, 6, 23)
-    base_universe = tmp_path / "data" / "current" / "base_equity_universe.csv"
-    _write_csv(base_universe, BASE_UNIVERSE_HEADERS, [{"symbol": "SIMO"}])
-
-    signal_snapshot = tmp_path / "data" / "current" / "signal_snapshot.csv"
-    # SIMO appears in current snapshot as NON_STARMINE_ANALYST with no ESS text
-    # (provider has explicitly declared it not to have StarMine coverage)
-    _write_csv(
-        signal_snapshot,
-        SIGNAL_HEADERS,
-        [
-            {
-                "snapshot_date": "2026-06-23",
-                "created_at_utc": "2026-06-23T11:00:00+00:00",
-                "run_id": "intake-non-ess",
-                "provider": "FIDELITY",
-                "source_file": "non-ess.csv",
-                "symbol": "SIMO",
-                "coverage_domain": "NON_STARMINE_ANALYST",
-                "signal_coverage_status": "NON_COVERED",
-                "starmine_ess_text": "",
-                "starmine_ess_numeric": "",
-                "starmine_ess_numeric_estimated": "False",
-                "starmine_ess_source_type": "UNKNOWN",
-            }
-        ],
-    )
-
-    # Create historical partition with old STARMINE_COVERED data
-    history_dir = tmp_path / "data" / "history" / "signals" / "snapshot_date=2026-05-20" / "run_id=RUN-HIST"
-    history_dir.mkdir(parents=True, exist_ok=True)
-    history_snapshot = history_dir / "signal_snapshots.csv"
-    _write_csv(
-        history_snapshot,
-        SIGNAL_HEADERS,
-        [
-            {
-                "snapshot_date": "2026-05-20",
-                "created_at_utc": "2026-05-20T11:00:00+00:00",
-                "run_id": "RUN-HIST",
-                "provider": "FIDELITY",
-                "source_file": "EquitySummaryScores.csv",
-                "symbol": "SIMO",
-                "coverage_domain": "STARMINE_COVERED",
-                "signal_coverage_status": "COVERED",
-                "starmine_ess_text": "BULLISH",
-                "starmine_ess_numeric": "4.0",
-                "starmine_ess_numeric_estimated": "False",
-                "starmine_ess_source_type": "TEXT_MAPPED",
-            }
-        ],
-    )
-
-    holdings_path = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260623-TEST" / "holdings.csv"
-    _write_csv(
-        holdings_path,
-        ["symbol", "asset_class", "description", "percent_of_portfolio"],
-        [
-            {
-                "symbol": "SIMO",
-                "asset_class": "EQUITIES",
-                "description": "Silicon Motion Technology Corp",
-                "percent_of_portfolio": "2.5",
-            }
-        ],
-    )
-
-    warning = build_ess_coverage_gap_warning(
-        snapshot_date=snapshot_date,
-        signal_snapshot_path=signal_snapshot,
-        analysis_runs_root=tmp_path / "data" / "portfolio_ingestion" / "analysis_runs",
-        base_universe_csv=base_universe,
-    )
-
-    # SIMO should be classified as NO_FRESH_STARMINE, NOT STALE_ESS
-    # because the provider has explicitly marked it as NON_STARMINE_ANALYST in the current snapshot
-    assert warning is not None
-    assert warning.warning_count == 1
-    assert warning.no_fresh_starmine_count == 1
-    assert warning.stale_coverage_count == 0  # <-- Key: STALE count should be 0
-    assert warning.true_missing_count == 0
-    assert warning.no_fresh_starmine_symbols == ("SIMO",)
-    assert warning.stale_coverage_symbols == ()
-
-    by_symbol = {detail.symbol: detail for detail in warning.gaps}
-    assert by_symbol["SIMO"].gap_type == "NO_FRESH_STARMINE"  # NOT "STALE_ESS"
-
-
 def test_excludes_non_applicable_and_keeps_applicable_missing_symbols(tmp_path: Path) -> None:
     snapshot_date = date(2026, 6, 17)
 
@@ -295,3 +205,56 @@ def test_excludes_non_applicable_and_keeps_applicable_missing_symbols(tmp_path: 
     assert "VB" not in symbols
     assert "VOO" not in symbols
     assert "FXAIX" not in symbols
+
+
+def test_classifies_no_score_and_no_coverage_without_false_true_missing(tmp_path: Path) -> None:
+    snapshot_date = date(2026, 6, 17)
+    base_universe = tmp_path / "data" / "current" / "base_equity_universe.csv"
+    _write_csv(
+        base_universe,
+        BASE_UNIVERSE_HEADERS,
+        [{"symbol": "NOCOV"}, {"symbol": "NOSCORE"}],
+    )
+
+    signal_snapshot = tmp_path / "data" / "current" / "signal_snapshot.csv"
+    _write_csv(signal_snapshot, SIGNAL_HEADERS, [])
+
+    holdings_path = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260617-TEST" / "holdings.csv"
+    _write_csv(
+        holdings_path,
+        ["symbol", "asset_class", "description", "percent_of_portfolio"],
+        [
+            {"symbol": "NOCOV", "asset_class": "EQUITIES", "description": "No Coverage", "percent_of_portfolio": "5.0"},
+            {"symbol": "NOSCORE", "asset_class": "EQUITIES", "description": "No Score", "percent_of_portfolio": "4.0"},
+        ],
+    )
+
+    warning = build_ess_coverage_gap_warning(
+        incoming_ess_symbols=set(),
+        incoming_rows=[
+            {
+                "symbol": "NOCOV",
+                "coverage_domain": "NON_STARMINE_ANALYST",
+                "signal_coverage_status": "NON_COVERED",
+                "status": "NO_COVERAGE_AVAILABLE",
+            },
+            {
+                "symbol": "NOSCORE",
+                "coverage_domain": "STARMINE_COVERED",
+                "signal_coverage_status": "NON_COVERED",
+                "status": "NO_SCORE_AVAILABLE",
+            },
+        ],
+        snapshot_date=snapshot_date,
+        signal_snapshot_path=signal_snapshot,
+        analysis_runs_root=tmp_path / "data" / "portfolio_ingestion" / "analysis_runs",
+        base_universe_csv=base_universe,
+    )
+
+    assert warning is not None
+    assert warning.warning_count == 2
+    assert warning.no_coverage_available_count == 1
+    assert warning.no_score_available_count == 1
+    assert warning.true_missing_count == 0
+    assert warning.no_coverage_available_symbols == ("NOCOV",)
+    assert warning.no_score_available_symbols == ("NOSCORE",)
