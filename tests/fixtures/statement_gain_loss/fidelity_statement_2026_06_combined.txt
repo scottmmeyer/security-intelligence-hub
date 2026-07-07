@@ -1,0 +1,50 @@
+Statement period: 2026-06-01 to 2026-06-30
+
+Main Fidelity portfolio statement, June 1-June 30, 2026
+Ending Portfolio Value: $488,629.07
+Total Including Other Holdings: $491,972.75
+YTD Beginning Portfolio Value: $370,160.68
+YTD Additions: $116,090.53
+YTD Subtractions: -$137,018.74
+YTD Transaction Costs / Fees / Charges: -$222.25
+YTD Transfers Between Fidelity Accounts: $50,916.98
+YTD Change in Investment Value: $88,479.62
+Taxable income YTD: $3,122.91
+Dividends YTD: $3,088.33
+Long-term capital gains income YTD: $34.58
+
+Account X20-548022, Individual TOD
+Ending Account Value: $4.61
+YTD Change in Investment Value: $9,898.90
+YTD realized net short-term gain/loss: -$860.90
+YTD short-term gain: $117.74
+YTD short-term loss: -$1,813.40
+YTD short-term disallowed loss: $834.76
+YTD realized net long-term gain/loss: -$53,337.12
+YTD long-term gain: $47.73
+YTD long-term loss: -$71,382.52
+YTD long-term disallowed loss: $17,997.67
+YTD net realized gain/loss: -$54,198.02
+
+Account Z35-123695, Individual TOD
+Ending Account Value: $488,624.46
+YTD Change in Investment Value: $78,580.72
+YTD realized net short-term gain/loss: $766.62
+YTD short-term gain: $8,944.78
+YTD short-term loss: -$8,178.16
+YTD realized net long-term gain/loss: $13,643.16
+YTD long-term gain: $14,214.32
+YTD long-term loss: -$571.16
+YTD net realized gain/loss: $14,409.78
+
+Joint WROS TOD statement, account Z26-346415
+Ending Account Value: $0.00
+YTD Beginning Account Value: $56,756.19
+YTD Change in Investment Value: $6,741.76
+YTD realized net short-term gain/loss: $1,598.94
+YTD short-term gain: $1,606.26
+YTD short-term loss: -$7.32
+YTD realized net long-term gain/loss: $167.16
+YTD long-term gain: $804.77
+YTD long-term loss: -$637.61
+YTD net realized gain/loss: $1,766.10
