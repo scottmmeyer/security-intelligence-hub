@@ -18,7 +18,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.portfolio.statements.statement_gain_loss import (  # noqa: E402
     StatementParsingError,
+    apply_snapshot_parse_status,
     build_snapshot_from_sources,
+    evaluate_snapshot_completeness,
     load_statement_source,
     write_snapshot_artifacts,
 )
@@ -36,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--incoming-dir",
-        default=str(REPO_ROOT / "data" / "incoming" / "fidelity_statements"),
+        default=str(REPO_ROOT / "incoming" / "fidelity_statements"),
         help="Incoming directory scanned for .pdf/.txt/.md when --source is not provided.",
     )
     p.add_argument(
@@ -135,6 +137,9 @@ def _upsert_history_index(
         "source_provenance": snapshot.source_provenance,
         "extraction_timestamp_utc": snapshot.extraction_timestamp_utc,
         "scoring_impact": snapshot.scoring_impact,
+        "parse_status": snapshot.parse_status,
+        "promoted_to_latest": snapshot.promoted_to_latest,
+        "warnings": snapshot.warnings,
     }
 
     result = {"entries": [by_date[k] for k in sorted(by_date)]}
@@ -205,6 +210,10 @@ def main(argv: list[str] | None = None) -> int:
         latest_date: str | None = None
         latest_json_source: Path | None = None
         latest_md_source: Path | None = None
+        promoted_groups = 0
+        degraded_groups = 0
+
+        expected_realized_accounts = {"X20-548022", "Z26-346415", "Z35-123695"}
 
         for statement_date in sorted(grouped):
             grouped_sources = grouped[statement_date]
@@ -224,6 +233,36 @@ def main(argv: list[str] | None = None) -> int:
             print(f"- Group source count: {len(grouped_sources)}")
             print(f"- Target JSON: {target_json}")
             print(f"- Target Markdown: {target_md}")
+
+            parse_status, quality_warnings = evaluate_snapshot_completeness(
+                snapshot,
+                expected_accounts=expected_realized_accounts,
+            )
+
+            if parse_status == "degraded":
+                degraded_groups += 1
+                snapshot = apply_snapshot_parse_status(
+                    snapshot,
+                    parse_status="degraded",
+                    promoted_to_latest=False,
+                    warnings_to_add=quality_warnings,
+                )
+                date_out = date_out / "degraded"
+                target_json = date_out / f"STATEMENT_GAIN_LOSS_{statement_date}.json"
+                target_md = date_out / f"STATEMENT_GAIN_LOSS_{statement_date}.md"
+                print("- Parse status: degraded")
+                print("- Promotion: skipped (latest preserved)")
+                print("- New PDF parse completed but was not promoted because realized gain/loss totals were missing.")
+            else:
+                promoted_groups += 1
+                snapshot = apply_snapshot_parse_status(
+                    snapshot,
+                    parse_status="complete",
+                    promoted_to_latest=True,
+                    warnings_to_add=quality_warnings,
+                )
+                print("- Parse status: complete")
+                print("- Promotion: eligible")
 
             if not args.dry_run:
                 json_path, md_path = write_snapshot_artifacts(snapshot, date_out)
@@ -249,21 +288,28 @@ def main(argv: list[str] | None = None) -> int:
             for action in archive_actions:
                 print(f"- Archive {action['action']}: {action['source']} -> {action['target']}")
 
-            if latest_date is None or statement_date > latest_date:
+            if snapshot.promoted_to_latest and (latest_date is None or statement_date > latest_date):
                 latest_date = statement_date
                 latest_json_source = json_path
                 latest_md_source = md_path
 
-        assert latest_json_source is not None and latest_md_source is not None
-        latest_json_path, latest_md_path = _write_latest_pointers(
-            output_root,
-            latest_json_source,
-            latest_md_source,
-            dry_run=args.dry_run,
-        )
+        if latest_json_source is not None and latest_md_source is not None:
+            latest_json_path, latest_md_path = _write_latest_pointers(
+                output_root,
+                latest_json_source,
+                latest_md_source,
+                dry_run=args.dry_run,
+            )
+            print(f"\nLatest JSON pointer/output: {latest_json_path}")
+            print(f"Latest Markdown pointer/output: {latest_md_path}")
+        else:
+            latest_json_path, latest_md_path = _latest_pointer_paths(output_root)
+            print("\nLatest pointers unchanged: no complete snapshot qualified for promotion.")
+            print(f"Latest JSON pointer/output preserved: {latest_json_path}")
+            print(f"Latest Markdown pointer/output preserved: {latest_md_path}")
 
-        print(f"\nLatest JSON pointer/output: {latest_json_path}")
-        print(f"Latest Markdown pointer/output: {latest_md_path}")
+        print(f"Promoted groups: {promoted_groups}")
+        print(f"Degraded groups: {degraded_groups}")
         print(f"Dry run: {'yes' if args.dry_run else 'no'}")
     except StatementParsingError as exc:
         print(f"STATEMENT-GAIN-LOSS-01 failed: {exc}")

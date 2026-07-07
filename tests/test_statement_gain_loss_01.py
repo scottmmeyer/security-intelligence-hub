@@ -16,9 +16,11 @@ import pytest
 
 from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer
 from scripts.ingest_statement_gain_loss import main as ingest_main
+from scripts.ingest_statement_gain_loss import parse_args as ingest_parse_args
 from src.portfolio.statements import statement_gain_loss as sgl
 from src.portfolio.statements.statement_gain_loss import (
     StatementParsingError,
+    StatementSource,
     build_snapshot_from_sources,
     load_statement_source,
 )
@@ -358,6 +360,8 @@ def test_statement_pipeline_reports_no_scoring_impact() -> None:
 def _write_minimal_statement(path: Path, account_line: str, ending: str, net_realized: str) -> None:
     path.write_text(
         "Statement period: 2026-06-01 to 2026-06-30\n"
+        "Ending Portfolio Value: $488,629.07\n"
+        "YTD Change in Investment Value: $88,479.62\n"
         f"{account_line}\n"
         f"Ending Account Value: {ending}\n"
         f"YTD net realized gain/loss: {net_realized}\n",
@@ -538,3 +542,260 @@ def test_raw_archive_default_is_copy_not_move() -> None:
         assert rc == 0
         assert source.exists()
         assert (raw_archive / "2026-06-30" / source.name).exists()
+
+
+def test_cli_default_incoming_dir_uses_canonical_operator_folder() -> None:
+    args = ingest_parse_args([])
+    incoming = Path(args.incoming_dir)
+    assert incoming.parts[-2:] == ("incoming", "fidelity_statements")
+
+
+def test_legacy_incoming_dir_override_still_works() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        legacy_incoming = root / "data" / "incoming" / "fidelity_statements"
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+        legacy_incoming.mkdir(parents=True, exist_ok=True)
+
+        source = legacy_incoming / "Statement06302026_A.txt"
+        _write_minimal_statement(
+            source,
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+            "-$54,198.02",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(legacy_incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+            ]
+        )
+
+        assert rc == 0
+        assert (output / "2026-06-30" / "STATEMENT_GAIN_LOSS_2026-06-30.json").exists()
+        assert source.exists()
+
+
+def test_move_processed_moves_file_from_selected_incoming_to_archive() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        canonical_incoming = root / "incoming" / "fidelity_statements"
+        output = root / "artifacts"
+        raw_archive = root / "raw" / "fidelity_statements"
+        canonical_incoming.mkdir(parents=True, exist_ok=True)
+
+        source = canonical_incoming / "Statement06302026_A.txt"
+        _write_minimal_statement(
+            source,
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+            "-$54,198.02",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(canonical_incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+                "--move-processed",
+            ]
+        )
+
+        assert rc == 0
+        archived_source = raw_archive / "2026-06-30" / source.name
+        assert not source.exists()
+        assert archived_source.exists()
+
+
+def _write_degraded_statement_missing_gain_loss(path: Path, account_line: str, ending: str) -> None:
+    path.write_text(
+        "Statement period: 2026-06-01 to 2026-06-30\n"
+        f"{account_line}\n"
+        f"Ending Account Value: {ending}\n",
+        encoding="utf-8",
+    )
+
+
+def test_complete_parse_promotes_latest() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        incoming = root / "incoming"
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+        incoming.mkdir(parents=True, exist_ok=True)
+
+        _write_minimal_statement(
+            incoming / "Statement06302026_A.txt",
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+            "-$54,198.02",
+        )
+        _write_minimal_statement(
+            incoming / "Statement06302026_B.txt",
+            "Account Z35-123695, Individual TOD",
+            "$488,624.46",
+            "$14,409.78",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+            ]
+        )
+        assert rc == 0
+
+        latest = json.loads((output / "latest.json").read_text(encoding="utf-8"))
+        assert latest["parse_status"] == "complete"
+        assert latest["promoted_to_latest"] is True
+
+
+def test_degraded_parse_does_not_promote_latest_and_preserves_existing_latest() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        incoming = root / "incoming"
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+        incoming.mkdir(parents=True, exist_ok=True)
+
+        # Seed a known-good latest artifact that should be preserved.
+        latest_seed = output / "latest.json"
+        seed_payload = _write_statement_artifact_payload(latest_seed)
+        (output / "latest.md").parent.mkdir(parents=True, exist_ok=True)
+        (output / "latest.md").write_text("seed latest markdown\n", encoding="utf-8")
+
+        _write_degraded_statement_missing_gain_loss(
+            incoming / "Statement06302026_A.txt",
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+            ]
+        )
+        assert rc == 0
+
+        latest_after = json.loads((output / "latest.json").read_text(encoding="utf-8"))
+        assert latest_after == seed_payload
+
+        degraded_json = output / "2026-06-30" / "degraded" / "STATEMENT_GAIN_LOSS_2026-06-30.json"
+        assert degraded_json.exists()
+        degraded_payload = json.loads(degraded_json.read_text(encoding="utf-8"))
+        assert degraded_payload["parse_status"] == "degraded"
+        assert degraded_payload["promoted_to_latest"] is False
+
+
+def test_degraded_parse_warnings_include_missing_gain_loss_and_non_promotion() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        incoming = root / "incoming"
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+        incoming.mkdir(parents=True, exist_ok=True)
+
+        _write_degraded_statement_missing_gain_loss(
+            incoming / "Statement06302026_A.txt",
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+        )
+        _write_degraded_statement_missing_gain_loss(
+            incoming / "Statement06302026_B.txt",
+            "Account Z35-123695, Individual TOD",
+            "$488,624.46",
+        )
+        _write_degraded_statement_missing_gain_loss(
+            incoming / "Statement06302026_C.txt",
+            "Account Z26-346415, Joint WROS TOD",
+            "$0.00",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+            ]
+        )
+        assert rc == 0
+
+        degraded_json = output / "2026-06-30" / "degraded" / "STATEMENT_GAIN_LOSS_2026-06-30.json"
+        degraded_payload = json.loads(degraded_json.read_text(encoding="utf-8"))
+        warnings = degraded_payload.get("warnings", [])
+
+        assert "PDF text extraction succeeded but gain/loss tables were not parsed." not in warnings
+        assert "Realized gain/loss totals missing for X20-548022." in warnings
+        assert "Realized gain/loss totals missing for Z26-346415." in warnings
+        assert "Realized gain/loss totals missing for Z35-123695." in warnings
+        assert "Snapshot not promoted to latest." in warnings
+
+
+def test_degraded_pdf_parse_warns_about_unparsed_gain_loss_tables() -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+
+        pdf_path = root / "Statement06302026.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+        def _fake_loader(source_path=None, text=None):
+            _ = source_path
+            _ = text
+            return StatementSource(
+                source_file=str(pdf_path),
+                extraction_method="pdf-text-extraction",
+                confidence="statement-derived",
+                source_provenance="pdf-text-extracted",
+                text=(
+                    "Statement period: 2026-06-01 to 2026-06-30\n"
+                    "Account X20-548022, Individual TOD\n"
+                    "Ending Account Value: $4.61\n"
+                ),
+            )
+
+        with patch("scripts.ingest_statement_gain_loss.load_statement_source", side_effect=_fake_loader):
+            rc = ingest_main(
+                [
+                    "--source",
+                    str(pdf_path),
+                    "--output-root",
+                    str(output),
+                    "--raw-archive-root",
+                    str(raw_archive),
+                ]
+            )
+
+        assert rc == 0
+        degraded_json = output / "2026-06-30" / "degraded" / "STATEMENT_GAIN_LOSS_2026-06-30.json"
+        payload = json.loads(degraded_json.read_text(encoding="utf-8"))
+        warnings = payload.get("warnings", [])
+        assert "PDF text extraction succeeded but gain/loss tables were not parsed." in warnings
+        assert "Snapshot not promoted to latest." in warnings
+
+
+def test_pypdf_dependency_is_declared() -> None:
+    req = Path("requirements.txt").read_text(encoding="utf-8")
+    assert any(line.strip().lower().startswith("pypdf") for line in req.splitlines())

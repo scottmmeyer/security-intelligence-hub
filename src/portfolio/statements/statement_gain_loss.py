@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -140,6 +140,8 @@ class StatementGainLossSnapshot:
     precision_limitations: list[str]
     usage_guidance: dict[str, list[str]]
     scoring_impact: str = "none"
+    parse_status: str = "complete"
+    promoted_to_latest: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,7 +161,93 @@ class StatementGainLossSnapshot:
             "precision_limitations": self.precision_limitations,
             "usage_guidance": self.usage_guidance,
             "scoring_impact": self.scoring_impact,
+            "parse_status": self.parse_status,
+            "promoted_to_latest": self.promoted_to_latest,
         }
+
+
+def apply_snapshot_parse_status(
+    snapshot: StatementGainLossSnapshot,
+    parse_status: str,
+    promoted_to_latest: bool,
+    warnings_to_add: list[str] | None = None,
+) -> StatementGainLossSnapshot:
+    merged_warnings = list(snapshot.warnings)
+    for warning in warnings_to_add or []:
+        if warning and warning not in merged_warnings:
+            merged_warnings.append(warning)
+    return replace(
+        snapshot,
+        warnings=merged_warnings,
+        parse_status=parse_status,
+        promoted_to_latest=promoted_to_latest,
+    )
+
+
+def evaluate_snapshot_completeness(
+    snapshot: StatementGainLossSnapshot,
+    expected_accounts: set[str] | None = None,
+) -> tuple[str, list[str]]:
+    expected = expected_accounts or {"X20-548022", "Z26-346415", "Z35-123695"}
+    warnings: list[str] = []
+    degraded = False
+
+    if not snapshot.statement_date:
+        degraded = True
+        warnings.append("Statement date missing.")
+
+    if not snapshot.statement_period_start or not snapshot.statement_period_end:
+        degraded = True
+        warnings.append("Statement period missing or incomplete.")
+
+    if not snapshot.source_files:
+        degraded = True
+        warnings.append("No source files detected.")
+
+    if not snapshot.source_provenance:
+        degraded = True
+        warnings.append("Source provenance missing.")
+
+    if not snapshot.accounts:
+        degraded = True
+        warnings.append("No account numbers detected.")
+
+    account_numbers = {a.account_number for a in snapshot.accounts}
+    if not account_numbers:
+        degraded = True
+        warnings.append("No account numbers detected.")
+
+    portfolio = snapshot.portfolio_summary
+    if portfolio is None or portfolio.ending_value is None:
+        degraded = True
+        warnings.append("Portfolio ending value missing.")
+
+    realized_missing_accounts = []
+    for account_number in sorted(expected):
+        acct = next((a for a in snapshot.accounts if a.account_number == account_number), None)
+        if acct is None:
+            continue
+        if acct.realized_net_gain_loss_ytd is None:
+            degraded = True
+            realized_missing_accounts.append(account_number)
+            warnings.append(f"Realized gain/loss totals missing for {account_number}.")
+
+    if snapshot.derived_totals.get("combined_realized_net_gain_loss_ytd_all_accounts") is None:
+        degraded = True
+        warnings.append("Combined realized net gain/loss YTD (all accounts) missing.")
+
+    if portfolio is None or portfolio.change_in_investment_value_ytd is None:
+        degraded = True
+        warnings.append("Portfolio YTD change in investment value missing.")
+
+    provenance_types = {item.get("source_provenance") for item in snapshot.source_provenance}
+    if degraded and "pdf-text-extracted" in provenance_types and realized_missing_accounts:
+        warnings.insert(0, "PDF text extraction succeeded but gain/loss tables were not parsed.")
+
+    if degraded:
+        warnings.append("Snapshot not promoted to latest.")
+        return "degraded", warnings
+    return "complete", warnings
 
 
 def _parse_money(value: str) -> float | None:
@@ -644,11 +732,16 @@ def write_snapshot_artifacts(snapshot: StatementGainLossSnapshot, out_dir: str |
         f"# Statement Gain/Loss Snapshot ({date_str})",
         "",
         "## Executive Summary",
+        f"- Parse status: {snapshot.parse_status}",
+        f"- Promoted to latest: {'yes' if snapshot.promoted_to_latest else 'no'}",
         f"- Statement period: {snapshot.statement_period_start} to {snapshot.statement_period_end}",
         f"- Statement date: {snapshot.statement_date}",
         f"- Portfolio ending value: {_format_money(portfolio.ending_value if portfolio else None)}",
         f"- Portfolio YTD change in investment value: {_format_money(portfolio.change_in_investment_value_ytd if portfolio else None)}",
         f"- Combined realized net gain/loss (all parsed accounts): {_format_money(snapshot.derived_totals.get('combined_realized_net_gain_loss_ytd_all_accounts'))}",
+        "",
+        "## Warnings",
+        *([f"- {w}" for w in snapshot.warnings] if snapshot.warnings else ["- none"]),
         "",
         "## Source Provenance",
         *[
