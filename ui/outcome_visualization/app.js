@@ -581,6 +581,31 @@ function renderForwardBacktestExplainer(replayInputRow, evidenceSummary) {
   const symbols = String(replayInputRow.selected_symbols || "").split("|").filter(Boolean);
   const marketCap = replayInputRow.filter_market_cap_bucket || "—";
   const geography = replayInputRow.filter_geography || "—";
+  const portfolioDate =
+    (state.snapshotMetadata && state.snapshotMetadata.snapshot_date)
+    || (state.snapshotMetadata && String(state.snapshotMetadata.generated_at_utc || "").slice(0, 10))
+    || new Date().toISOString().slice(0, 10);
+
+  const parseIsoDateOnly = (s) => {
+    const t = String(s || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+    const d = new Date(`${t}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const portfolioDateObj = parseIsoDateOnly(portfolioDate);
+  const measurementEndObj = parseIsoDateOnly(endDate);
+  const replayAgeDays = (portfolioDateObj && measurementEndObj)
+    ? Math.max(0, Math.round((portfolioDateObj.getTime() - measurementEndObj.getTime()) / (24 * 60 * 60 * 1000)))
+    : null;
+
+  let replayFreshnessLabel = "Unknown replay age";
+  if (replayAgeDays !== null && replayAgeDays <= 14) replayFreshnessLabel = "Recent replay";
+  else if (replayAgeDays !== null && replayAgeDays <= 45) replayFreshnessLabel = "Historical replay";
+  else if (replayAgeDays !== null) replayFreshnessLabel = "Older replay";
+
+  const showOlderWarning = replayAgeDays !== null && replayAgeDays > 30;
+  const replayPurpose = "historical_validation";
 
   const fmt = (v) => (v === null || v === undefined || isNaN(Number(v))) ? "—" : (Number(v) * 100).toFixed(2) + "%";
   const finalTopN = evidenceSummary?.top_n_strategy_final_return;
@@ -601,27 +626,41 @@ function renderForwardBacktestExplainer(replayInputRow, evidenceSummary) {
   el.innerHTML = `
     <div class="fbt-header">
       <span class="fbt-badge">Forward Backtest</span>
-      <span class="fbt-subtitle">Out-of-sample validation — scores were locked on the selection date before the measurement period began</span>
+      <span class="fbt-subtitle">Historical replay validation — not today\'s portfolio state</span>
+    </div>
+    <div class="fbt-purpose">
+      This panel tests whether historical SIH scores predicted future returns. It uses the selected score date and measurement window shown below.
+      It does not represent today\'s portfolio performance or current recommendation freshness.
     </div>
     <div class="fbt-body">
       <div class="fbt-block">
-        <div class="fbt-label">Score &amp; Selection Date</div>
+        <div class="fbt-label">Historical score date</div>
         <div class="fbt-value">${scoreDate}</div>
       </div>
       <div class="fbt-block">
-        <div class="fbt-label">Measurement Window</div>
+        <div class="fbt-label">Historical measurement window</div>
         <div class="fbt-value">${startDate} → ${endDate}</div>
       </div>
       <div class="fbt-block">
-        <div class="fbt-label">Universe</div>
+        <div class="fbt-label">Replay universe</div>
         <div class="fbt-value">${geography} ${marketCap}</div>
       </div>
       <div class="fbt-block">
-        <div class="fbt-label">Stocks Selected</div>
+        <div class="fbt-label">Historical selected basket</div>
         <div class="fbt-value">${symbols.length} (Top ${topN})</div>
       </div>
       ${returnBlock}
     </div>
+
+    <div class="fbt-freshness">
+      <div><strong>Replay age:</strong> ${replayAgeDays === null ? "Unknown" : `${replayAgeDays} days after measurement end`}</div>
+      <div><strong>Portfolio date:</strong> ${portfolioDate || "—"}</div>
+      <div><strong>Measurement ended:</strong> ${endDate || "—"}</div>
+      <div><strong>Replay freshness:</strong> ${replayFreshnessLabel}</div>
+    </div>
+
+    ${showOlderWarning ? `<div class="fbt-warning">This replay window is historical and may be older than the current portfolio analysis. Use it to evaluate model behavior, not to make today\'s trade decision.</div>` : ""}
+
     <div class="fbt-stocks">
       <div class="fbt-label">Top ${topN} stocks scored on ${scoreDate} — held for the full period, no changes:</div>
       <div class="fbt-symbols">${symbols.map((s) => `<span class="fbt-symbol">${s}</span>`).join("")}</div>
@@ -634,7 +673,39 @@ function renderForwardBacktestExplainer(replayInputRow, evidenceSummary) {
       successfully identified future outperformers — a true out-of-sample forward test.
       If it is below, the model did not add predictive value for this tier over this period.
     </div>
+    <div class="fbt-guidance">
+      Use Portfolio Alignment, Security-Level Intelligence, and Capital Deployment Queue for today\'s portfolio state.
+      Use this Forward Backtest to evaluate whether past scores showed predictive value.
+    </div>
   `;
+
+  // Additive replay UX contract details for debugging; no calculation behavior changes.
+  const replayMetaNode = document.getElementById("replayMeta");
+  if (replayMetaNode) {
+    try {
+      const existing = JSON.parse(replayMetaNode.textContent || "{}");
+      replayMetaNode.textContent = JSON.stringify(
+        {
+          ...existing,
+          replay_purpose: replayPurpose,
+          is_current_portfolio_state: false,
+          selection_date_label: "Historical score date",
+          measurement_window_label: "Historical measurement window",
+          portfolio_date: portfolioDate,
+          measurement_end_date: endDate,
+          replay_age_days: replayAgeDays,
+          replay_freshness_label: replayFreshnessLabel,
+          replay_freshness_warning: showOlderWarning
+            ? "This replay window is historical and may be older than the current portfolio analysis."
+            : "",
+        },
+        null,
+        2,
+      );
+    } catch {
+      // no-op; meta view is diagnostic only
+    }
+  }
 }
 
 function renderStockCoveragePanel(evidenceSummary) {
@@ -818,10 +889,10 @@ async function render() {
 
   // Phase F: display replay_mode badge in status
   const modeLabel = replayMode === "FORWARD_SIMULATION"
-    ? "[FORWARD SIM]"
+    ? "[SELECTED REPLAY]"
     : replayMode === "CURRENT_RECOMMENDATION"
-    ? "[CURRENT]"
-    : "[FORWARD BACKTEST]";
+    ? "[SELECTED REPLAY]"
+    : "[FORWARD BACKTEST HISTORICAL]";
 
   replayMetaNode.textContent = JSON.stringify(
     {
@@ -877,7 +948,7 @@ async function render() {
     ? ` [${filters.subtier} subtier: no dedicated replay built — showing ${filters.geography} ${filters.marketCap} full-bucket results]`
     : "";
 
-  setStatus(`${modeLabel} Line render with ${seriesRows.length} points for replay ${replayId}. ${statusSummary}${subtierNote}`);
+  setStatus(`${modeLabel} Selected replay artifact render with ${seriesRows.length} points for replay ${replayId}. ${statusSummary}${subtierNote}`);
   drawSeriesChart(seriesRows);
 }
 
@@ -1425,6 +1496,303 @@ function _applyLiveScores(sym, data) {
 // ---------------------------------------------------------------------------
 
 let _refreshPollTimer = null;
+let _latestPortfolioRun = null;
+
+function _ovEscHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function _ovFmtMoney(value, digits = 0) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function _ovFmtPct(value, digits = 1) {
+  const pct = Number(value);
+  if (!Number.isFinite(pct)) return "—";
+  return `${pct.toFixed(digits)}%`;
+}
+
+function _ovLatestRun(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  return [...rows].sort((left, right) => {
+    const leftTs = Date.parse(left.created_at_utc || "") || 0;
+    const rightTs = Date.parse(right.created_at_utc || "") || 0;
+    return leftTs - rightTs;
+  }).slice(-1)[0] || null;
+}
+
+function _ovAlignmentNode(alignment, key) {
+  return (alignment || []).find((row) => String(row.node_key || "").toUpperCase() === key) || null;
+}
+
+function _ovDeployableCash(data) {
+  const planCash = Number(data?.deployment_plan?.deployable_cash);
+  if (Number.isFinite(planCash)) return planCash;
+  const cashCtx = data?.deployment_queue?.cash_context || {};
+  const adjusted = Number(cashCtx.adjusted_deployable_mv);
+  if (Number.isFinite(adjusted)) return adjusted;
+  const deployable = Number(cashCtx.deployable_mv);
+  return Number.isFinite(deployable) ? deployable : 0;
+}
+
+function _buildOutcomeHardAssetModel(data) {
+  const alignment = data.alignment || [];
+  const queue = (data.deployment_queue && Array.isArray(data.deployment_queue.queue)) ? data.deployment_queue.queue : [];
+  const planRecs = (data.deployment_plan && Array.isArray(data.deployment_plan.recommendations)) ? data.deployment_plan.recommendations : [];
+  const gate = data.hard_asset_priority_gate || {};
+  const candidateQueue = data.hard_asset_candidate_queue || {};
+  const commodities = _ovAlignmentNode(alignment, "COMMODITIES") || {};
+  const gold = _ovAlignmentNode(alignment, "COMMODITIES.GOLD") || {};
+  const energy = _ovAlignmentNode(alignment, "COMMODITIES.ENERGY") || {};
+  const broad = _ovAlignmentNode(alignment, "COMMODITIES.BROAD_BASKET") || {};
+  const totalValue = Number(data.total_market_value || data.snapshot?.total_market_value || data.deployment_queue?.total_market_value || 0);
+  const deployableCash = _ovDeployableCash(data);
+  const commodityGapPct = Math.max(0, Number(commodities.target_pct || 0) - Number(commodities.actual_pct || 0));
+  const hardAssetFirst = (
+    Number(commodities.target_pct || 0) > 0 &&
+    commodityGapPct >= 1.0 &&
+    deployableCash > 0 &&
+    queue.length > 0
+  );
+
+  const sleeveNodes = Array.isArray(candidateQueue.sleeve_nodes) && candidateQueue.sleeve_nodes.length
+    ? candidateQueue.sleeve_nodes
+    : [
+      {
+        node_key: "COMMODITIES.GOLD",
+        label: "Gold",
+        actual_pct: Number(gold.actual_pct || 0),
+        target_pct: Number(gold.target_pct || 0),
+        gap_amount_full_portfolio: totalValue * (Math.max(0, Number(gold.target_pct || 0) - Number(gold.actual_pct || 0)) / 100),
+        deployable_cash_fill_amount: deployableCash * 0.5,
+        direct_completion_candidates: [{ symbol: "GLD" }, { symbol: "IAU" }, { symbol: "SGOL" }],
+        equity_proxy_candidates: [{ symbol: "KGC" }],
+        not_direct_filler_reason: "Not a direct COMMODITIES.GOLD filler",
+      },
+      {
+        node_key: "COMMODITIES.ENERGY",
+        label: "Energy",
+        actual_pct: Number(energy.actual_pct || 0),
+        target_pct: Number(energy.target_pct || 0),
+        gap_amount_full_portfolio: totalValue * (Math.max(0, Number(energy.target_pct || 0) - Number(energy.actual_pct || 0)) / 100),
+        deployable_cash_fill_amount: deployableCash * 0.35,
+        direct_completion_candidates: [{ symbol: "USO" }, { symbol: "BNO" }, { symbol: "UNG" }],
+        equity_proxy_candidates: [{ symbol: "XLE" }, { symbol: "PSX" }, { symbol: "CVE" }, { symbol: "DVN" }],
+        not_direct_filler_reason: "Energy/materials equities are equity-adjacent proxies, not direct commodity fillers",
+      },
+      {
+        node_key: "COMMODITIES.BROAD_BASKET",
+        label: "Broad Basket",
+        actual_pct: Number(broad.actual_pct || 0),
+        target_pct: Number(broad.target_pct || 0),
+        gap_amount_full_portfolio: totalValue * (Math.max(0, Number(broad.target_pct || 0) - Number(broad.actual_pct || 0)) / 100),
+        deployable_cash_fill_amount: deployableCash * 0.15,
+        direct_completion_candidates: [{ symbol: "DBC" }, { symbol: "PDBC" }, { symbol: "GSG" }],
+        equity_proxy_candidates: [{ symbol: "NUE" }, { symbol: "STLD" }, { symbol: "CRS" }],
+        not_direct_filler_reason: "Materials equities are equity-adjacent proxies, not direct commodity fillers",
+      },
+    ];
+
+  const planBySymbol = {};
+  planRecs.forEach((row) => {
+    if (row && row.symbol) planBySymbol[String(row.symbol).toUpperCase()] = row;
+  });
+
+  return {
+    hardAssetFirst,
+    priorityBias: gate.priority_bias || (hardAssetFirst ? "HARD_ASSET_REVIEW_FIRST" : "EQUITY_QUEUE_AVAILABLE"),
+    gateVerdict: gate.verdict || (hardAssetFirst ? "REVIEW_HARD_ASSETS_FIRST" : "EQUITY_QUEUE_AVAILABLE"),
+    queue,
+    planBySymbol,
+    deployableCash,
+    totalValue,
+    sleeveNodes,
+    summary: {
+      commoditiesActualPct: Number(commodities.actual_pct || 0),
+      commoditiesTargetPct: Number(commodities.target_pct || 0),
+      goldActualPct: Number(gold.actual_pct || 0),
+      goldTargetPct: Number(gold.target_pct || 0),
+      energyActualPct: Number(energy.actual_pct || 0),
+      energyTargetPct: Number(energy.target_pct || 0),
+      broadActualPct: Number(broad.actual_pct || 0),
+      broadTargetPct: Number(broad.target_pct || 0),
+      commodityGapPct,
+    },
+  };
+}
+
+function _renderLatestPortfolioActionPanel(data) {
+  const el = document.getElementById("portfolioActionPanel");
+  if (!el) return;
+
+  const model = _buildOutcomeHardAssetModel(data);
+  const runId = data.run_id || "—";
+  const snapshotDate = data.snapshot_date || data.run_metadata?.snapshot_date || "—";
+  const holdings = Number(data.holding_count || 0);
+  const summary = model.summary;
+  const firstAction = model.hardAssetFirst
+    ? `Review hard-asset sleeve: COMMODITIES are ${_ovFmtPct(summary.commoditiesActualPct)} vs ${_ovFmtPct(summary.commoditiesTargetPct)} target; use deployable cash before equity deployment unless target is waived.`
+    : "Commodity sleeve is not the controlling cash-allocation constraint for this run.";
+
+  const whatMatters = [
+    firstAction,
+    `Deployable cash available: ${_ovFmtMoney(model.deployableCash, 0)}.`,
+    model.queue.length
+      ? `Equity deployment queue remains available${model.hardAssetFirst ? " as fallback" : ""}: ${model.queue.slice(0, 3).map((row) => row.symbol).join(", ")}.`
+      : "No equity deployment candidates are currently available.",
+  ];
+
+  const sleeveCards = model.sleeveNodes.map((node) => {
+    const label = node.label || String(node.node_key || "").split(".").slice(-1)[0].replaceAll("_", " ");
+    const direct = Array.isArray(node.direct_completion_candidates)
+      ? node.direct_completion_candidates.map((row) => row.symbol).filter(Boolean)
+      : [];
+    const proxies = Array.isArray(node.equity_proxy_candidates)
+      ? node.equity_proxy_candidates.map((row) => row.symbol).filter(Boolean)
+      : [];
+    const fullGap = node.gap_amount_full_portfolio ?? node.full_target_amount;
+
+    return `<div style="border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 10px;">
+      <div style="font-weight: 700; margin-bottom: 4px;">${_ovEscHtml(label)} Sleeve</div>
+      <div style="font-size: 0.8rem; line-height: 1.45; color: var(--muted);">
+        Actual vs target: <strong>${_ovFmtPct(node.actual_pct ?? 0)}</strong> vs <strong>${_ovFmtPct(node.target_pct ?? 0)}</strong><br>
+        Suggested add: <strong>${_ovFmtMoney(node.deployable_cash_fill_amount, 0)}</strong><br>
+        Full target gap: <strong>${_ovFmtMoney(fullGap, 0)}</strong><br>
+        Direct hard-asset completion candidates: <strong>${_ovEscHtml(direct.join(" / ") || "—")}</strong><br>
+        Equity-adjacent proxies: <strong>${_ovEscHtml(proxies.join(" / ") || "—")}</strong><br>
+        ${_ovEscHtml(node.not_direct_filler_reason || "Display-only candidates; not trade instructions.")}
+      </div>
+    </div>`;
+  }).join("");
+
+  const queueRows = model.queue.slice(0, 10).map((row, index) => {
+    const symbol = String(row.symbol || "").toUpperCase();
+    const planRow = model.planBySymbol[symbol] || {};
+    const amount = planRow.suggested_add ?? planRow.suggested_amount ?? planRow.suggested_deploy_amount ?? row.suggested_amount;
+    return `<tr>
+      <td style="padding: 6px 8px; border-top: 1px solid var(--border); font-family: monospace;">${index + 1}. ${_ovEscHtml(symbol)}</td>
+      <td style="padding: 6px 8px; border-top: 1px solid var(--border); text-align: right;">${_ovFmtMoney(amount, 0)}</td>
+    </tr>`;
+  }).join("");
+
+  const fallbackLabel = model.hardAssetFirst
+    ? "Equity deployment fallback — review hard-asset sleeve first."
+    : "Capital deployment queue remains available.";
+
+  el.innerHTML = `<div style="display: grid; gap: 12px; color: var(--text);">
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff7e8; padding: 12px;">
+      <div style="font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px;">What matters right now</div>
+      <div style="font-size: 0.82rem; color: var(--text); margin-bottom: 6px;">Run ${_ovEscHtml(runId)} · ${_ovEscHtml(snapshotDate)} · ${_ovEscHtml(String(holdings))} holdings · ${_ovFmtMoney(model.totalValue, 0)} portfolio value</div>
+      <ol style="margin: 0; padding-left: 18px; line-height: 1.5;">
+        ${whatMatters.map((item) => `<li>${_ovEscHtml(item)}</li>`).join("")}
+      </ol>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: ${model.hardAssetFirst ? "#fff3e0" : "#fff"}; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 8px;">Today’s Operator Action Plan</div>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;">
+        <span style="padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; font-size: 0.73rem;">DISPLAY ONLY</span>
+        <span style="padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; font-size: 0.73rem;">OPERATOR REVIEW REQUIRED</span>
+        <span style="padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; font-size: 0.73rem;">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
+        <span style="padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; font-size: 0.73rem;">NO CRA CHANGES</span>
+        <span style="padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: #fff; font-size: 0.73rem;">NO TRADE EXECUTION</span>
+      </div>
+      <div style="font-size: 0.88rem; font-weight: 700; color: ${model.hardAssetFirst ? "#8a4b08" : "var(--text)"};">${model.hardAssetFirst ? "Hard-Asset Sleeve Is Unfilled" : "Equity deployment queue is available."}</div>
+      <div style="margin-top: 6px; line-height: 1.5;">
+        Commodities are <strong>${_ovFmtPct(summary.commoditiesActualPct)}</strong> vs <strong>${_ovFmtPct(summary.commoditiesTargetPct)}</strong> target.<br>
+        Before deploying cash to equities, review hard-asset sleeve completion.<br>
+        Suggested cash-first sleeve fill: Gold <strong>${_ovFmtMoney(model.sleeveNodes[0]?.deployable_cash_fill_amount, 0)}</strong>, Energy <strong>${_ovFmtMoney(model.sleeveNodes[1]?.deployable_cash_fill_amount, 0)}</strong>, Broad Basket <strong>${_ovFmtMoney(model.sleeveNodes[2]?.deployable_cash_fill_amount, 0)}</strong>.
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 8px;">Hard-Asset Priority Gate</div>
+      <div style="line-height: 1.5;">
+        Priority bias: <strong>${_ovEscHtml(String(model.priorityBias || "—"))}</strong><br>
+        Gate verdict: <strong>${_ovEscHtml(String(model.gateVerdict || "—"))}</strong><br>
+        Deployable cash: <strong>${_ovFmtMoney(model.deployableCash, 0)}</strong><br>
+        Equity deployment candidates: <strong>${_ovEscHtml(String(model.queue.length))}</strong>
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 8px;">Hard-Asset Sleeve Review</div>
+      <div style="line-height: 1.5;">
+        Commodities: <strong>${_ovFmtPct(summary.commoditiesActualPct)}</strong> vs <strong>${_ovFmtPct(summary.commoditiesTargetPct)}</strong><br>
+        Gold: <strong>${_ovFmtPct(summary.goldActualPct)}</strong> vs <strong>${_ovFmtPct(summary.goldTargetPct)}</strong><br>
+        Energy: <strong>${_ovFmtPct(summary.energyActualPct)}</strong> vs <strong>${_ovFmtPct(summary.energyTargetPct)}</strong><br>
+        Broad Basket: <strong>${_ovFmtPct(summary.broadActualPct)}</strong> vs <strong>${_ovFmtPct(summary.broadTargetPct)}</strong>
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 8px;">Hard-Asset Candidate Queue</div>
+      <div style="font-size: 0.82rem; line-height: 1.5; margin-bottom: 8px;">
+        Direct commodity completion candidate examples: <strong>GLD / IAU / SGOL</strong>, <strong>USO / BNO / UNG</strong>, <strong>DBC / PDBC / GSG</strong>.<br>
+        KGC, XLE, PSX, CVE, DVN, NUE, STLD, and CRS are equity-adjacent proxies, not direct commodity fillers.
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+        ${sleeveCards}
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 8px;">Sleeve Fit Drilldown</div>
+      <div style="font-size: 0.82rem; line-height: 1.55; color: var(--muted);">
+        Direct hard-asset completion candidates are display-only and sized for operator review. KGC remains proxy-only and is not treated as a direct COMMODITIES.GOLD filler.
+      </div>
+    </div>
+
+    <div style="border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px;">
+      <div style="font-size: 0.95rem; font-weight: 700; margin-bottom: 4px;">Capital Deployment Queue</div>
+      <div style="font-size: 0.82rem; color: ${model.hardAssetFirst ? "#8a4b08" : "var(--muted)"}; margin-bottom: 10px;">${_ovEscHtml(fallbackLabel)}</div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.84rem; background: #fff;">
+        <thead>
+          <tr>
+            <th style="text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border);">Symbol</th>
+            <th style="text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border);">Suggested Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${queueRows || '<tr><td colspan="2" style="padding: 8px; color: var(--muted);">No deployment candidates available.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function loadLatestPortfolioActionPanel() {
+  const el = document.getElementById("portfolioActionPanel");
+  if (!el) return;
+  try {
+    const runsResp = await fetch("/api/portfolio/runs", { cache: "no-store" });
+    if (!runsResp.ok) throw new Error(`HTTP ${runsResp.status}`);
+    const runsBody = await runsResp.json();
+    const latest = _ovLatestRun(runsBody.portfolios || []);
+    if (!latest || !latest.run_id) {
+      el.innerHTML = "No completed portfolio analysis runs available.";
+      return;
+    }
+    const detailResp = await fetch(`/api/portfolio/runs/${encodeURIComponent(latest.run_id)}`, { cache: "no-store" });
+    if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
+    const detail = await detailResp.json();
+    _latestPortfolioRun = { ...latest, ...detail };
+    _renderLatestPortfolioActionPanel(_latestPortfolioRun);
+  } catch (error) {
+    el.innerHTML = `Operator action plan unavailable — ${_ovEscHtml(error.message || "request failed")}`;
+  }
+}
 
 function loadSignalStatus() {
   fetch("/api/signal-status", { cache: "no-store" })
@@ -1616,12 +1984,29 @@ function _renderHoldingsCoverage(coverage) {
 function triggerSignalRefresh() {
   const btn = document.getElementById("signalRefreshBtn");
   const msg = document.getElementById("signalRefreshMsg");
+  const modeSelect = document.getElementById("signalRefreshMode");
+  const mode = modeSelect ? String(modeSelect.value || "portfolio_signals") : "portfolio_signals";
   if (!btn || !msg) return;
+
+  if (mode === "rebuild_research_universe") {
+    const ok = window.confirm("This will refresh approximately 2,473 research-universe symbols. Historical snapshots and trend history will be retained. Continue?");
+    if (!ok) return;
+  }
+
   // Disable immediately to prevent double-click while the POST is in-flight
   btn.disabled = true;
   btn.textContent = "Starting…";
 
-  fetch("/api/signal-refresh", { method: "POST", cache: "no-store" })
+  fetch("/api/signal-refresh", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      intent: mode,
+      requested_by: "operator",
+      source: "outcome_visualization",
+    }),
+  })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(data => {
       msg.style.display = "";
@@ -1634,15 +2019,21 @@ function triggerSignalRefresh() {
       }
       btn.disabled = true;
       btn.textContent = "Refreshing\u2026";
-      msg.textContent = "Refresh started (coverage-aware mode). Running in background\u2026";
+      msg.textContent = `Refresh started (${_refreshModeLabel(mode)}). Running in background\u2026`;
       _startRefreshPoll();
     })
     .catch(() => {
       btn.disabled = false;
-      btn.textContent = "Refresh Stale";
+      btn.textContent = _refreshModeLabel(mode);
       msg.style.display = "";
       msg.textContent = "Could not start refresh \u2014 is the server running with API support?";
     });
+}
+
+function _refreshModeLabel(mode) {
+  if (mode === "stale_only") return "Refresh Stale Only";
+  if (mode === "rebuild_research_universe") return "Refresh Full Research Universe";
+  return "Refresh Current Holdings Only";
 }
 
 function _startRefreshPoll() {
@@ -1655,8 +2046,10 @@ function _startRefreshPoll() {
           clearInterval(_refreshPollTimer);
           _refreshPollTimer = null;
           const btn = document.getElementById("signalRefreshBtn");
+          const modeSelect = document.getElementById("signalRefreshMode");
+          const mode = modeSelect ? String(modeSelect.value || "portfolio_signals") : "portfolio_signals";
           const msg = document.getElementById("signalRefreshMsg");
-          if (btn) { btn.disabled = false; btn.textContent = "Refresh Stale"; }
+          if (btn) { btn.disabled = false; btn.textContent = _refreshModeLabel(mode); }
           if (msg) {
             msg.textContent = _buildRefreshOutcomeMessage(data.last_report || null);
           }

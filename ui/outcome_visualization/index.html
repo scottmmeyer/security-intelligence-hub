@@ -331,6 +331,47 @@
         margin-top: 4px;
       }
 
+      .fbt-purpose {
+        margin-bottom: 10px;
+        padding: 8px 10px;
+        border-left: 3px solid #2a9d8f;
+        background: #e7f7f5;
+        color: #204844;
+        font-size: 0.82rem;
+        line-height: 1.45;
+      }
+
+      .fbt-freshness {
+        margin-bottom: 10px;
+        padding: 8px 10px;
+        background: #f8f4ea;
+        border: 1px solid #e4d8bd;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        color: #4a3a23;
+      }
+
+      .fbt-warning {
+        margin-bottom: 10px;
+        padding: 8px 10px;
+        border: 1px solid #d46f2d;
+        background: #fff4ea;
+        color: #7a3912;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        line-height: 1.45;
+      }
+
+      .fbt-guidance {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed #b2dbd7;
+        font-size: 0.8rem;
+        color: #27514c;
+        line-height: 1.45;
+      }
+
       /* Symbol Lookup */
       .lookup-bar {
         display: flex;
@@ -1174,7 +1215,11 @@
             <pre id="availabilityMeta"></pre>
           </div>
           <div class="panel">
-            <h3 style="margin-top: 0; margin-bottom: 8px">Replay Context</h3>
+            <h3 style="margin-top: 0; margin-bottom: 8px">Replay Context (Historical Validation Artifact)</h3>
+            <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 8px; line-height: 1.45;">
+              Dates shown in this panel describe the selected historical replay window used for model validation.
+              They are not the current portfolio evaluation date.
+            </div>
             <pre id="replayMeta"></pre>
           </div>
           <div class="panel">
@@ -1187,6 +1232,11 @@
           </div>
         </div>
       </section>
+
+      <section class="panel" style="margin-top: 14px;">
+        <h3 style="margin: 0 0 12px; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Portfolio Operator Priorities</h3>
+        <div id="portfolioActionPanel" style="font-size: 0.86rem; color: var(--muted);">Loading latest portfolio action plan...</div>
+      </section>
     </div>
 
     <script src="app.js?v=13"></script>
@@ -1196,6 +1246,7 @@
           if (e.key === "Enter") lookupSymbol();
         });
         loadSignalStatus();
+        loadLatestPortfolioActionPanel();
       });
     </script>
   </body>
