@@ -134,6 +134,7 @@ def _upsert_history_index(
         "json_artifact_path": str(json_path),
         "md_artifact_path": str(md_path),
         "source_files": snapshot.source_files,
+        "source_count": len(snapshot.source_files),
         "source_provenance": snapshot.source_provenance,
         "extraction_timestamp_utc": snapshot.extraction_timestamp_utc,
         "scoring_impact": snapshot.scoring_impact,
@@ -305,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             latest_json_path, latest_md_path = _latest_pointer_paths(output_root)
             print("\nLatest pointers unchanged: no complete snapshot qualified for promotion.")
+            print("latest preserved from prior promoted snapshot; degraded run recorded in history only.")
             print(f"Latest JSON pointer/output preserved: {latest_json_path}")
             print(f"Latest Markdown pointer/output preserved: {latest_md_path}")
 

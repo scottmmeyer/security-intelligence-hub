@@ -704,6 +704,19 @@ def test_degraded_parse_does_not_promote_latest_and_preserves_existing_latest() 
         assert degraded_payload["parse_status"] == "degraded"
         assert degraded_payload["promoted_to_latest"] is False
 
+        history = output / "history" / "statement_gain_loss_index.json"
+        history_payload = json.loads(history.read_text(encoding="utf-8"))
+        assert len(history_payload["entries"]) == 1
+        entry = history_payload["entries"][0]
+        assert entry["statement_date"] == "2026-06-30"
+        assert entry["parse_status"] == "degraded"
+        assert entry["promoted_to_latest"] is False
+        assert entry["scoring_impact"] == "none"
+        assert "warnings" in entry and len(entry["warnings"]) >= 1
+        assert entry["source_count"] == 1
+        assert "/degraded/" in entry["json_artifact_path"]
+        assert "/degraded/" in entry["md_artifact_path"]
+
 
 def test_degraded_parse_warnings_include_missing_gain_loss_and_non_promotion() -> None:
     with TemporaryDirectory() as tmp:
@@ -750,6 +763,41 @@ def test_degraded_parse_warnings_include_missing_gain_loss_and_non_promotion() -
         assert "Realized gain/loss totals missing for Z26-346415." in warnings
         assert "Realized gain/loss totals missing for Z35-123695." in warnings
         assert "Snapshot not promoted to latest." in warnings
+
+
+def test_degraded_parse_reports_latest_preserved_message(capsys: pytest.CaptureFixture[str]) -> None:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        incoming = root / "incoming"
+        output = root / "artifacts"
+        raw_archive = root / "raw"
+        incoming.mkdir(parents=True, exist_ok=True)
+
+        latest_seed = output / "latest.json"
+        _write_statement_artifact_payload(latest_seed)
+        (output / "latest.md").parent.mkdir(parents=True, exist_ok=True)
+        (output / "latest.md").write_text("seed latest markdown\n", encoding="utf-8")
+
+        _write_degraded_statement_missing_gain_loss(
+            incoming / "Statement06302026_A.txt",
+            "Account X20-548022, Individual TOD",
+            "$4.61",
+        )
+
+        rc = ingest_main(
+            [
+                "--incoming-dir",
+                str(incoming),
+                "--output-root",
+                str(output),
+                "--raw-archive-root",
+                str(raw_archive),
+            ]
+        )
+        assert rc == 0
+
+        out = capsys.readouterr().out
+        assert "latest preserved from prior promoted snapshot; degraded run recorded in history only." in out
 
 
 def test_degraded_pdf_parse_warns_about_unparsed_gain_loss_tables() -> None:
