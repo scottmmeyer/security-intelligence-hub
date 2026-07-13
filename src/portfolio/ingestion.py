@@ -43,19 +43,31 @@ _GENERIC_REQUIRED = {
 }
 
 
+def _normalize_header_name(raw: str | None) -> str:
+    """Normalize CSV header tokens for resilient comparisons."""
+    if raw is None:
+        return ""
+    # Collapse repeated/internal whitespace and compare case-insensitively.
+    return " ".join(str(raw).strip().split()).lower()
+
+
+_FIDELITY_REQUIRED_LC = {_normalize_header_name(h) for h in _FIDELITY_REQUIRED}
+_FIDELITY_REQUIRED_V2_LC = {_normalize_header_name(h) for h in _FIDELITY_REQUIRED_V2}
+
+
 def detect_format(headers: list[str]) -> str:
     """Return 'FIDELITY_CSV' or 'GENERIC_CSV', or raise ValueError."""
-    header_set = set(headers)
-    if _FIDELITY_REQUIRED.issubset(header_set):
+    normalized = [h.strip() for h in headers if h is not None]
+    lower = {_normalize_header_name(h) for h in normalized}
+    if _FIDELITY_REQUIRED_LC.issubset(lower):
         return "FIDELITY_CSV"
-    if _FIDELITY_REQUIRED_V2.issubset(header_set):
+    if _FIDELITY_REQUIRED_V2_LC.issubset(lower):
         return "FIDELITY_CSV"
-    lower = {h.lower() for h in headers}
-    generic_lower = {h.lower() for h in _GENERIC_REQUIRED}
+    generic_lower = {_normalize_header_name(h) for h in _GENERIC_REQUIRED}
     if generic_lower.issubset(lower):
         return "GENERIC_CSV"
     raise ValueError(
-        f"Unrecognized portfolio format. Headers found: {sorted(headers)}"
+        f"Unrecognized portfolio format. Headers found: {sorted(normalized)}"
     )
 
 
@@ -159,7 +171,8 @@ def _parse_fidelity(
     lines = content.splitlines()
     header_idx = None
     for i, line in enumerate(lines):
-        if "Symbol" in line and "Description" in line and "Current Value" in line:
+        line_lc = line.lower()
+        if "symbol" in line_lc and "description" in line_lc and "current value" in line_lc:
             header_idx = i
             break
     if header_idx is None:
@@ -175,28 +188,33 @@ def _parse_fidelity(
 
     reader = csv.DictReader(io.StringIO("\n".join(data_lines)))
     headers = reader.fieldnames or []
-    header_set = set(headers)
-    if not (_FIDELITY_REQUIRED.issubset(header_set) or _FIDELITY_REQUIRED_V2.issubset(header_set)):
+    header_set_lc = {_normalize_header_name(h) for h in headers if h is not None}
+    if not (_FIDELITY_REQUIRED_LC.issubset(header_set_lc) or _FIDELITY_REQUIRED_V2_LC.issubset(header_set_lc)):
         raise IngestionError(f"Fidelity headers incomplete. Found: {headers}")
 
+    col_map = {_normalize_header_name(h): h for h in headers if h is not None}
+
+    def get(row: dict, key: str, fallback: str = "") -> str:
+        return str(row.get(col_map.get(_normalize_header_name(key), key), fallback)).strip()
+
     # Support both column name variants for account
-    _acct_col = "Account Name/Number" if "Account Name/Number" in header_set else "Account Name"
+    _acct_col = "Account Name/Number" if "account name/number" in header_set_lc else "Account Name"
     # Support both percent column variants
-    _pct_col = "Percent Of Account" if "Percent Of Account" in header_set else "Percent of Portfolio"
+    _pct_col = "Percent Of Account" if "percent of account" in header_set_lc else "Percent of Portfolio"
 
     raw_rows = []
     account_names_seen: list[str] = []
     for row in reader:
-        sym = _normalize_symbol(row.get("Symbol", ""))
-        desc = str(row.get("Description", "")).strip()
-        acct_raw = str(row.get(_acct_col, "")).strip()
+        sym = _normalize_symbol(get(row, "Symbol"))
+        desc = get(row, "Description")
+        acct_raw = get(row, _acct_col)
         if acct_raw and acct_raw not in account_names_seen:
             account_names_seen.append(acct_raw)
 
-        qty = _parse_float(row.get("Quantity", ""))
-        mv = _parse_float(row.get("Current Value", ""))
-        pct = _parse_float(row.get(_pct_col, ""))
-        cost = _parse_float(row.get("Cost Basis Total", ""))
+        qty = _parse_float(get(row, "Quantity"))
+        mv = _parse_float(get(row, "Current Value"))
+        pct = _parse_float(get(row, _pct_col))
+        cost = _parse_float(get(row, "Cost Basis Total"))
 
         # Skip rows with no symbol or no value (Fidelity totals row)
         if not sym or sym == "CASH" and not desc:
@@ -393,15 +411,17 @@ def ingest_portfolio(
     for row in probe:
         if any(cell.strip() for cell in row):
             first_rows.append(row)
-        if len(first_rows) >= 20:
+        # Fidelity exports can include long preambles before the actual header row.
+        if len(first_rows) >= 200:
             break
 
     fmt = None
     detected_headers: list[str] = []
     for row in first_rows:
         try:
-            fmt = detect_format(row)
-            detected_headers = row
+            candidate_headers = [cell.strip() for cell in row]
+            fmt = detect_format(candidate_headers)
+            detected_headers = candidate_headers
             break
         except ValueError:
             continue
