@@ -1112,6 +1112,7 @@
               <select id="signalRefreshMode">
                 <option value="stale_only">Refresh Stale Only</option>
                 <option value="portfolio_signals" selected>Refresh Current Holdings Only</option>
+                <option value="holdings_plus_buy_candidates">Refresh Current Holdings + Buy Candidates</option>
                 <option value="rebuild_research_universe">Refresh Full Research Universe (~2,473 symbols)</option>
                 <option value="prepare_portfolio_review">Prepare Portfolio Review</option>
               </select>
@@ -1245,7 +1246,20 @@
         document.getElementById("lookupInput").addEventListener("keydown", function (e) {
           if (e.key === "Enter") lookupSymbol();
         });
+        const modeSelect = document.getElementById("signalRefreshMode");
+        const refreshBtn = document.getElementById("signalRefreshBtn");
+        if (modeSelect) {
+          modeSelect.addEventListener("change", function () {
+            if (refreshBtn) {
+              refreshBtn.textContent = _refreshModeLabel(String(modeSelect.value || "portfolio_signals"));
+            }
+            _renderRefreshModeDefinition();
+            loadRefreshRuntimeStatus();
+          });
+        }
         loadSignalStatus();
+        _renderRefreshModeDefinition();
+        loadRefreshRuntimeStatus();
         loadLatestPortfolioActionPanel();
       });
     </script>

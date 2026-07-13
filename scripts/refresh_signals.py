@@ -61,11 +61,13 @@ _ALL_PROVIDERS = ("zacks", "danelfin", "yahoo", "fmp")
 
 REFRESH_MODE_STALE_ONLY = "stale_only"
 REFRESH_MODE_PORTFOLIO_SIGNALS = "portfolio_signals"
+REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES = "holdings_plus_buy_candidates"
 REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE = "rebuild_research_universe"
 
 _REFRESH_MODES = {
     REFRESH_MODE_STALE_ONLY,
     REFRESH_MODE_PORTFOLIO_SIGNALS,
+    REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
     REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE,
 }
 
@@ -225,8 +227,146 @@ def _refresh_mode_label(refresh_mode: str) -> str:
     return {
         REFRESH_MODE_STALE_ONLY: "stale_only",
         REFRESH_MODE_PORTFOLIO_SIGNALS: "portfolio_signals",
+        REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES: "holdings_plus_buy_candidates",
         REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "rebuild_research_universe",
     }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
+
+
+def _load_buy_candidate_symbols(*, cap: int = 50) -> list[str]:
+    """Return ordered buy/deployment candidates from latest completed analysis run."""
+    manifest_path = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
+    if not manifest_path.exists():
+        return []
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        portfolios = manifest.get("portfolios") or []
+        completed = [p for p in portfolios if isinstance(p, dict) and p.get("status") == "COMPLETE" and p.get("run_id")]
+        if not completed:
+            return []
+        run_id = str(completed[-1].get("run_id") or "").strip()
+        if not run_id:
+            return []
+
+        from src.portfolio.runner import load_analysis_run
+
+        run = load_analysis_run(run_id)
+        if not isinstance(run, dict):
+            return []
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def _add(sym: str) -> None:
+            s = str(sym or "").strip().upper()
+            if s and s not in seen:
+                seen.add(s)
+                ordered.append(s)
+
+        for row in list((run.get("deployment_queue") or {}).get("queue") or []):
+            if isinstance(row, dict):
+                _add(str(row.get("symbol") or ""))
+
+        for row in list((run.get("deployment_plan") or {}).get("recommendations") or []):
+            if isinstance(row, dict):
+                _add(str(row.get("symbol") or ""))
+
+        for row in list(run.get("recommendations") or []):
+            if not isinstance(row, dict):
+                continue
+            action_text = " ".join(
+                [
+                    str(row.get("action") or ""),
+                    str(row.get("recommended_action") or ""),
+                    str(row.get("action_type") or ""),
+                ]
+            ).upper()
+            if any(tok in action_text for tok in ("BUY", "ADD", "ACCUMULATE", "DEPLOY", "INITIATE")):
+                _add(str(row.get("symbol") or ""))
+
+        if cap > 0:
+            return ordered[:cap]
+        return ordered
+    except Exception:
+        return []
+
+
+def _build_refresh_scope(
+    *,
+    refresh_mode: str,
+    buy_candidate_cap: int = 50,
+) -> dict[str, object]:
+    """Build refresh scope summary and per-provider symbol plans."""
+    mode = _normalize_refresh_mode(refresh_mode)
+
+    holdings = sorted(_load_portfolio_equity_holdings())
+    holdings_set = set(holdings)
+    buy_candidates = _load_buy_candidate_symbols(cap=buy_candidate_cap) if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES else []
+    buy_set = set(buy_candidates)
+
+    provider_holdings: dict[str, set[str]] = {
+        "zacks": _load_portfolio_provider_holdings("zacks"),
+        "danelfin": _load_portfolio_provider_holdings("danelfin"),
+        "yahoo": _load_portfolio_provider_holdings("yahoo"),
+    }
+
+    mandatory_dependencies: set[str] = set()
+    for symbols in provider_holdings.values():
+        mandatory_dependencies |= set(symbols)
+    mandatory_dependencies -= holdings_set
+    mandatory_dependencies -= buy_set
+
+    if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+        deduped_all = _all_universe_symbols(_BASE_UNIVERSE)
+    else:
+        deduped_all = sorted(holdings_set | buy_set | mandatory_dependencies)
+
+    provider_symbols: dict[str, list[str]] = {}
+    for provider in ("zacks", "danelfin", "yahoo"):
+        if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            provider_symbols[provider] = list(deduped_all)
+            continue
+        if mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
+            provider_symbols[provider] = sorted(provider_holdings.get(provider, set()))
+            continue
+        if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+            merged: list[str] = []
+            seen: set[str] = set()
+            for sym in sorted(provider_holdings.get(provider, set())) + buy_candidates + sorted(mandatory_dependencies):
+                s = str(sym or "").strip().upper()
+                if s and s not in seen:
+                    seen.add(s)
+                    merged.append(s)
+            provider_symbols[provider] = merged
+            continue
+        provider_symbols[provider] = []
+
+    full_universe_count = len(_all_universe_symbols(_BASE_UNIVERSE))
+    planned_symbol_samples = {
+        "portfolio_holdings": holdings[:10],
+        "buy_candidates": buy_candidates[:10],
+        "mandatory_dependencies": sorted(mandatory_dependencies)[:10],
+    }
+
+    return {
+        "refresh_intent": mode,
+        "scope_summary": {
+            "portfolio_holdings_count": len(holdings),
+            "buy_candidate_count": len(buy_candidates),
+            "mandatory_dependency_count": len(mandatory_dependencies),
+            "deduped_symbol_count": len(deduped_all),
+            "full_universe_count": full_universe_count,
+        },
+        "planned_symbols": {
+            "portfolio_holdings": holdings,
+            "buy_candidates": buy_candidates,
+            "mandatory_dependencies": sorted(mandatory_dependencies),
+            "deduped_all": deduped_all,
+            "provider_symbols": provider_symbols,
+        },
+        "planned_symbol_samples": planned_symbol_samples,
+        "buy_candidate_cap": int(buy_candidate_cap),
+    }
 
 
 def _provider_state(*, research_fresh: bool, holdings_status: str) -> str:
@@ -477,6 +617,10 @@ def _refresh_zacks(
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
+    elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+        scope = _build_refresh_scope(refresh_mode=refresh_mode)
+        symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("zacks") or [])
+        mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
@@ -518,6 +662,10 @@ def _refresh_zacks(
         elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             print(
                 f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+            print(
+                f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} holdings + buy-candidate symbols."
             )
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
@@ -600,6 +748,10 @@ def _refresh_danelfin(
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
+    elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+        scope = _build_refresh_scope(refresh_mode=refresh_mode)
+        symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or [])
+        mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
@@ -639,6 +791,10 @@ def _refresh_danelfin(
         elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             print(
                 f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+            print(
+                f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} holdings + buy-candidate symbols."
             )
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
@@ -723,6 +879,10 @@ def _refresh_yahoo(
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
         symbols = sorted(forced)
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
+    elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+        scope = _build_refresh_scope(refresh_mode=refresh_mode)
+        symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("yahoo") or [])
+        mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
@@ -762,6 +922,10 @@ def _refresh_yahoo(
         elif mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             print(
                 f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} portfolio symbols."
+            )
+        elif mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+            print(
+                f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} holdings + buy-candidate symbols."
             )
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
@@ -923,6 +1087,7 @@ def ensure_signals_fresh_with_report(
     smart: bool = False,
 ) -> dict[str, object]:
     """Check freshness and fetch stale/coverage-degraded providers with report."""
+    scope_plan = _build_refresh_scope(refresh_mode=refresh_mode)
     triggered: dict[str, bool] = {}
     provider_report: dict[str, dict[str, object]] = {}
     t0 = time.perf_counter()
@@ -981,6 +1146,10 @@ def ensure_signals_fresh_with_report(
     return {
         "triggered": triggered,
         "providers": provider_report,
+        "refresh_intent": _normalize_refresh_mode(refresh_mode),
+        "scope_summary": scope_plan.get("scope_summary") or {},
+        "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
+        "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
         "smart": bool(smart),
         "dry_run": bool(dry_run),
         "runtime_sec": round(time.perf_counter() - t0, 4),

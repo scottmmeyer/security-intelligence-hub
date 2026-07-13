@@ -1797,9 +1797,27 @@ async function loadLatestPortfolioActionPanel() {
 function loadSignalStatus() {
   fetch("/api/signal-status", { cache: "no-store" })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(data => {
+    .then(data => Promise.all([
+      Promise.resolve(data),
+      fetch("/api/signal-refresh/status", { cache: "no-store" })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+    ]))
+    .then(([data, runtime]) => {
+      const progress = (runtime && runtime.provider_progress) ? runtime.provider_progress : {};
+      ["zacks", "danelfin", "yahoo"].forEach((provider) => {
+        if (!data[provider] || !progress[provider]) return;
+        const p = progress[provider];
+        data[provider].completed_count = p.completed_count;
+        data[provider].planned_total_count = p.planned_total_count;
+        data[provider].progress_pct = p.progress_pct;
+        data[provider].progress_label = p.progress_label;
+        data[provider].is_complete = p.is_complete;
+      });
       _renderSignalPills(data);
       _renderHoldingsCoverage(data.portfolio_holdings_coverage || null);
+      _renderRefreshModeDefinition();
+      loadRefreshRuntimeStatus();
       if (data._running) {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
@@ -1815,6 +1833,102 @@ function loadSignalStatus() {
       const holdingsSummaryEl = document.getElementById("holdingsCoverageSummary");
       if (holdingsEl) holdingsEl.innerHTML = '<span style="color: var(--muted); font-size: 0.83rem;">Coverage unavailable \u2014 API not reachable</span>';
       if (holdingsSummaryEl) holdingsSummaryEl.textContent = 'Coverage unavailable.';
+    });
+}
+
+function _selectedRefreshMode() {
+  const modeSelect = document.getElementById("signalRefreshMode");
+  return modeSelect ? String(modeSelect.value || "portfolio_signals") : "portfolio_signals";
+}
+
+function _refreshModeGuidance(mode) {
+  if (mode === "stale_only") {
+    return "Refreshes stale/missing coverage targets only for lightweight maintenance.";
+  }
+  if (mode === "portfolio_signals") {
+    return "Refreshes portfolio holdings plus any mandatory provider dependencies required for coverage checks.";
+  }
+  if (mode === "holdings_plus_buy_candidates") {
+    return "Refreshes current portfolio holdings and top deployment/buy candidates, plus any mandatory provider dependencies. Use this before making portfolio decisions without running the full universe refresh.";
+  }
+  if (mode === "rebuild_research_universe") {
+    return "Refreshes the full research universe. Intended weekly or when rebuilding the candidate universe.";
+  }
+  if (mode === "prepare_portfolio_review") {
+    return "Builds the portfolio review artifact bundle without forcing a full research-universe refresh.";
+  }
+  return "Select a refresh mode to view scope and guidance.";
+}
+
+function _renderRefreshModeDefinition() {
+  const panel = document.getElementById("refreshModeDefinitionPanel");
+  const nextIntent = document.getElementById("refreshNextIntentSummary");
+  const mode = _selectedRefreshMode();
+  const guidance = _refreshModeGuidance(mode);
+  if (panel) {
+    panel.innerHTML = `<div class="refresh-mode-purpose">${_ovEscHtml(guidance)}</div>`;
+  }
+  if (nextIntent) {
+    nextIntent.textContent = `${_refreshModeLabel(mode)} — ${guidance}`;
+  }
+}
+
+function _scopeFormulaFromSummary(summary, intent) {
+  const s = summary || {};
+  const holdings = Number(s.portfolio_holdings_count || 0);
+  const buy = Number(s.buy_candidate_count || 0);
+  const deps = Number(s.mandatory_dependency_count || 0);
+  const deduped = Number(s.deduped_symbol_count || 0);
+  const full = Number(s.full_universe_count || 0);
+
+  if (intent === "rebuild_research_universe") {
+    return full > 0
+      ? `Planned refresh scope: ~${full.toLocaleString("en-US")} research universe symbols`
+      : "Planned refresh scope: full research universe";
+  }
+  if (intent === "holdings_plus_buy_candidates") {
+    return `Planned refresh scope: ${holdings} holdings + ${buy} buy candidates + ${deps} required dependencies = ${deduped} symbols`;
+  }
+  if (intent === "portfolio_signals") {
+    return `Planned refresh scope: ${holdings} holdings + ${deps} required dependencies = ${deduped} symbols`;
+  }
+  return "Planned refresh scope: based on selected refresh intent";
+}
+
+function loadRefreshRuntimeStatus() {
+  fetch("/api/signal-refresh/status", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => {
+      const activeSummary = document.getElementById("refreshActiveStateSummary");
+      const activeDetails = document.getElementById("refreshActiveStateDetails");
+      const completionBanner = document.getElementById("refreshCompletionBanner");
+      const intent = String(data.resolved_intent || _selectedRefreshMode() || "portfolio_signals");
+      const scopeSummary = data.scope_summary || {};
+      const scopeFormula = data.scope_formula || _scopeFormulaFromSummary(scopeSummary, intent);
+
+      if (activeSummary) {
+        activeSummary.textContent = data.running
+          ? `Refreshing (${_refreshModeLabel(intent)})`
+          : "No active refresh job.";
+      }
+      if (activeDetails) {
+        activeDetails.innerHTML = `<span class="refresh-insight-pill">${_ovEscHtml(scopeFormula)}</span>`;
+      }
+      if (completionBanner) {
+        if (data.running) {
+          completionBanner.textContent = "";
+          completionBanner.className = "completion-banner";
+        } else if (data.last_report && data.last_exit_code === 0) {
+          completionBanner.textContent = _scopeFormulaFromSummary(data.last_report.scope_summary || scopeSummary, intent);
+          completionBanner.className = "completion-banner complete";
+        } else {
+          completionBanner.textContent = "";
+          completionBanner.className = "completion-banner";
+        }
+      }
+    })
+    .catch(() => {
+      _renderRefreshModeDefinition();
     });
 }
 
@@ -1860,11 +1974,29 @@ function _renderSignalPills(data) {
       UNKNOWN:       "no data",
     }[badgeState] || "unknown";
 
+    // Stable refresh progress line (REFRESH-PROGRESS-STABLE-DENOMINATOR-01)
+    let progressHtml = "";
+    const completedCount = Number(info.completed_count ?? info.with_data_count ?? 0);
+    const plannedRaw = info.planned_total_count;
+    const plannedCount = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
+    if (["zacks", "danelfin", "yahoo"].includes(key)) {
+      if (plannedCount != null && Number.isFinite(plannedCount) && plannedCount >= 0) {
+        const progressCompleted = Math.min(completedCount, plannedCount);
+        const progressPct = info.progress_pct != null
+          ? Number(info.progress_pct)
+          : (plannedCount > 0 ? (progressCompleted / plannedCount) * 100.0 : 100.0);
+        const pctLabel = Number.isFinite(progressPct) ? progressPct.toFixed(1) : "0.0";
+        progressHtml = `<span class="pill-coverage">${progressCompleted}/${plannedCount} rows · ${pctLabel}%</span>`;
+      } else {
+        progressHtml = `<span class="pill-coverage">${completedCount} rows processed</span>`;
+      }
+    }
+
     // Coverage detail line (SI-REFRESH-02)
     let coverageHtml = "";
     if (info.attempted_count != null) {
       const covPct = info.coverage_pct != null ? info.coverage_pct.toFixed(1) : "—";
-      coverageHtml = `<span class="pill-coverage">${info.with_data_count}/${info.attempted_count} rows · ${covPct}%</span>`;
+      coverageHtml = `<span class="pill-coverage">Today written rows: ${info.with_data_count}/${info.attempted_count} · ${covPct}%</span>`;
     }
 
     // Degraded fields warning
@@ -1890,7 +2022,7 @@ function _renderSignalPills(data) {
       holdingsHtml = `<span class="pill-degraded">Holdings coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
     }
 
-    const extraLines = [coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
+    const extraLines = [progressHtml, coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
 
     return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
@@ -2019,7 +2151,8 @@ function triggerSignalRefresh() {
       }
       btn.disabled = true;
       btn.textContent = "Refreshing\u2026";
-      msg.textContent = `Refresh started (${_refreshModeLabel(mode)}). Running in background\u2026`;
+      const formula = data.scope_formula ? ` ${data.scope_formula}` : "";
+      msg.textContent = `Refresh started (${_refreshModeLabel(mode)}). Running in background…${formula}`;
       _startRefreshPoll();
     })
     .catch(() => {
@@ -2032,7 +2165,9 @@ function triggerSignalRefresh() {
 
 function _refreshModeLabel(mode) {
   if (mode === "stale_only") return "Refresh Stale Only";
+  if (mode === "holdings_plus_buy_candidates") return "Refresh Current Holdings + Buy Candidates";
   if (mode === "rebuild_research_universe") return "Refresh Full Research Universe";
+  if (mode === "prepare_portfolio_review") return "Prepare Portfolio Review";
   return "Refresh Current Holdings Only";
 }
 
@@ -2054,6 +2189,7 @@ function _startRefreshPoll() {
             msg.textContent = _buildRefreshOutcomeMessage(data.last_report || null);
           }
           loadSignalStatus();
+          loadRefreshRuntimeStatus();
         }
       })
       .catch(() => {});
