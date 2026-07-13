@@ -17,13 +17,6 @@
 let _fileContent = null;
 let _fileName    = null;
 let _analysisResult = null;
-let _pisStatus = {
-  snapshot_count: 0,
-  latest_snapshot_id: "",
-  latest_snapshot_date: "",
-  account_count: 0,
-  position_count: 0,
-};
 
 // Phase 23.0A — tax operator state
 let _taxState = {
@@ -101,9 +94,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Phase 23.2 — load persisted operator policies
   loadOperatorPolicies();
-
-  // PIS Phase 1 — lightweight beta visibility
-  loadPISStatus();
 
   // Tax input live-compute
   ["taxNetRealizedYTD","taxPotentialLosses","taxCarryforward"].forEach(id => {
@@ -212,7 +202,6 @@ async function runAnalysis() {
     );
 
     renderResults(data);
-    loadPISStatus();
   } catch (err) {
     setLoading(false);
     showStatus("error", `Network error: ${err.message}`);
@@ -468,18 +457,6 @@ function _policyBadgeLabel(policyType) {
   return map[policyType] || policyType;
 }
 
-// PRA-IMPL-05: FVI advisory badge HTML
-function _fviBadgeHtml(fvi, showDetail = false) {
-  if (!fvi || !fvi.fvi_tier) return "";
-  const tier = fvi.fvi_tier;
-  const badge = `<span class="fvi-badge fvi-${tier}" title="${escHtml(fvi.peer_group || "")}">FVI: ${tier}</span>`;
-  if (!showDetail) return badge;
-  const retainCls = fvi.retain_advisory ? "fvi-retain" : "fvi-reduce";
-  const retainTxt = fvi.retain_advisory ? "↑ Retain preferred" : "↓ Reduction candidate";
-  const detail = `<span class="fvi-detail">${escHtml(fvi.peer_group || "")} · <span class="${retainCls}">${retainTxt}</span></span>`;
-  return badge + detail;
-}
-
 function _renderPolicyList() {
   const container = document.getElementById("policyListContainer");
   if (!container) return;
@@ -587,8 +564,6 @@ function _computePortfolioActions(data) {
   const recommendations = data.recommendations || [];
   const deploymentQueue = data.deployment_queue || {};
   const dqEntries      = deploymentQueue.queue || [];
-  // PRA-IMPL-05: FVI advisory data (keyed by uppercase symbol)
-  const fviData        = data.fvi_data || {};
 
   // Build conviction tier map from deployment_queue entries
   const convictionTierBySymbol = {};
@@ -724,37 +699,6 @@ function _computePortfolioActions(data) {
       const ov = overlayBySymbol[sym];
       if (!ov) continue;  // Not in portfolio
       const tier = convictionTierBySymbol[sym] || "";
-
-      // PA-004 FIX: Apply policy gate for Cat 3 (reduction context).
-      // ov.policy_type is used directly because ov.execution_state reflects
-      // the overlay's opportunity_flag context (e.g. HOLD → EXECUTABLE), not
-      // the reduction context Cat 3 implies for every symbol here.
-      const ovPolicyType3 = ov.policy_type || "";
-      if (ovPolicyType3 === "DO_NOT_SELL") {
-        // Block: add to cat5 for operator transparency
-        cat5.push({
-          symbol:           sym,
-          ess:              ov.ess_score_text || "",
-          signal:           ov.signal_direction || "",
-          flag:             "REDUCE",
-          original_action:  "REDUCE",
-          policy_type:      ovPolicyType3,
-          policy_badge:     ov.policy_annotation || "🔒 Operator Protected",
-          effective_action: "MONITOR_ONLY",
-          percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
-          composite_score:      parseFloat(ov.composite_score || 0),
-          source_lane: "cat3",
-        });
-        cat3Syms.add(sym);
-        continue;
-      }
-
-      // SELL_LAST: include but deferred, tail-ranked
-      const cat3ExecState = ovPolicyType3 === "SELL_LAST" ? "DEFERRED_BY_POLICY" : "EXECUTABLE";
-      const cat3EffAction = ovPolicyType3 === "SELL_LAST" ? "REDUCE_SELL_LAST"   : "REDUCE";
-      const cat3Priority  = ovPolicyType3 === "SELL_LAST" ? "LOW"
-                          : (nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM");
-
       // Include even protected tiers in allocation reduction (strategic context)
       // but mark them as protected so UI can render with appropriate context
       cat3Syms.add(sym);
@@ -764,28 +708,18 @@ function _computePortfolioActions(data) {
         node_label: node.nodeLabel,
         drift_pct:  node.drift,
         severity:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
-        priority:   cat3Priority,
+        priority:   nodeSeverityScore >= 5 ? "HIGH" : "MEDIUM",
         conviction_tier: tier,
         is_protected: _PROTECTED_CONVICTION_TIERS.has(tier),
         ov_flag:  ov.opportunity_flag || "",
         ov_signal: ov.signal_direction || "",
         percent_of_portfolio: parseFloat(ov.percent_of_portfolio || 0),
         composite_score:      parseFloat(ov.composite_score || 0),
-        execution_state:  cat3ExecState,
-        effective_action: cat3EffAction,
-        policy_type:      ovPolicyType3,
-        policy_badge:     ov.policy_annotation || "",
-        fvi: fviData[sym] || null,  // PRA-IMPL-05: FVI advisory record
       });
     }
   }
-  // Sort: DEFERRED_BY_POLICY last, then higher drift first, then alpha
-  cat3.sort((a, b) => {
-    const aDeferred = (a.execution_state === "DEFERRED_BY_POLICY") ? 1 : 0;
-    const bDeferred = (b.execution_state === "DEFERRED_BY_POLICY") ? 1 : 0;
-    if (aDeferred !== bDeferred) return aDeferred - bDeferred;
-    return Math.abs(b.drift_pct) - Math.abs(a.drift_pct) || a.symbol.localeCompare(b.symbol);
-  });
+  // Sort: higher drift (more overweight) first, then alpha
+  cat3.sort((a, b) => Math.abs(b.drift_pct) - Math.abs(a.drift_pct) || a.symbol.localeCompare(b.symbol));
 
   // ── Category 4: Funding Sources ────────────────────────────────────────────
   const cat4 = [];
@@ -802,11 +736,6 @@ function _computePortfolioActions(data) {
     const pct = parseFloat(ov.percent_of_portfolio || 0);
     if (pct < 0.05) continue;
 
-    // PA-004 FIX: Apply policy gate for Cat 4 (funding source context is always sell-context)
-    const ovPolicyType4 = ov.policy_type || "";
-    if (ovPolicyType4 === "DO_NOT_SELL") continue;  // Never a funding source
-    const isLastResort = ovPolicyType4 === "SELL_LAST";  // Must be last priority
-
     // Exclude cash-equivalents, money market
     const flag   = ov.opportunity_flag || "";
     const signal = ov.signal_direction || "UNKNOWN";
@@ -822,7 +751,7 @@ function _computePortfolioActions(data) {
     // Compute a funding priority score: lower composite = better funding candidate
     // Also penalize if already in Cat3 (allocation reduction — useful cross-reference)
     const isCat3 = cat3.some(c => c.symbol === sym);
-    const fundingReason = isCat1 ? "Signal Deterioration" : isCat3 ? "Allocation Reduction" : "Opportunity Cost";
+    const fundingReason = isCat1 ? "Signal Deterioration" : isCat3 ? "Allocation Reduction" : "Low Conviction";
 
     cat4.push({
       symbol:   sym,
@@ -834,15 +763,12 @@ function _computePortfolioActions(data) {
       replay_supported: ov.replay_supported === true || ov.replay_supported === "True",
       primary_category: isCat1 ? "SIGNAL_DETERIORATION" : isCat3 ? "ALLOCATION_REDUCTION" : null,
       funding_reason: fundingReason,
-      priority: isLastResort ? "LAST_RESORT" : (isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW"),
-      policy_type:  ovPolicyType4,
-      policy_badge: ov.policy_annotation || "",
-      fvi: fviData[sym] || null,  // PRA-IMPL-05: FVI advisory record
+      priority: isCat1 ? "HIGH" : isCat3 ? "MEDIUM" : "LOW",
     });
   }
-  // Sort: LAST_RESORT (SELL_LAST) always at end, then HIGH/MEDIUM/LOW, then score asc
+  // Sort: Cat1 cross-refs first (HIGH), then Cat3 cross-refs (MEDIUM), then by score asc
   cat4.sort((a, b) => {
-    const priorityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, LAST_RESORT: 3 };
+    const priorityOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 };
     const po = (priorityOrder[a.priority] ?? 2) - (priorityOrder[b.priority] ?? 2);
     if (po !== 0) return po;
     return a.composite_score - b.composite_score;
@@ -971,7 +897,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Overweight Node</th><th>Drift</th>
-              <th>Signal</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Note</th>
+              <th>Signal</th><th>% Port</th><th>Priority</th><th>Note</th>
             </tr></thead>
             <tbody>
               ${cat3.map(c => `<tr class="pap-row ${c.severity === "HIGH" ? "pap-row-high" : ""}">
@@ -983,7 +909,6 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.ov_signal ? `<span class="ess-badge ess-${escHtml(c.ov_signal)}">${escHtml(c.ov_signal)}</span>` : "—"}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
                 <td><span class="pap-pri pap-pri-${c.severity}">${c.severity}</span></td>
-                <td>${_fviBadgeHtml(c.fvi, true)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">${c.is_protected ? "Protected — consider reducing via index vehicles" : "Node overweight reduction candidate"}</td>
               </tr>`).join("")}
             </tbody>
@@ -1009,7 +934,7 @@ function renderPortfolioActionPipeline(data) {
           <table class="pap-tbl">
             <thead><tr>
               <th>Symbol</th><th>Flag</th><th>Signal</th>
-              <th>Score</th><th>% Port</th><th>Priority</th><th>FVI</th><th>Cross-Reference</th>
+              <th>Score</th><th>% Port</th><th>Priority</th><th>Cross-Reference</th>
             </tr></thead>
             <tbody>
               ${cat4.map(c => `<tr class="pap-row ${c.priority === "HIGH" ? "pap-row-high" : c.priority === "MEDIUM" ? "pap-row-med" : ""}">
@@ -1019,7 +944,6 @@ function renderPortfolioActionPipeline(data) {
                 <td>${c.composite_score.toFixed(2)}</td>
                 <td>${c.percent_of_portfolio.toFixed(2)}%</td>
                 <td><span class="pap-pri pap-pri-${c.priority}">${c.priority}</span></td>
-                <td>${_fviBadgeHtml(c.fvi, false)}</td>
                 <td style="font-size:0.78rem;color:var(--muted)">
                   ${c.primary_category
                     ? `<span class="pap-xref pap-xref-${c.primary_category}">${escHtml(c.funding_reason)}</span>`
@@ -1081,17 +1005,11 @@ function renderPortfolioActionPipeline(data) {
 function renderResults(data) {
   document.getElementById("resultsArea").style.display = "block";
   _lastAnalysisData = data;  // Phase E: make STI profiles available to card helpers
+  loadMarketRegimeGuardrail(data);
   renderKPIs(data);
-  renderPortfolioConstructionStyle(data);   // UI Clarity Sprint — Problem 5
-  renderMarketContext(data);                // MARKET-CONTEXT-01
-  loadRotationRiskSummary();                // ROTATION-RISK-01
-  renderNarrativeSummary(data);      // UX-PA-09
   renderMultiDimScores(data);
   renderMandatePanel(data);
-  renderReconciliationPanel(data);   // UX-PA-02
   renderDeploymentQueue(data);
-  renderReductionQueuePlaceholder(); // ARCH-02: placeholder until CRA loads
-  renderDislocationWatchlist(data);  // ISSUE-04C
   renderAllocationMap(data.alignment || []);
   renderConcentration(data.concentration || {});
   renderOptimizerSummary(data.recommendations || []);  // Phase 7.3B
@@ -1099,28 +1017,105 @@ function renderResults(data) {
   renderReplayAlignment(data);
   renderSecurityOverlays(data.security_overlays || []);
   renderPortfolioActionPipeline(data);
-  // Phase 23.6B — Capital Rotation Advisor (auto-load after analysis)
-  loadCRAProposal();
-  // PA-006B — Allocation Drift Intelligence (load once per session, non-blocking)
-  if (!_daiData) loadDriftIntelligence();
-  // ISSUE-12D — Signal Conflict Review (load once per session, non-blocking)
-  if (!_conflictReviewData) loadConflictReview();
-  // DISLOCATION-03 — Security Alpha (always refresh — signals change with each analysis)
-  _loadSecurityAlpha();
-  // DISLOCATION-06 — Calibration cache (load once per session, non-blocking)
-  if (!_calibrationCache) _loadCalibrationCache();
-  // Phase 8.0B.X — load company context metadata (non-blocking)
-  _loadSecurityMetadata();
-  // SIGNAL-GOV-02A — load advisory conflict badges for all queue + holdings symbols
-  const _allSymbols = [
-    ...((data.deployment_queue && data.deployment_queue.queue) || []).map(c => c.symbol),
-    ...(data.security_overlays || []).map(o => o.symbol),
-  ].filter(Boolean);
-  _signalConflictCache = {};
-  _loadSignalConflicts(_allSymbols).then(() => {
-    // Re-render DQ table rows after conflict data arrives (non-blocking refresh)
-    renderDeploymentQueue(data);
-  });
+}
+
+async function loadMarketRegimeGuardrail(data) {
+  const el = document.getElementById("marketContextContainer");
+  if (!el) return;
+
+  el.innerHTML = `<div class="mrg-card"><div class="mrg-loading">Loading market regime guardrail…</div></div>`;
+
+  try {
+    const runId = (data && data.run_id) ? String(data.run_id).trim() : "";
+    const url = runId
+      ? `/api/market-regime-guardrail/latest?run_id=${encodeURIComponent(runId)}`
+      : "/api/market-regime-guardrail/latest";
+
+    const resp = await fetch(url);
+    const payload = await resp.json();
+    if (!resp.ok || !payload || typeof payload !== "object") {
+      throw new Error("guardrail payload unavailable");
+    }
+    el.innerHTML = renderMarketRegimeGuardrailCard(payload);
+  } catch (_) {
+    el.innerHTML = renderMarketRegimeGuardrailCard({
+      regime: "UNKNOWN",
+      severity: "LOW",
+      deployment_posture: "CAUTION_DEPLOY",
+      trim_posture: "REVIEW_OVERWEIGHTS",
+      cash_posture: "HOLD_EXCESS",
+      operator_summary: "Market regime guardrail unavailable. Use conservative display-only posture.",
+      evidence: ["Endpoint unavailable."],
+      recommended_operator_checks: [
+        "Confirm proxy freshness before changing posture.",
+        "Use conservative deployment discipline until data recovers.",
+      ],
+      data_freshness: {
+        market_proxies_ts: null,
+        portfolio_snapshot_ts: null,
+        freshness_status: "UNKNOWN",
+        proxy_lag_days: null,
+        freshness_threshold_days: 2,
+        operator_action: "VERIFY_TIMESTAMP_FORMATS",
+      },
+      confidence: "LOW",
+      safe_to_deploy: false,
+      scoring_impact: "none",
+    });
+  }
+}
+
+function renderMarketRegimeGuardrailCard(g) {
+  const regime = escHtml(g.regime || "UNKNOWN");
+  const severity = escHtml(g.severity || "LOW");
+  const confidence = escHtml(g.confidence || "LOW");
+  const deploy = escHtml(g.deployment_posture || "CAUTION_DEPLOY");
+  const trim = escHtml(g.trim_posture || "REVIEW_OVERWEIGHTS");
+  const cash = escHtml(g.cash_posture || "HOLD_EXCESS");
+  const summary = escHtml(g.operator_summary || "No market regime summary available.");
+  const evidence = Array.isArray(g.evidence) ? g.evidence : [];
+  const checks = Array.isArray(g.recommended_operator_checks) ? g.recommended_operator_checks : [];
+  const freshness = g.data_freshness || {};
+  const marketTs = escHtml(freshness.market_proxies_ts || "unknown");
+  const snapTs = escHtml(freshness.portfolio_snapshot_ts || "unknown");
+  const freshnessStatus = escHtml(freshness.freshness_status || "UNKNOWN");
+  const lagRaw = (freshness.market_proxy_age_days === 0 || freshness.market_proxy_age_days)
+    ? freshness.market_proxy_age_days
+    : freshness.proxy_lag_days;
+  const lagDays = (lagRaw === 0 || lagRaw)
+    ? escHtml(String(lagRaw))
+    : "unknown";
+  const lagThreshold = (freshness.freshness_threshold_days === 0 || freshness.freshness_threshold_days)
+    ? escHtml(String(freshness.freshness_threshold_days))
+    : "2";
+  const operatorAction = escHtml(freshness.operator_action || "VERIFY_TIMESTAMP_FORMATS");
+  const safeText = g.safe_to_deploy ? "Yes" : "No";
+
+  return `
+    <div class="mrg-card">
+      <div class="mrg-header">
+        <div class="mrg-title">Market Regime Guardrail</div>
+        <span class="mrg-badge">Display-only</span>
+      </div>
+      <div class="mrg-warning">No automatic scoring, ranking, allocation, sizing, or execution changes</div>
+      <div class="mrg-summary">${summary}</div>
+      <div class="mrg-grid">
+        <div><span class="mrg-k">Regime</span><span class="mrg-v">${regime}</span></div>
+        <div><span class="mrg-k">Severity</span><span class="mrg-v">${severity}</span></div>
+        <div><span class="mrg-k">Confidence</span><span class="mrg-v">${confidence}</span></div>
+        <div><span class="mrg-k">Safe to Deploy</span><span class="mrg-v">${safeText}</span></div>
+        <div><span class="mrg-k">Deployment</span><span class="mrg-v">${deploy}</span></div>
+        <div><span class="mrg-k">Trim</span><span class="mrg-v">${trim}</span></div>
+        <div><span class="mrg-k">Cash</span><span class="mrg-v">${cash}</span></div>
+        <div><span class="mrg-k">Scoring Impact</span><span class="mrg-v">${escHtml(g.scoring_impact || "none")}</span></div>
+      </div>
+      <div class="mrg-freshness">Proxy TS: ${marketTs} · Portfolio TS: ${snapTs}</div>
+      <div class="mrg-freshness">Freshness Status: ${freshnessStatus} · Lag: ${lagDays} day(s) · Threshold: ${lagThreshold}</div>
+      <div class="mrg-freshness">Operator Action: ${operatorAction}</div>
+      ${evidence.length ? `<ul class="mrg-list">${evidence.slice(0, 4).map(e => `<li>${escHtml(String(e))}</li>`).join("")}</ul>` : ""}
+      ${checks.length ? `<ul class="mrg-checks">${checks.slice(0, 4).map(c => `<li>${escHtml(String(c))}</li>`).join("")}</ul>` : ""}
+    </div>
+  `;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1131,33 +1126,15 @@ function renderKPIs(data) {
   const score = data.overall_alignment_score;
   const scoreLabel = score >= 0.85 ? "Strong" : score >= 0.65 ? "Moderate" : "Needs attention";
   const concTier = data.concentration_tier || "UNKNOWN";
-  const pisLabel = _pisStatus.snapshot_count > 0 ? `${_pisStatus.snapshot_count} snapshots` : "No snapshots yet";
-  const pisSub = _pisStatus.snapshot_count > 0
-    ? `Latest ${_pisStatus.latest_snapshot_date || "—"} · Accounts ${_pisStatus.account_count || 0} · Positions ${_pisStatus.position_count || 0}`
-    : "Snapshot history will populate after the first accepted portfolio upload.";
 
   el.innerHTML = `
     ${kpiCard((data.holding_count || 0).toString(), "Holdings")}
     ${kpiCard(formatMV(data.total_market_value), "Portfolio Value")}
-    ${kpiCard((score * 100).toFixed(0) + "%", "Allocation Alignment", scoreLabel)}
-    ${_kpiTypedRecommendations(data.recommendations || [])}
+    ${kpiCard((score * 100).toFixed(0) + "%", "Legacy Alignment", scoreLabel)}
+    ${kpiCard((data.recommendation_count || 0).toString(), "Recommendations")}
     ${kpiCard(concTier, "Concentration", "", `tier-${concTier}`)}
     ${kpiCard(data.source_format || "—", "Format")}
-    ${kpiCard(pisLabel, "Portfolio Intelligence (Beta)", pisSub, "pis-beta-card")}
   `;
-}
-
-async function loadPISStatus() {
-  try {
-    const resp = await fetch("/api/pis/status");
-    const data = await resp.json();
-    if (resp.ok && data && typeof data === "object") {
-      _pisStatus = { ..._pisStatus, ...data };
-      if (_analysisResult) {
-        renderKPIs(_analysisResult);
-      }
-    }
-  } catch (_) { /* best-effort */ }
 }
 
 function kpiCard(value, label, sub = "", extraClass = "") {
@@ -1167,1759 +1144,19 @@ function kpiCard(value, label, sub = "", extraClass = "") {
   </div>`;
 }
 
-// ─── PRA-IMPL-03: Lane count computation ─────────────────────────────────────
-
-const _CONVICTION_ANCHOR_TYPES = new Set([
-  "STRATEGIC_RETAIN_SIGNAL",
-  "STRATEGIC_RETAIN_NARRATIVE",
-  "CONVICTION_EXPLAINABILITY_CARD",
-]);
-const _NARRATIVE_TYPES = new Set([
-  "PORTFOLIO_CONSTRUCTION_NARRATIVE",
-  "THEMATIC_SATURATION_NARRATIVE",
-]);
-const _EXPLAINABILITY_TYPES = new Set([
-  "REPLAY_ALIGNMENT_CONTEXT",
-]);
-
-function computeLaneCounts(recs) {
-  let action = 0, blocked = 0, anchor = 0, narrative = 0, explainability = 0, observation = 0;
-  for (const r of recs) {
-    const ct  = r.card_type        || "DIAGNOSTIC";
-    const es  = r.execution_state  || "EXECUTABLE";
-    const rt  = r.recommendation_type || "";
-    if (_CONVICTION_ANCHOR_TYPES.has(rt))  { anchor++; }
-    else if (_NARRATIVE_TYPES.has(rt))     { narrative++; }
-    else if (_EXPLAINABILITY_TYPES.has(rt)){ explainability++; }
-    else if (ct === "ACTION") {
-      if (es === "BLOCKED_BY_POLICY" || es === "DEFERRED_BY_POLICY") { blocked++; }
-      else { action++; }
-    } else { observation++; }
-  }
-  return { action, blocked, anchor, narrative, explainability, observation, total: recs.length };
-}
-
-function _kpiTypedRecommendations(recs) {
-  const c = computeLaneCounts(recs);
-  const chip = (num, label, cls) =>
-    `<div class="rec-kpi-chip"><span class="chip-num ${cls}">${num}</span><span class="chip-label">${label}</span></div>`;
-  return `<div class="kpi-card" style="min-width:220px;">
-    <div class="kpi-label" style="margin-bottom:6px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Recommendations</div>
-    <div class="rec-kpi-typed">
-      ${chip(c.action,      "Actions",     "chip-action")}
-      ${c.blocked  ? chip(c.blocked,   "Blocked",     "chip-blocked")  : ""}
-      ${chip(c.anchor,      "Anchors",     "chip-anchor")}
-      ${c.narrative    ? chip(c.narrative,   "Narratives",  "chip-narrative") : ""}
-      ${c.explainability ? chip(c.explainability, "Explain", "chip-explain") : ""}
-    </div>
-    <div style="font-size:0.65rem;color:var(--muted)">Total cards: ${c.total}</div>
-  </div>`;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 6.2.2 — Multi-Dimensional Scorecards
 // ─────────────────────────────────────────────────────────────────────────────
-// MARKET-CONTEXT-01 — Deployment Timing & Macro Event Awareness
-// Presentation-only. No changes to scores, rankings, recommendations, or
-// any scoring system. Operator timing awareness only.
-// ─────────────────────────────────────────────────────────────────────────────
-function renderMarketContext(data) {
-  const el = document.getElementById("marketContextContainer");
-  if (!el) return;
-
-  const mc = data.market_context;
-  if (!mc) { el.innerHTML = ""; return; }
-
-  const posture     = mc.timing_posture  || "NORMAL";
-  const total7d     = mc.total_events_7d || 0;
-  const events7d    = mc.events_7d       || 0;
-  const earnings7d  = mc.earnings_7d     || 0;
-  const macroEvents = mc.macro_events    || [];
-  const portEvents  = mc.portfolio_events || [];
-
-  // ── Deployment Timing Banner ───────────────────────────────────────────────
-  const postureConfig = {
-    EVENT_DENSE:       { cls: "mctx-posture-dense",    icon: "⚡", label: "EVENT-DENSE PERIOD",
-      msg: `${total7d} major market events within the next 7 days. Operator may wish to consider staged deployment.` },
-    MODERATE_ACTIVITY: { cls: "mctx-posture-moderate", icon: "◈",  label: "MODERATE ACTIVITY",
-      msg: `${total7d} notable market events approaching in the next 7 days.` },
-    NORMAL:            { cls: "mctx-posture-normal",   icon: "◎",  label: "NORMAL ENVIRONMENT",
-      msg: total7d === 0
-        ? "No major market events scheduled in the next 7 days."
-        : `${total7d} event in the next 7 days — no unusual market density.` },
-  };
-  const pc = postureConfig[posture] || postureConfig.NORMAL;
-
-  const bannerHtml = `<div class="mctx-timing-banner ${escHtml(pc.cls)}">
-    <span class="mctx-posture-icon">${pc.icon}</span>
-    <div class="mctx-posture-body">
-      <span class="mctx-posture-label">${escHtml(pc.label)}</span>
-      <span class="mctx-posture-msg">${escHtml(pc.msg)}</span>
-    </div>
-    <span class="mctx-posture-advisory">Informational only — no scoring or recommendation effect.</span>
-  </div>`;
-
-  // ── Helper: days-away badge ────────────────────────────────────────────────
-  function _daysBadge(d) {
-    const cls = d <= 3 ? "mctx-days-urgent" : d <= 7 ? "mctx-days-near" : "mctx-days-far";
-    return `<span class="mctx-days-badge ${cls}">${d === 0 ? "TODAY" : d === 1 ? "Tomorrow" : `${d}d`}</span>`;
-  }
-
-  // ── Macro Events table ─────────────────────────────────────────────────────
-  const catIcons = { FED: "🏛", OPTIONS: "📋", INDEX: "📊" };
-  const macroRows = macroEvents.length
-    ? macroEvents.map(e => `<tr>
-        <td class="mctx-td-event">${catIcons[e.category] || "●"} ${escHtml(e.event)}</td>
-        <td class="mctx-td-date">${escHtml(e.date)}</td>
-        <td class="mctx-td-days">${_daysBadge(e.days_away)}</td>
-      </tr>`).join("")
-    : `<tr><td colspan="3" class="mctx-empty">No macro events in the next 14 days.</td></tr>`;
-
-  // ── Portfolio Earnings table ───────────────────────────────────────────────
-  const contextLabels = {
-    TOP_DEPLOYMENT_CANDIDATE:   { cls: "mctx-ctx-deploy",  label: "Deploy Candidate" },
-    REDUCTION_CANDIDATE:        { cls: "mctx-ctx-reduce",  label: "Reduction Target" },
-    DEPLOYMENT_AND_REDUCTION:   { cls: "mctx-ctx-both",    label: "Deploy + Reduce" },
-    CURRENT_HOLDING:            { cls: "mctx-ctx-holding", label: "Holding" },
-  };
-  const portRows = portEvents.length
-    ? portEvents.map(e => {
-        const ctxCfg = contextLabels[e.context] || { cls: "", label: e.context };
-        return `<tr>
-          <td class="mctx-td-sym"><strong>${escHtml(e.symbol)}</strong></td>
-          <td class="mctx-td-ctx"><span class="mctx-ctx-badge ${ctxCfg.cls}">${escHtml(ctxCfg.label)}</span></td>
-          <td class="mctx-td-date">${escHtml(e.date)}</td>
-          <td class="mctx-td-days">${_daysBadge(e.days_away)}</td>
-        </tr>`;
-      }).join("")
-    : `<tr><td colspan="4" class="mctx-empty">No earnings in the next 30 days for tracked symbols.</td></tr>`;
-
-  // ── Collapsible sections ───────────────────────────────────────────────────
-  const macroId  = "mctx-macro-body";
-  const portId   = "mctx-port-body";
-
-  el.innerHTML = `<div class="mctx-card">
-    <div class="mctx-header">
-      <span class="mctx-title">Market Context</span>
-      <span class="mctx-subtitle">Deployment Timing Awareness — ${escHtml(mc.as_of_date || "—")}</span>
-    </div>
-    ${bannerHtml}
-    <div class="mctx-sections">
-      <div class="mctx-section">
-        <button class="mctx-section-toggle" onclick="(function(b){const d=document.getElementById('${macroId}');if(d){d.classList.toggle('mctx-open');b.textContent=d.classList.contains('mctx-open')?'▾ Macro Events':'▸ Macro Events';}}).call(this, this)">
-          ▸ Macro Events <span class="mctx-count-badge">${macroEvents.length} in 14d</span>
-        </button>
-        <div class="mctx-section-body" id="${macroId}">
-          <table class="mctx-table">
-            <thead><tr><th>Event</th><th>Date</th><th>Days Away</th></tr></thead>
-            <tbody>${macroRows}</tbody>
-          </table>
-        </div>
-      </div>
-      <div class="mctx-section">
-        <button class="mctx-section-toggle" onclick="(function(b){const d=document.getElementById('${portId}');if(d){d.classList.toggle('mctx-open');b.textContent=d.classList.contains('mctx-open')?'▾ Portfolio Earnings':'▸ Portfolio Earnings';}}).call(this, this)">
-          ▸ Portfolio Earnings <span class="mctx-count-badge">${portEvents.length} in 30d</span>
-        </button>
-        <div class="mctx-section-body" id="${portId}">
-          <table class="mctx-table">
-            <thead><tr><th>Symbol</th><th>Role</th><th>Date</th><th>Days Away</th></tr></thead>
-            <tbody>${portRows}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    <div class="mctx-governance">Market Context is informational only. Events do not influence scores, rankings, recommendations, CRA, PAP, or DIL posture.</div>
-  </div>`;
-
-  // Auto-expand macro events section if there are urgent events (≤3 days)
-  if (macroEvents.some(e => e.days_away <= 3)) {
-    const bd = document.getElementById(macroId);
-    if (bd) bd.classList.add("mctx-open");
-  }
-  // Auto-expand portfolio earnings if any within 7 days
-  if (portEvents.some(e => e.days_away <= 7)) {
-    const bd = document.getElementById(portId);
-    if (bd) bd.classList.add("mctx-open");
-  }
-}
-
-// ROTATION-RISK-01 — display-only tech-to-hard-assets monitor
-async function loadRotationRiskSummary() {
-  const el = document.getElementById("rotationRiskContainer");
-  if (!el) return;
-
-  const endpoint = "/api/rotation-risk/summary";
-
-  try {
-    const resp = await fetch(endpoint);
-    const status = Number(resp && resp.status) || 0;
-    const contentType = String((resp && resp.headers && resp.headers.get("content-type")) || "").toLowerCase();
-
-    if (!resp.ok) {
-      const raw = await resp.text();
-      const sample = String(raw || "").slice(0, 160).trim();
-      const htmlLike = sample.startsWith("<!DOCTYPE") || sample.startsWith("<html") || sample.startsWith("<");
-      throw {
-        name: "RotationRiskHttpError",
-        message: `HTTP ${status} from ${endpoint}`,
-        diagnostic: {
-          endpoint,
-          http_status: status,
-          response_content_type: contentType || "unknown",
-          response_looks_html: htmlLike,
-          error_type: htmlLike ? "HTML_FALLBACK" : "HTTP_ERROR",
-          response_sample: sample,
-        },
-      };
-    }
-
-    const raw = await resp.text();
-    const sample = String(raw || "").slice(0, 160).trim();
-    const htmlLike = sample.startsWith("<!DOCTYPE") || sample.startsWith("<html") || sample.startsWith("<");
-    if (!contentType.includes("application/json") || htmlLike) {
-      throw {
-        name: "RotationRiskNonJsonResponse",
-        message: `Non-JSON response from ${endpoint}`,
-        diagnostic: {
-          endpoint,
-          http_status: status,
-          response_content_type: contentType || "unknown",
-          response_looks_html: htmlLike,
-          error_type: htmlLike ? "HTML_FALLBACK" : "NON_JSON_RESPONSE",
-          response_sample: sample,
-        },
-      };
-    }
-
-    let data = null;
-    try {
-      data = JSON.parse(raw);
-    } catch (parseErr) {
-      throw {
-        name: "RotationRiskJsonParseError",
-        message: `JSON parse failed for ${endpoint}: ${parseErr.message}`,
-        diagnostic: {
-          endpoint,
-          http_status: status,
-          response_content_type: contentType || "unknown",
-          response_looks_html: htmlLike,
-          error_type: "JSON_PARSE_ERROR",
-          response_sample: sample,
-        },
-      };
-    }
-
-    if (!data || typeof data !== "object") {
-      throw {
-        name: "RotationRiskPayloadError",
-        message: `Invalid payload shape from ${endpoint}`,
-        diagnostic: {
-          endpoint,
-          http_status: status,
-          response_content_type: contentType || "unknown",
-          response_looks_html: false,
-          error_type: "INVALID_PAYLOAD",
-        },
-      };
-    }
-
-    data._endpoint_diagnostic = {
-      endpoint,
-      http_status: status,
-      response_content_type: contentType || "unknown",
-      response_looks_html: false,
-      error_type: "NONE",
-    };
-    _renderRotationRiskPanel(data);
-  } catch (err) {
-    const diag = (err && err.diagnostic) || {};
-    _renderRotationRiskPanel({
-      status: "DATA_UNAVAILABLE",
-      diagnostic_id: "ROTATION-RISK-01",
-      diagnostic_name: "Tech-to-hard-assets rotation monitor",
-      signal: "DATA_UNAVAILABLE",
-      headline: `Rotation monitor failed to load: ${err.message}`,
-      governance_note: "Display-only diagnostic; no scoring or recommendation impact.",
-      data_quality: { missing_inputs: [diag.error_type || "endpoint_unreachable"] },
-      portfolio_exposure: {},
-      proxy_returns: {},
-      confirmation: {},
-      macro_context: { upcoming_high_impact_events: [] },
-      _endpoint_diagnostic: {
-        endpoint,
-        http_status: diag.http_status != null ? diag.http_status : null,
-        response_content_type: diag.response_content_type || "unknown",
-        response_looks_html: !!diag.response_looks_html,
-        error_type: diag.error_type || "NETWORK_ERROR",
-      },
-    });
-  }
-}
-
-function _rrFmtPct(v, digits = 2) {
-  return _fmtPctDisplay(v, { digits, tinyThreshold: Math.pow(10, -digits) });
-}
-
-function _rrSignalClass(signal) {
-  if (signal === "ELEVATED_ROTATION_RISK") return "sev-HIGH";
-  if (signal === "WATCHLIST_ROTATION") return "sev-MODERATE";
-  if (signal === "TECH_LEADERSHIP") return "sev-LOW";
-  if (signal === "DATA_UNAVAILABLE") return "sev-NONE";
-  return "sev-NONE";
-}
-
-function _rrSeverityClass(sev) {
-  if (sev === "ELEVATED") return "sev-HIGH";
-  if (sev === "WATCH") return "sev-MODERATE";
-  if (sev === "INFO") return "sev-LOW";
-  return "sev-NONE";
-}
-
-function _rrFmtMoney(v) {
-  if (v == null || Number.isNaN(Number(v))) return "—";
-  return formatMV(Number(v));
-}
-
-function _renderCandidateChip(c) {
-  const sym = escHtml(String(c.symbol || "—"));
-  const type = escHtml(String(c.vehicle_type || ""));
-  const note = escHtml(String(c.classification_note || ""));
-  const why = escHtml(String(c.rationale || ""));
-  return `<div style="border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:rgba(255,255,255,.03);">
-    <div style="font-size:0.8rem;font-weight:700;">${sym}${type ? ` <span style="font-weight:500;color:var(--muted);">(${type})</span>` : ""}</div>
-    ${note ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">${note}</div>` : ""}
-    ${why ? `<div style="font-size:0.72rem;color:var(--text);margin-top:2px;">${why}</div>` : ""}
-  </div>`;
-}
-
-function _renderHardAssetPriorityGate(priorityGate) {
-  if (!priorityGate || typeof priorityGate !== "object") {
-    return `<div class="panel" style="margin-top:10px;">
-      <p class="panel-title">Hard-Asset Priority Gate</p>
-      <div style="font-size:0.8rem;color:var(--muted);">Priority gate payload unavailable for this run.</div>
-    </div>`;
-  }
-
-  const factors = Array.isArray(priorityGate.decision_factors) ? priorityGate.decision_factors : [];
-  const options = Array.isArray(priorityGate.capital_options) ? priorityGate.capital_options : [];
-  const rationale = Array.isArray(priorityGate.rationale) ? priorityGate.rationale : [];
-  const summary = priorityGate.summary || {};
-  const verdict = String(priorityGate.priority_verdict || priorityGate.verdict || "NONE");
-  const severity = String(priorityGate.severity || "NONE");
-  const score = Number(priorityGate.priority_score ?? priorityGate.score ?? 0);
-  const scoreLabel = String(priorityGate.score_label || "Review pressure score");
-  const scoreNote = String(priorityGate.score_note || "Display-only capital-allocation review score; not a trade-confidence score.");
-  const recommendedAction = String(priorityGate.recommended_operator_action || priorityGate.recommended_action || "No recommendation available.");
-
-  const factorHtml = factors.map(f => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.03);">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
-        <strong style="font-size:0.8rem;">${escHtml(String(f.factor || "factor").replace(/_/g, " "))}</strong>
-        <span class="sev-badge sev-NONE" style="text-transform:uppercase;">${escHtml(String(f.impact || "neutral"))}</span>
-      </div>
-      <div style="font-size:0.8rem;margin-top:4px;"><strong>${escHtml(String(f.value ?? "—"))}</strong></div>
-      <div style="font-size:0.72rem;color:var(--muted);margin-top:4px;">${escHtml(String(f.note || ""))}</div>
-    </div>`).join("");
-
-  const optionHtml = options.map(opt => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:rgba(255,255,255,.03);min-width:200px;">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-        <strong style="font-size:0.84rem;">Option ${escHtml(String(opt.code || "?"))}</strong>
-        <span class="sev-badge sev-NONE">${escHtml(String(opt.label || ""))}</span>
-      </div>
-      <div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escHtml(String(opt.preferred_when || ""))}</div>
-      <div style="font-size:0.74rem;color:var(--text);margin-top:4px;">${escHtml(String(opt.description || ""))}</div>
-      ${opt.amount != null ? `<div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">Amount: ${escHtml(_rrFmtMoney(opt.amount))}</div>` : ""}
-      ${opt.amount_breakdown ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:2px;">${escHtml(Object.entries(opt.amount_breakdown).map(([k, v]) => `${k.replace(/_/g, " ")}: ${_rrFmtMoney(v)}`).join(" · "))}</div>` : ""}
-    </div>`).join("");
-
-  return `<div class="panel" style="margin-top:10px;">
-    <p class="panel-title">Hard-Asset Priority Gate</p>
-    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">Display-only; not trade instructions.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-      <span class="sev-badge ${_rrSeverityClass(severity)}">${escHtml(verdict)}</span>
-      <span class="sev-badge sev-NONE">${escHtml(scoreLabel)}: ${escHtml(String(score))}/100</span>
-      <span class="sev-badge sev-NONE">Priority bias: ${escHtml(String(priorityGate.priority_bias || "—"))}</span>
-      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
-      <span class="sev-badge sev-NONE">OPERATOR REVIEW REQUIRED</span>
-      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
-      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
-      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
-    </div>
-    <div style="font-size:0.74rem;color:var(--muted);margin-bottom:8px;">${escHtml(scoreNote)}</div>
-    <div style="font-size:0.84rem;color:var(--text);margin-bottom:8px;">${escHtml(recommendedAction)}</div>
-    ${rationale.length ? `<div style="font-size:0.74rem;color:var(--muted);margin-bottom:8px;">${rationale.map(x => escHtml(String(x))).join(" · ")}</div>` : ""}
-    <div class="two-col" style="margin-top:8px;">
-      <div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Decision factors</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">${factorHtml}</div>
-      </div>
-      <div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Priority summary</div>
-        <div style="font-size:0.82rem;line-height:1.45;">
-          Commodity gap: <strong>${_rrFmtPct(summary.commodities_gap_pct)}</strong><br>
-          Commodities actual: <strong>${_rrFmtPct(summary.commodities_actual_pct)}</strong><br>
-          Commodities target: <strong>${_rrFmtPct(summary.commodities_target_pct)}</strong><br>
-          Deployable cash: <strong>${_rrFmtMoney(summary.deployable_cash)}</strong><br>
-          Equity deployment candidates: <strong>${escHtml(String(summary.equity_deployment_count ?? "—"))}</strong><br>
-          Direct hard-asset completion candidates: <strong>${escHtml(String(summary.direct_completion_candidate_count ?? summary.candidate_count ?? "—"))}</strong><br>
-          Equity-adjacent proxies: <strong>${escHtml(String(summary.equity_adjacent_proxy_count ?? "—"))}</strong>
-        </div>
-        ${priorityGate.guardrail_notes ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">${escHtml(String((Array.isArray(priorityGate.guardrail_notes) ? priorityGate.guardrail_notes : []).join(" · ")))}</div>` : ""}
-      </div>
-    </div>
-    ${optionHtml ? `<div style="margin-top:10px;">
-      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Capital options</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">${optionHtml}</div>
-    </div>` : ""}
-  </div>`;
-}
-
-function _renderTodayOperatorActionPlan(plan) {
-  if (!plan || typeof plan !== "object") return "";
-
-  const ordered = Array.isArray(plan.ordered_actions) ? plan.ordered_actions : [];
-  const cashOptions = Array.isArray(plan.cash_options) ? plan.cash_options : [];
-  const hardAssetPlan = Array.isArray(plan.hard_asset_buy_plan) ? plan.hard_asset_buy_plan : [];
-  const equityFallback = Array.isArray(plan.equity_buy_fallback) ? plan.equity_buy_fallback : [];
-  const sellTrim = Array.isArray(plan.sell_trim_review) ? plan.sell_trim_review : [];
-  const blocked = Array.isArray(plan.blocked_actions) ? plan.blocked_actions : [];
-
-  const _renderCard = (title, items) => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:rgba(255,255,255,.03);">
-      <div style="font-size:0.8rem;font-weight:700;margin-bottom:6px;">${escHtml(title)}</div>
-      ${items.length ? `<ul style="margin:0 0 0 16px;padding:0;">${items.map(x => `<li style="font-size:0.78rem;color:var(--text);margin:2px 0;">${escHtml(String(x))}</li>`).join("")}</ul>` : `<div style="font-size:0.76rem;color:var(--muted);">No items.</div>`}
-    </div>`;
-
-  const firstDecision = ordered.find(x => x.code === "FIRST_DECISION") || {};
-  const hardAssetFirst = ordered.find(x => x.code === "CASH_ACTION_IF_HARD_ASSET_FIRST") || {};
-  const equityFirst = ordered.find(x => x.code === "EQUITY_FALLBACK_IF_WAIVED_OR_SPLIT") || {};
-  const raisingCapital = ordered.find(x => x.code === "SELL_TRIM_REVIEW_IF_RAISING_CAPITAL") || {};
-  const summary = (plan.summary && typeof plan.summary === "object") ? plan.summary : {};
-  const directCompletionCount = Number(summary.direct_completion_candidate_count || 0);
-  const commodityCandidatesAvailable = summary.commodity_candidates_available === true || directCompletionCount > 0;
-
-  const hardAssetBullets = hardAssetPlan.map(x => {
-    const label = String(x.label || x.node_key || "Hard asset");
-    const dc = _rrFmtMoney(x.deployable_cash_only_amount);
-    const ftRaw = x.full_target_amount ?? x.gap_amount_full_portfolio;
-    const ft = ftRaw != null ? _rrFmtMoney(ftRaw) : "—";
-    return `${label}: deployable-cash-only ${dc}; full target ${ft}`;
-  });
-
-  const _pickEqAmount = (row) => {
-    const raw = row.suggested_amount ?? row.suggested_add ?? row.amount;
-    const num = Number(raw);
-    return Number.isFinite(num) ? num : 0;
-  };
-
-  const equityBullets = equityFallback.slice(0, 10).map(x => {
-    const sym = String(x.symbol || "?");
-    const rank = x.rank != null ? `#${x.rank}` : "#?";
-    const amt = _rrFmtMoney(_pickEqAmount(x));
-    return `${rank} ${sym} about +${amt}`;
-  });
-
-  const trimBullets = sellTrim.slice(0, 6).map(x => {
-    const sym = String(x.symbol || "?");
-    const amtRaw = x.estimated_proceeds ?? x.suggested_trim_amount ?? x.amount;
-    const amt = Number(amtRaw);
-    const amtTxt = Number.isFinite(amt) && amt > 0 ? ` about ${_rrFmtMoney(amt)}` : "";
-    const state = String(x.policy_state || x.priority || "").trim();
-    const stateTxt = state ? ` (${state})` : "";
-    return `${sym}${amtTxt}: ${String(x.reason || "review")}${stateTxt}`;
-  });
-  const blockedBullets = blocked.slice(0, 6).map(x => {
-    const state = String(x.policy_state || "BLOCKED_BY_POLICY");
-    return `${String(x.symbol || "?")}: ${String(x.reason || "blocked")} (${state})`;
-  });
-  const tslaBlocked = blocked.find(x => String(x.symbol || "").toUpperCase() === "TSLA");
-  const raisingCapitalBullets = trimBullets.length
-    ? trimBullets
-    : (raisingCapital.details || []);
-  if (tslaBlocked) {
-    raisingCapitalBullets.push(`TSLA: ${String(tslaBlocked.reason || "blocked by policy")}; not executable until policy state changes.`);
-  }
-  const optionBullets = cashOptions.slice(0, 5).map(x => `${String(x.code || "OPTION")}: ${_rrFmtMoney(x.amount)}`);
-
-  return `<div class="panel" style="margin-top:10px;">
-    <p class="panel-title">Today’s Operator Action Plan</p>
-    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">Display-only synthesis of existing diagnostics. This is not trade instructions.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
-      <span class="sev-badge sev-NONE">OPERATOR REVIEW REQUIRED</span>
-      <span class="sev-badge sev-NONE">Commodity candidates: ${commodityCandidatesAvailable ? "Yes" : "No"} (${directCompletionCount})</span>
-      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
-      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
-      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;">
-      ${_renderCard("First decision", [String(firstDecision.headline || "Decide cash path first."), ...(firstDecision.details || [])])}
-      ${_renderCard("If hard-asset-first", hardAssetBullets.length ? hardAssetBullets : (hardAssetFirst.details || []))}
-      ${_renderCard("If equity-first", equityBullets.length ? equityBullets : (equityFirst.details || []))}
-      ${_renderCard("If raising capital", raisingCapitalBullets)}
-      ${_renderCard("Blocked / conflicts", [...blockedBullets, "KGC is gold-adjacent but not a direct COMMODITIES.GOLD filler.", "XLE and energy/materials equities are equity-adjacent proxies, not direct commodity fillers."])}
-    </div>
-  </div>`;
-}
-
-function _buildClientTodayOperatorActionPlan(priorityGate, candidateQueue) {
-  const analysis = _lastAnalysisData || {};
-  const dq = (analysis.deployment_queue || {});
-  const queue = Array.isArray(dq.queue) ? dq.queue : [];
-  if (!queue.length) return null;
-
-  const summary = (priorityGate && priorityGate.summary) || {};
-  const deployableCash = Number(summary.deployable_cash || (dq.cash_context || {}).adjusted_deployable_mv || (dq.cash_context || {}).deployable_mv || 0);
-  const nodes = Array.isArray((candidateQueue || {}).sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
-  const queueTargetGap = ((candidateQueue || {}).target_gap || {});
-  const byKey = Object.fromEntries(nodes.map(n => [String(n.node_key || ""), n]));
-  const directCompletionCandidateCount = nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0);
-  const commodityCandidatesAvailable = directCompletionCandidateCount > 0;
-
-  const overlays = Array.isArray(analysis.security_overlays) ? analysis.security_overlays : [];
-  const bySym = Object.fromEntries(
-    overlays
-      .map(r => [String(r.symbol || "").toUpperCase(), r])
-      .filter(([k]) => k)
-  );
-
-  const planRecs = Array.isArray(((analysis.deployment_plan || {}).recommendations))
-    ? (analysis.deployment_plan || {}).recommendations
-    : [];
-  const planBySym = Object.fromEntries(
-    planRecs
-      .map(r => [String(r.symbol || "").toUpperCase(), r])
-      .filter(([k]) => k)
-  );
-
-  const portfolioValue = Number(
-    summary.portfolio_value
-    || ((candidateQueue || {}).summary || {}).portfolio_value
-    || analysis.total_market_value
-    || 0
-  );
-
-  const money = v => Number((Number(v || 0)).toFixed(2));
-  const half = deployableCash * 0.5;
-  const energy = deployableCash * 0.35;
-  const broad = Math.max(0, deployableCash - half - energy);
-
-  const goldAmt = money((byKey["COMMODITIES.GOLD"] || {}).deployable_cash_fill_amount || half);
-  const energyAmt = money((byKey["COMMODITIES.ENERGY"] || {}).deployable_cash_fill_amount || energy);
-  const broadAmt = money((byKey["COMMODITIES.BROAD_BASKET"] || {}).deployable_cash_fill_amount || broad);
-  const goldFull = money((byKey["COMMODITIES.GOLD"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.gold_pct || 0) / 100)));
-  const energyFull = money((byKey["COMMODITIES.ENERGY"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.energy_pct || 0) / 100)));
-  const broadFull = money((byKey["COMMODITIES.BROAD_BASKET"] || {}).gap_amount_full_portfolio || (portfolioValue * (Number(queueTargetGap.broad_basket_pct || 0) / 100)));
-
-  const eqFallback = queue.slice(0, 10).map((row, i) => ({
-    symbol: String(row.symbol || "").toUpperCase(),
-    rank: Number(row.rank || i + 1),
-    suggested_amount: money(
-      (planBySym[String(row.symbol || "").toUpperCase()] || {}).suggested_add
-      || (planBySym[String(row.symbol || "").toUpperCase()] || {}).suggested_amount
-      || row.suggested_add
-      || row.suggested_amount
-      || 0
-    ),
-  })).filter(r => r.symbol);
-
-  const craSources = Array.isArray((_craProposal && _craProposal.sources)) ? _craProposal.sources : [];
-  const sourceBySym = Object.fromEntries(
-    craSources
-      .map(s => [String(s.symbol || "").toUpperCase(), s])
-      .filter(([k]) => k)
-  );
-
-  const sellTrim = [];
-  if (bySym.KGC || sourceBySym.KGC) {
-    const src = sourceBySym.KGC || {};
-    sellTrim.push({
-      symbol: "KGC",
-      reason: String(bySym.KGC && bySym.KGC.flag_rationale || src.evidence_summary || "thesis trim / action due"),
-      estimated_proceeds: money(src.estimated_proceeds || 0),
-      policy_state: String(src.priority || bySym.KGC && bySym.KGC.execution_state || "REVIEW"),
-    });
-  }
-  if (bySym.PRIM || sourceBySym.PRIM) {
-    const src = sourceBySym.PRIM || {};
-    sellTrim.push({
-      symbol: "PRIM",
-      reason: String(bySym.PRIM && bySym.PRIM.flag_rationale || src.evidence_summary || "thesis trim / missed action review"),
-      estimated_proceeds: money(src.estimated_proceeds || 0),
-      policy_state: String(src.priority || bySym.PRIM && bySym.PRIM.execution_state || "REVIEW"),
-    });
-  }
-  if (!sellTrim.length) {
-    sellTrim.push({ symbol: "KGC", reason: "thesis trim / action due", estimated_proceeds: 0, policy_state: "REVIEW" });
-    sellTrim.push({ symbol: "PRIM", reason: "thesis trim / missed action review", estimated_proceeds: 0, policy_state: "REVIEW" });
-  }
-
-  const tslaSource = sourceBySym.TSLA || {};
-  const blocked = [{
-    symbol: "TSLA",
-    reason: String(tslaSource.evidence_summary || "thesis exit blocked by operator policy"),
-    policy_state: "BLOCKED_BY_POLICY",
-  }];
-
-  return {
-    display_only: true,
-    operator_review_required: true,
-    ordered_actions: [
-      {
-        code: "FIRST_DECISION",
-        headline: "Review hard-asset sleeve before deploying all cash to equities.",
-        details: [
-          `Deployable cash: ${_rrFmtMoney(deployableCash)}`,
-        ],
-      },
-      {
-        code: "CASH_ACTION_IF_HARD_ASSET_FIRST",
-        details: [
-          `Gold about ${_rrFmtMoney(goldAmt)}`,
-          `Energy about ${_rrFmtMoney(energyAmt)}`,
-          `Broad basket about ${_rrFmtMoney(broadAmt)}`,
-        ],
-      },
-      {
-        code: "EQUITY_FALLBACK_IF_WAIVED_OR_SPLIT",
-      },
-      {
-        code: "SELL_TRIM_REVIEW_IF_RAISING_CAPITAL",
-        details: sellTrim.slice(0, 4).map(row => `${row.symbol} about ${_rrFmtMoney(row.estimated_proceeds)}: ${row.reason} (${row.policy_state})`),
-      },
-      {
-        code: "CONFLICT_REVIEW",
-      },
-    ],
-    hard_asset_buy_plan: [
-      { label: "Gold", deployable_cash_only_amount: goldAmt, full_target_amount: goldFull },
-      { label: "Energy", deployable_cash_only_amount: energyAmt, full_target_amount: energyFull },
-      { label: "Broad basket", deployable_cash_only_amount: broadAmt, full_target_amount: broadFull },
-    ],
-    equity_buy_fallback: eqFallback,
-    sell_trim_review: sellTrim,
-    blocked_actions: blocked,
-    cash_options: [],
-    summary: {
-      commodity_candidates_available: commodityCandidatesAvailable,
-      direct_completion_candidate_count: directCompletionCandidateCount,
-      deployable_cash: deployableCash,
-      portfolio_value: portfolioValue,
-    },
-  };
-}
-
-function _queueAnalysisContext() {
-  const analysis = _lastAnalysisData || {};
-  const overlays = Array.isArray(analysis.security_overlays) ? analysis.security_overlays : [];
-  const overlaysBySymbol = Object.fromEntries(
-    overlays
-      .map(row => [String(row.symbol || "").toUpperCase(), row])
-      .filter(entry => entry[0])
-  );
-  return {
-    totalMarketValue: Number(analysis.total_market_value || 0),
-    overlaysBySymbol,
-    analystConsensusBySymbol: analysis.analyst_consensus_by_symbol || {},
-  };
-}
-
-function _clientPosture(overlay, consensus) {
-  if (!overlay) return "N/A";
-  const signalDirection = String(overlay.signal_direction || "").toUpperCase();
-  const ess = String(overlay.starmine_ess_text || overlay.ess_score_text || "").toUpperCase();
-  const consensusLabel = String((consensus || {}).consensus_label || "").toUpperCase();
-  if (signalDirection === "NEUTRAL" && ess === "BEARISH" && consensusLabel === "BUY") return "weak/mixed";
-  return signalDirection ? signalDirection.toLowerCase() : "N/A";
-}
-
-function _directFitScore(symbol, nodeKey) {
-  const base = 84;
-  if (nodeKey === "COMMODITIES.GOLD") return Math.min(99, base + ({ GLD: 10, IAU: 8, SGOL: 6 }[symbol] || 0));
-  if (nodeKey === "COMMODITIES.ENERGY") return Math.min(99, base + ({ USO: 8, BNO: 7, UNG: 5 }[symbol] || 0));
-  return Math.min(99, base + ({ PDBC: 9, DBC: 7, GSG: 6 }[symbol] || 0));
-}
-
-function _proxyFitScore(symbol, overlay) {
-  let score = 52 - 18 - 10 - 8;
-  if (symbol === "KGC") score += 6;
-  if (overlay) {
-    if (String(overlay.signal_direction || "").toUpperCase() === "NEUTRAL") score -= 4;
-    if (["BEARISH", "VERY_BEARISH"].includes(String(overlay.starmine_ess_text || overlay.ess_score_text || "").toUpperCase())) score -= 5;
-  }
-  return Math.max(5, Math.min(65, score));
-}
-
-function _hardAssetVehicleType(symbol) {
-  const sym = String(symbol || "").toUpperCase();
-  if (["PSX", "CVE", "DVN", "NUE", "STLD", "CRS", "KGC"].includes(sym)) return "EQUITY";
-  if (["GLD", "IAU", "SGOL", "USO", "BNO", "UNG", "DBC", "PDBC", "GSG", "XLE"].includes(sym)) return "ETF";
-  return sym.length <= 4 ? "ETF" : "EQUITY";
-}
-
-function _allocationExamples(fullAmount, cashAmount, candidateCount) {
-  const count = Math.max(1, Number(candidateCount || 0));
-  return {
-    single_candidate_fill: {
-      full_target_gap: Number(fullAmount.toFixed(2)),
-      deployable_cash_only: Number(cashAmount.toFixed(2)),
-    },
-    equal_split: {
-      full_target_gap: Number((fullAmount / count).toFixed(2)),
-      deployable_cash_only: Number((cashAmount / count).toFixed(2)),
-    },
-    operator_selected: {
-      full_target_gap: null,
-      deployable_cash_only: null,
-    },
-  };
-}
-
-function _buildClientSleeveFit(candidateQueue) {
-  const ctx = _queueAnalysisContext();
-  const summary = candidateQueue.summary || {};
-  const nodes = Array.isArray(candidateQueue.sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
-  const rows = [];
-
-  for (const node of nodes) {
-    const nodeKey = String(node.node_key || node.node || "");
-    const fullAmount = Number(node.gap_amount_full_portfolio || node.approx_gap_dollars || 0);
-    const cashAmount = Number(node.deployable_cash_fill_amount || 0);
-    const direct = Array.isArray(node.direct_completion_candidates) ? node.direct_completion_candidates : [];
-    const proxies = Array.isArray(node.equity_adjacent_proxies) ? node.equity_adjacent_proxies : [];
-    const examples = _allocationExamples(fullAmount, cashAmount, direct.length);
-
-    for (const candidate of direct) {
-      const symbol = String(candidate.symbol || "").toUpperCase();
-      const overlay = ctx.overlaysBySymbol[symbol];
-      const consensus = ctx.analystConsensusBySymbol[symbol] || {};
-      rows.push({
-        sleeve: nodeKey,
-        candidate: symbol,
-        candidate_type: `Direct ${nodeKey.split(".").slice(-1)[0].replace(/_/g, " ").toLowerCase()} ETF`,
-        sleeve_fit_score: _directFitScore(symbol, nodeKey),
-        direct_filler: true,
-        full_gap_amount: fullAmount,
-        deployable_cash_only_amount: cashAmount,
-        amount_semantics: examples,
-        current_holding: Boolean(overlay),
-        current_sih_posture: _clientPosture(overlay, consensus),
-        caveat: "structure/tax review",
-      });
-    }
-
-    for (const candidate of proxies) {
-      const symbol = String(candidate.symbol || "").toUpperCase();
-      const overlay = ctx.overlaysBySymbol[symbol];
-      const consensus = ctx.analystConsensusBySymbol[symbol] || {};
-      rows.push({
-        sleeve: nodeKey,
-        candidate: symbol,
-        candidate_type: symbol === "KGC" ? "Gold miner equity proxy" : "Equity-adjacent proxy",
-        sleeve_fit_score: _proxyFitScore(symbol, overlay),
-        direct_filler: false,
-        full_gap_amount: 0,
-        deployable_cash_only_amount: 0,
-        amount_semantics: {
-          single_candidate_fill: { full_target_gap: 0, deployable_cash_only: 0 },
-          equal_split: { full_target_gap: 0, deployable_cash_only: 0 },
-          operator_selected: { full_target_gap: null, deployable_cash_only: null },
-        },
-        current_holding: Boolean(overlay),
-        current_sih_posture: _clientPosture(overlay, consensus),
-        current_action_context: overlay ? `${String(overlay.opportunity_flag || "")} / ${String(overlay.flag_rationale || "")}`.trim() : null,
-        caveat: symbol === "KGC" ? "equity proxy only, not direct filler" : "proxy only, not direct filler",
-        classification_note: symbol === "KGC"
-          ? "KGC may be economically sensitive to gold prices, but it is a gold-mining equity, not direct gold exposure. It should be reviewed as a gold-adjacent proxy, not as the primary COMMODITIES.GOLD sleeve filler."
-          : "Equity-adjacent proxy; review separately from direct sleeve fillers.",
-        not_direct_filler_reason: symbol === "KGC" ? "Not a direct COMMODITIES.GOLD filler" : "Not a direct sleeve filler",
-      });
-    }
-  }
-
-  rows.sort((a, b) => Number(b.sleeve_fit_score || 0) - Number(a.sleeve_fit_score || 0) || String(a.candidate || "").localeCompare(String(b.candidate || "")));
-  return {
-    display_only: true,
-    operator_review_required: true,
-    scoring_basis: "SLEEVE_COMPLETION_FIT_NOT_EQUITY_RANKING",
-    portfolio_value: Number(ctx.totalMarketValue.toFixed(2)),
-    deployable_cash: Number((summary.deployable_cash || 0).toFixed(2)),
-    allocation_modes: [
-      {
-        mode: "FULL_TARGET_GAP",
-        description: "Fill the full commodity sleeve gap using total portfolio value.",
-        total_amount: Number((summary.gap_amount_full_portfolio || summary.approx_gap_dollars || 0).toFixed(2)),
-      },
-      {
-        mode: "DEPLOYABLE_CASH_ONLY",
-        description: "Use only current deployable cash and allocate proportionally across sleeve targets.",
-        total_amount: Number((summary.deployable_cash_only_amount || summary.deployable_cash || 0).toFixed(2)),
-      },
-      {
-        mode: "CUSTOM_AMOUNT",
-        description: "Operator-specified amount; display-only estimate.",
-        total_amount: null,
-      },
-    ],
-    candidate_fit_scores: rows,
-    table_rows: rows,
-  };
-}
-
-function _buildClientCandidateQueueFromGuard(commodityGuard) {
-  const ctx = _queueAnalysisContext();
-  const g = commodityGuard || {};
-  const commTarget = Number(g.commodities_target_pct || 0);
-  const commActual = Number(g.commodities_actual_pct || 0);
-  const goldTarget = Number(g.gold_target_pct || 0);
-  const goldActual = Number(g.gold_actual_pct || 0);
-  const energyTarget = Number(g.energy_target_pct || 0);
-  const energyActual = Number(g.energy_actual_pct || 0);
-  const broadTarget = Number(g.broad_basket_target_pct || 0);
-  const broadActual = Number(g.broad_basket_actual_pct || 0);
-  const deployableCash = Number(g.deployment_cash || 0);
-  const totalPortfolioValue = Number(ctx.totalMarketValue || 0);
-
-  const gap = {
-    commodities_pct: Math.max(0, commTarget - commActual),
-    gold_pct: Math.max(0, goldTarget - goldActual),
-    energy_pct: Math.max(0, energyTarget - energyActual),
-    broad_basket_pct: Math.max(0, broadTarget - broadActual),
-  };
-
-  const mkCandidates = (symbols, note) => symbols.map(s => ({
-    symbol: s,
-    vehicle_type: _hardAssetVehicleType(s),
-    classification_note: note,
-    rationale: "Display-only sleeve completion candidate; operator review required.",
-  }));
-
-  const fullAmount = pct => Number((totalPortfolioValue * (pct / 100)).toFixed(2));
-  const cashAmount = pct => {
-    const share = gap.commodities_pct > 0 ? pct / gap.commodities_pct : 0;
-    return Number((deployableCash * share).toFixed(2));
-  };
-
-  const candidateGroups = [
-    {
-      node: "COMMODITIES.GOLD",
-      gap_pct: Number(gap.gold_pct.toFixed(3)),
-      candidate_type: "DIRECT_COMPLETION_VEHICLE",
-      candidates: ["GLD", "IAU", "SGOL"],
-    },
-    {
-      node: "COMMODITIES.ENERGY",
-      gap_pct: Number(gap.energy_pct.toFixed(3)),
-      candidate_type: "DIRECT_COMPLETION_VEHICLE",
-      candidates: ["USO", "BNO", "UNG"],
-    },
-    {
-      node: "COMMODITIES.BROAD_BASKET",
-      gap_pct: Number(gap.broad_basket_pct.toFixed(3)),
-      candidate_type: "DIRECT_COMPLETION_VEHICLE",
-      candidates: ["DBC", "PDBC", "GSG"],
-    },
-  ];
-
-  const sleeves = [
-    {
-      node_key: "COMMODITIES.GOLD",
-      display_name: "Gold Sleeve",
-      actual_pct: Number(goldActual.toFixed(3)),
-      target_pct: Number(goldTarget.toFixed(3)),
-      gap_pp: Number(gap.gold_pct.toFixed(3)),
-      approx_gap_dollars: fullAmount(gap.gold_pct),
-      gap_amount_full_portfolio: fullAmount(gap.gold_pct),
-      deployable_cash_fill_amount: cashAmount(gap.gold_pct),
-      direct_completion_candidates: mkCandidates(["GLD", "IAU", "SGOL"], "Display-only direct commodity completion candidates."),
-      equity_adjacent_proxies: mkCandidates(["KGC"], "Gold miner equity proxy; advisory only and not a direct COMMODITIES.GOLD filler."),
-      portfolio_substitutes: [],
-      existing_queue_candidates: [],
-    },
-    {
-      node_key: "COMMODITIES.ENERGY",
-      display_name: "Energy Sleeve",
-      actual_pct: Number(energyActual.toFixed(3)),
-      target_pct: Number(energyTarget.toFixed(3)),
-      gap_pp: Number(gap.energy_pct.toFixed(3)),
-      approx_gap_dollars: fullAmount(gap.energy_pct),
-      gap_amount_full_portfolio: fullAmount(gap.energy_pct),
-      deployable_cash_fill_amount: cashAmount(gap.energy_pct),
-      direct_completion_candidates: mkCandidates(["USO", "BNO", "UNG"], "Display-only direct commodity completion candidates."),
-      equity_adjacent_proxies: mkCandidates(["XLE", "PSX", "CVE", "DVN", "NUE", "STLD", "CRS"], "Classified as EQUITIES; advisory only and not direct COMMODITIES fillers."),
-      portfolio_substitutes: [],
-      existing_queue_candidates: [],
-    },
-    {
-      node_key: "COMMODITIES.BROAD_BASKET",
-      display_name: "Broad Basket Sleeve",
-      actual_pct: Number(broadActual.toFixed(3)),
-      target_pct: Number(broadTarget.toFixed(3)),
-      gap_pp: Number(gap.broad_basket_pct.toFixed(3)),
-      approx_gap_dollars: fullAmount(gap.broad_basket_pct),
-      gap_amount_full_portfolio: fullAmount(gap.broad_basket_pct),
-      deployable_cash_fill_amount: cashAmount(gap.broad_basket_pct),
-      direct_completion_candidates: mkCandidates(["DBC", "PDBC", "GSG"], "Display-only direct commodity completion candidates."),
-      equity_adjacent_proxies: [],
-      portfolio_substitutes: [],
-      existing_queue_candidates: [],
-    },
-  ];
-
-  return {
-    status: gap.commodities_pct > 0 ? "ACTIVE_REVIEW" : "NO_GAP",
-    severity: gap.commodities_pct > 0 ? "INFO" : "NONE",
-    display_only: true,
-    operator_review_required: true,
-    target_gap: {
-      commodities_pct: Number(gap.commodities_pct.toFixed(3)),
-      gold_pct: Number(gap.gold_pct.toFixed(3)),
-      energy_pct: Number(gap.energy_pct.toFixed(3)),
-      broad_basket_pct: Number(gap.broad_basket_pct.toFixed(3)),
-    },
-    summary: {
-      total_gap_pp: Number(gap.commodities_pct.toFixed(3)),
-      deployable_cash: Number(deployableCash.toFixed(2)),
-      portfolio_value: Number(totalPortfolioValue.toFixed(2)),
-      approx_gap_dollars: fullAmount(gap.commodities_pct),
-      gap_amount_full_portfolio: fullAmount(gap.commodities_pct),
-      deployable_cash_only_amount: Number(deployableCash.toFixed(2)),
-    },
-    message: "Commodity sleeve gap detected; display-only completion candidates are available for operator review.",
-    candidate_groups: candidateGroups,
-    sleeve_nodes: sleeves,
-    equity_adjacent_substitutes: ["KGC", "XLE", "PSX", "CVE", "DVN", "NUE", "STLD", "CRS"],
-    warnings: [
-      "Display-only candidates; not trade instructions.",
-      "Commodity/futures-linked products may have structure, tax, volatility, and tracking considerations.",
-      "Equity-adjacent proxies do not directly fill the COMMODITIES sleeve unless classified that way by the allocation model.",
-    ],
-    advisories: [
-      "DISPLAY_ONLY",
-      "OPERATOR_REVIEW_REQUIRED",
-      "CAPITAL_DEPLOYMENT_QUEUE_UNCHANGED",
-      "CRA_UNCHANGED",
-    ],
-    equity_proxy_disclaimer: "Equity-adjacent proxies are advisory only and do not directly fill the COMMODITIES sleeve unless classification policy is changed.",
-  };
-}
-
-function _buildClientPriorityGate(commodityGuard, fragilityWatch, candidateQueue, rotationSignal) {
-  const g = commodityGuard || {};
-  const f = fragilityWatch || {};
-  const q = candidateQueue || {};
-  const summary = q.summary || {};
-  const nodes = Array.isArray(q.sleeve_nodes) ? q.sleeve_nodes : [];
-
-  const deployableCash = Number(g.deployment_cash || summary.deployable_cash || 0);
-  const commoditiesActual = Number(g.commodities_actual_pct || 0);
-  const commoditiesTarget = Number(g.commodities_target_pct || 0);
-  const commoditiesGap = Math.max(0, commoditiesTarget - commoditiesActual);
-  const equityDeploymentCount = Number(g.equity_deployment_count || 0);
-  const techSensitiveDeploymentCount = Number(g.tech_sensitive_deployment_count || 0);
-  const commodityCandidatesAvailable = g.commodity_candidates_available === true;
-  const macroCatalystWindow = Boolean(f.macro_catalyst_window);
-  const queueStatus = String(q.status || g.status || "NONE").toUpperCase();
-  const queueSeverity = String(q.severity || g.severity || "NONE").toUpperCase();
-  const fragilityStatus = String(f.status || "NONE").toUpperCase();
-  const fragilitySeverity = String(f.severity || "NONE").toUpperCase();
-
-  let pressure = 0;
-  if (commoditiesGap > 0) pressure += 25;
-  if (deployableCash > 0) pressure += 15;
-  if (commodityCandidatesAvailable) pressure += 10;
-  if (queueStatus === "ACTIVE_REVIEW") pressure += 10;
-  if (["INFO", "WATCH", "ELEVATED"].includes(queueSeverity)) pressure += 5;
-  if (fragilityStatus !== "NONE") pressure += 10;
-  if (["WATCH", "ELEVATED"].includes(fragilitySeverity)) pressure += 10;
-  if (equityDeploymentCount > 0) pressure += 5;
-  if (techSensitiveDeploymentCount > 0) pressure += 5;
-  if (macroCatalystWindow) pressure += 5;
-  if (nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0)) pressure += 5;
-  pressure = Math.max(0, Math.min(100, pressure));
-
-  let verdict = "CONTINUE_EQUITY_DEPLOYMENT";
-  let recommendedAction = "Continue equity deployment; hard-asset pressure is advisory but not dominant.";
-  if (commoditiesTarget <= 0) {
-    verdict = "HARD_ASSET_NOT_APPLICABLE";
-    recommendedAction = "Keep the equity deployment queue unchanged; no hard-asset target is active.";
-  } else if (commoditiesGap <= 0 && deployableCash <= 0) {
-    verdict = "CONTINUE_EQUITY_DEPLOYMENT";
-    recommendedAction = "Continue equity deployment; the hard-asset sleeve is already funded and no deployable cash is available.";
-  } else if (pressure >= 70) {
-    verdict = "PARTIAL_HARD_ASSET_FILL";
-    recommendedAction = "OPERATOR REVIEW REQUIRED — consider reserving some or all deployable cash for hard-asset sleeve completion before deploying all excess cash to equities.";
-  } else if (pressure >= 45) {
-    verdict = "OPERATOR_REVIEW_REQUIRED";
-    recommendedAction = "OPERATOR REVIEW REQUIRED — consider reserving some or all deployable cash for hard-asset sleeve completion before deploying all excess cash to equities.";
-  }
-
-  const reviewRotationSignal = String(f.rotation_signal || signal || "DATA_UNAVAILABLE").toUpperCase();
-  const rotationConfirmed = Boolean(f.rotation_confirmed ?? conf.confirmation_passed);
-  const scoreLabel = "Review pressure score";
-  const scoreNote = pressure >= 70
-    ? `High because the commodity sleeve is structurally unfilled and deployable cash is available; moderated by ${reviewRotationSignal} / ${rotationConfirmed ? "CONFIRMED" : "NOT CONFIRMED"}. Display-only capital-allocation review score; not a trade-confidence score.`
-    : pressure >= 45
-      ? `Elevated because the commodity sleeve is underfilled and deployable cash is available; moderated by ${reviewRotationSignal} / ${rotationConfirmed ? "CONFIRMED" : "NOT CONFIRMED"}. Display-only capital-allocation review score; not a trade-confidence score.`
-      : "Display-only capital-allocation review score; not a trade-confidence score.";
-
-  const nodeByKey = Object.fromEntries(nodes.map(n => [String(n.node_key || n.node || "").toUpperCase(), n]).filter(entry => entry[0]));
-  const goldNode = nodeByKey["COMMODITIES.GOLD"] || {};
-  const energyNode = nodeByKey["COMMODITIES.ENERGY"] || {};
-  const broadNode = nodeByKey["COMMODITIES.BROAD_BASKET"] || {};
-  const deployableCashOnlyGold = Number(goldNode.deployable_cash_fill_amount ?? (deployableCash * 0.5));
-  const deployableCashOnlyEnergy = Number(energyNode.deployable_cash_fill_amount ?? (deployableCash * 0.35));
-  const deployableCashOnlyBroad = Number(broadNode.deployable_cash_fill_amount ?? Math.max(0, deployableCash - deployableCashOnlyGold - deployableCashOnlyEnergy));
-  const splitAmount = Number((deployableCash / 2).toFixed(2));
-
-  const capitalOptions = [
-    {
-      code: "A",
-      label: "Continue equity deployment",
-      preferred_when: "hard_asset_pressure < 45",
-      description: "Keep the current deployment queue intact and treat hard-asset fill as secondary.",
-      amount: Number(deployableCash.toFixed(2)),
-      amount_breakdown: { equities: Number(deployableCash.toFixed(2)) },
-    },
-    {
-      code: "B",
-      label: "Deployable-cash-only hard-asset fill",
-      preferred_when: "deployable cash exists and the operator wants a sleeve-first split",
-      description: "Use current deployable cash to partially fill the hard-asset sleeve while leaving the equity queue unchanged.",
-      amount: Number(deployableCash.toFixed(2)),
-      amount_breakdown: {
-        gold: Number(deployableCashOnlyGold.toFixed(2)),
-        energy: Number(deployableCashOnlyEnergy.toFixed(2)),
-        broad_basket: Number(deployableCashOnlyBroad.toFixed(2)),
-      },
-    },
-    {
-      code: "C",
-      label: "Split approach",
-      preferred_when: "the operator wants to balance sleeves without changing queue order",
-      description: "Divide deployable cash between hard assets and equities while preserving existing deployment order.",
-      amount: splitAmount,
-      amount_breakdown: { hard_assets: splitAmount, equities: splitAmount },
-    },
-    {
-      code: "D",
-      label: "Reserve cash",
-      preferred_when: "deployable cash exists but neither sleeve should move immediately",
-      description: "Hold deployable cash while the operator reviews the hard-asset sleeve and equity queue together.",
-      amount: Number(deployableCash.toFixed(2)),
-    },
-    {
-      code: "E",
-      label: "Waive commodity target",
-      preferred_when: "commodity target is intentionally deferred",
-      description: "Treat the hard-asset sleeve as waived for this review cycle; display-only and operator controlled.",
-      amount: 0,
-    },
-  ];
-
-  const rationale = [
-    "Display-only advisory gate; it does not modify ranking, queue order, CRA, or execution behavior.",
-    recommendedAction,
-  ];
-  if (commoditiesGap > 0) rationale.push("The hard-asset sleeve is still under target.");
-  if (deployableCash > 0) rationale.push("Deployable cash is available and can be reserved for the sleeve if desired.");
-  if (equityDeploymentCount > 0) rationale.push("Equity deployment is already active, so the decision is a capital-allocation preference rather than an availability problem.");
-  if (macroCatalystWindow) rationale.push("A macro catalyst window is active, so the operator may prefer partial hard-asset staging before fully deploying cash to equities.");
-  if (commodityCandidatesAvailable) rationale.push("Commodity completion candidates exist, but they remain display-only and operator-reviewed.");
-
-  const decisionFactors = [
-    {
-      factor: "Commodity sleeve gap",
-      value: Number(commoditiesGap.toFixed(3)),
-      impact: commoditiesGap > 0 ? "higher" : "neutral",
-      note: commoditiesGap > 0 ? "Hard-asset target remains underfilled." : "Hard-asset sleeve is at target.",
-    },
-    {
-      factor: "Deployable cash available",
-      value: Number(deployableCash.toFixed(2)),
-      impact: deployableCash > 0 ? "higher" : "lower",
-      note: deployableCash > 0 ? "Cash is available for either sleeve or equity deployment." : "No deployable cash is currently available.",
-    },
-    {
-      factor: "Equity deployment candidates",
-      value: equityDeploymentCount,
-      impact: equityDeploymentCount > 0 ? "higher" : "lower",
-      note: equityDeploymentCount > 0 ? "Capital is already flowing to equities." : "No equity deployment candidates are present.",
-    },
-    {
-      factor: "Rotation fragility status",
-      value: fragilityStatus,
-      impact: fragilityStatus !== "NONE" ? "higher" : "neutral",
-      note: String(f.message || "Rotation fragility watch is informational only."),
-    },
-    {
-      factor: "Tech-sensitive deployment candidates",
-      value: techSensitiveDeploymentCount,
-      impact: techSensitiveDeploymentCount > 0 ? "higher" : "neutral",
-      note: techSensitiveDeploymentCount > 0 ? "Some equity deployment candidates are tech-sensitive." : "No tech-sensitive deployment pressure detected.",
-    },
-    {
-      factor: "Direct hard-asset completion candidates",
-      value: nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0),
-      impact: nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0) ? "higher" : "lower",
-      note: nodes.some(n => Array.isArray(n.direct_completion_candidates) && n.direct_completion_candidates.length > 0) ? "Hard-asset completion candidates are available for operator review." : "No direct hard-asset completion candidates were present.",
-    },
-  ];
-
-  return {
-    source: "client_fallback",
-    display_only: true,
-    operator_review_required: true,
-    status: commoditiesGap > 0 ? "ACTIVE_REVIEW" : "NO_GAP",
-    severity: queueSeverity !== "NONE" ? queueSeverity : fragilitySeverity,
-    verdict,
-    priority_verdict: verdict,
-    score: pressure,
-    priority_score: pressure,
-    recommended_action: recommendedAction,
-    recommended_operator_action: recommendedAction,
-    score_label: scoreLabel,
-    score_note: scoreNote,
-    rationale,
-    decision_factors: decisionFactors,
-    capital_options: capitalOptions,
-    summary: {
-      commodities_actual_pct: Number(commoditiesActual.toFixed(3)),
-      commodities_target_pct: Number(commoditiesTarget.toFixed(3)),
-      commodities_gap_pct: Number(commoditiesGap.toFixed(3)),
-      deployable_cash: Number(deployableCash.toFixed(2)),
-      equity_deployment_count: equityDeploymentCount,
-      candidate_count: Number(q.candidate_count || 0),
-      direct_completion_candidate_count: nodes.reduce((total, n) => total + (Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates.length : 0), 0),
-      equity_adjacent_proxy_count: nodes.reduce((total, n) => total + (Array.isArray(n.equity_adjacent_proxies) ? n.equity_adjacent_proxies.length : 0), 0),
-    },
-    priority_bias: verdict === "CONTINUE_EQUITY_DEPLOYMENT" ? "EQUITY_DEPLOYMENT_FIRST" : "HARD_ASSET_REVIEW_FIRST",
-    guardrail_notes: [
-      "Display-only and operator-reviewed.",
-      "No queue mutation, rank mutation, or trade execution attached.",
-      "Derived client-side because the live summary did not include the gate payload.",
-    ],
-  };
-}
-
-  function _renderSleeveFitDrilldown(candidateQueue) {
-  const sleeveFit = candidateQueue && candidateQueue.sleeve_fit ? candidateQueue.sleeve_fit : _buildClientSleeveFit(candidateQueue || {});
-  const rows = Array.isArray(sleeveFit.table_rows) ? sleeveFit.table_rows : [];
-  const modes = Array.isArray(sleeveFit.allocation_modes) ? sleeveFit.allocation_modes : [];
-
-  const modeCards = modes.map(mode => `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:180px;background:rgba(255,255,255,.03);">
-      <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">${escHtml(String(mode.mode || "").replace(/_/g, " "))}</div>
-      <div style="font-size:0.92rem;font-weight:700;margin-top:4px;">${mode.total_amount == null ? "Placeholder" : escHtml(_rrFmtMoney(mode.total_amount))}</div>
-      <div style="font-size:0.74rem;color:var(--muted);margin-top:4px;">${escHtml(String(mode.description || ""))}</div>
-    </div>`).join("");
-
-  const rowHtml = rows.map(row => {
-    const examples = row.amount_semantics || {};
-    const single = examples.single_candidate_fill || {};
-    const split = examples.equal_split || {};
-    const caveat = row.candidate === "KGC"
-      ? `${String(row.not_direct_filler_reason || "Not a direct COMMODITIES.GOLD filler")}. ${String(row.classification_note || "")}`
-      : String(row.caveat || "");
-    const currentPosture = row.current_action_context ? `${row.current_sih_posture || "N/A"} · ${row.current_action_context}` : (row.current_sih_posture || "N/A");
-    return `<tr>
-      <td>${escHtml(String(row.sleeve || ""))}</td>
-      <td><strong>${escHtml(String(row.candidate || ""))}</strong></td>
-      <td>${escHtml(String(row.candidate_type || ""))}</td>
-      <td style="text-align:right">${escHtml(String(row.sleeve_fit_score || "—"))}</td>
-      <td>${row.direct_filler ? "Yes" : "No"}</td>
-      <td style="text-align:right">${_rrFmtMoney(row.full_gap_amount)}${row.direct_filler ? `<div style="font-size:0.72rem;color:var(--muted);">Single: ${_rrFmtMoney(single.full_target_gap)} · Split: ${_rrFmtMoney(split.full_target_gap)}</div>` : `<div style="font-size:0.72rem;color:var(--muted);">$0 direct sleeve filler</div>`}</td>
-      <td style="text-align:right">${_rrFmtMoney(row.deployable_cash_only_amount)}${row.direct_filler ? `<div style="font-size:0.72rem;color:var(--muted);">Single: ${_rrFmtMoney(single.deployable_cash_only)} · Split: ${_rrFmtMoney(split.deployable_cash_only)}</div>` : `<div style="font-size:0.72rem;color:var(--muted);">$0 direct sleeve filler</div>`}</td>
-      <td>${row.current_holding ? "Yes" : "No"}</td>
-      <td>${escHtml(String(currentPosture || "N/A"))}</td>
-      <td>${escHtml(caveat)}</td>
-    </tr>`;
-  }).join("");
-
-  return `<details style="margin-top:10px;" open>
-    <summary style="cursor:pointer;font-weight:700;">Sleeve Fit Drilldown</summary>
-    <div style="font-size:0.78rem;color:var(--muted);margin:6px 0 10px;">Compares direct sleeve fillers with equity-adjacent proxies. Display-only; not trade instructions.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${modeCards}</div>
-    <div style="overflow:auto;">
-      <table class="holdings-tbl" style="min-width:1080px;">
-        <thead>
-          <tr>
-            <th>Sleeve</th>
-            <th>Candidate</th>
-            <th>Candidate type</th>
-            <th style="text-align:right">Sleeve fit score</th>
-            <th>Direct filler?</th>
-            <th style="text-align:right">Full target gap</th>
-            <th style="text-align:right">Deployable-cash-only</th>
-            <th>Current holding?</th>
-            <th>Current SIH posture</th>
-            <th>Caveat</th>
-          </tr>
-        </thead>
-        <tbody>${rowHtml}</tbody>
-      </table>
-    </div>
-  </details>`;
-}
-
-function _renderHardAssetCandidateQueue(candidateQueue) {
-  if (!candidateQueue || typeof candidateQueue !== "object") {
-    return `<div class="panel" style="margin-top:10px;">
-      <p class="panel-title">Hard-Asset Candidate Queue</p>
-      <div style="font-size:0.8rem;color:var(--muted);">Commodity sleeve completion candidates are unavailable for this run.</div>
-    </div>`;
-  }
-
-  const status = escHtml(String(candidateQueue.status || "NONE"));
-  const sev = String(candidateQueue.severity || "NONE");
-  const summary = candidateQueue.summary || {};
-  const nodes = Array.isArray(candidateQueue.sleeve_nodes) ? candidateQueue.sleeve_nodes : [];
-  const warnings = Array.isArray(candidateQueue.warnings) ? candidateQueue.warnings : [];
-  const advisories = Array.isArray(candidateQueue.advisories) ? candidateQueue.advisories : [];
-  const sleeveFitHtml = _renderSleeveFitDrilldown(candidateQueue);
-
-  const nodeHtml = nodes.map(n => {
-    const nodeLabelMap = {
-      "COMMODITIES.GOLD": "Gold Sleeve",
-      "COMMODITIES.ENERGY": "Energy Sleeve",
-      "COMMODITIES.BROAD_BASKET": "Broad Basket Sleeve",
-    };
-    const direct = Array.isArray(n.direct_completion_candidates) ? n.direct_completion_candidates : [];
-    const prox = Array.isArray(n.equity_adjacent_proxies) ? n.equity_adjacent_proxies : [];
-    const subs = Array.isArray(n.portfolio_substitutes) ? n.portfolio_substitutes : [];
-    const queueMatches = Array.isArray(n.existing_queue_candidates) ? n.existing_queue_candidates : [];
-    const nodeKey = String(n.node_key || n.node || "UNKNOWN_NODE");
-    const nodeLabel = nodeLabelMap[nodeKey] || nodeKey;
-    return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px;">
-      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-        <strong style="font-size:0.82rem;">${escHtml(nodeLabel)}</strong>
-        <span style="font-size:0.76rem;color:var(--muted);">Actual ${_rrFmtPct(n.actual_pct)} vs Target ${_rrFmtPct(n.target_pct)} (Gap ${_rrFmtPct(n.gap_pp)})</span>
-      </div>
-      <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">Full target gap: <strong>${_rrFmtMoney(n.gap_amount_full_portfolio ?? n.approx_gap_dollars)}</strong> · Deployable-cash-only: <strong>${_rrFmtMoney(n.deployable_cash_fill_amount)}</strong></div>
-
-      <div style="margin-top:8px;">
-        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Direct Completion Candidates</div>
-        ${direct.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${direct.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No direct completion candidates registered.</div>`}
-      </div>
-
-      <div style="margin-top:8px;">
-        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Equity-Adjacent Proxies (Advisory)</div>
-        ${prox.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${prox.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No equity-adjacent proxies listed.</div>`}
-      </div>
-
-      <div style="margin-top:8px;">
-        <div style="font-size:0.76rem;color:var(--muted);margin-bottom:4px;">Portfolio Substitutes</div>
-        ${subs.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px;">${subs.map(_renderCandidateChip).join("")}</div>` : `<div style="font-size:0.76rem;color:var(--muted);">No substitutes listed.</div>`}
-      </div>
-
-      ${queueMatches.length ? `<div style="margin-top:8px;font-size:0.74rem;color:var(--muted);">Current capital deployment queue already includes: ${escHtml(queueMatches.map(x => x.symbol).join(", "))}</div>` : ""}
-    </div>`;
-  }).join("");
-
-  return `<div class="panel" style="margin-top:10px;">
-    <p class="panel-title">Hard-Asset Candidate Queue</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
-      <span class="sev-badge sev-NONE">NO CAPITAL DEPLOYMENT QUEUE CHANGES</span>
-      <span class="sev-badge sev-NONE">NO CRA CHANGES</span>
-      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
-      <span class="sev-badge ${_rrSeverityClass(sev)}">${status}</span>
-    </div>
-    <div style="font-size:0.8rem;color:var(--text);margin-bottom:8px;">${escHtml(String(candidateQueue.message || "Commodity sleeve completion candidates for operator review."))}</div>
-    <div style="font-size:0.76rem;color:var(--muted);margin-bottom:8px;">
-      Total sleeve gap: <strong>${_rrFmtPct(summary.total_gap_pp)}</strong>
-      · Full target gap dollars: <strong>${_rrFmtMoney(summary.gap_amount_full_portfolio ?? summary.approx_gap_dollars)}</strong>
-      · Deployable cash context: <strong>${_rrFmtMoney(summary.deployable_cash)}</strong>
-      · Deployable-cash-only fill: <strong>${_rrFmtMoney(summary.deployable_cash_only_amount ?? summary.deployable_cash)}</strong>
-    </div>
-    ${nodeHtml}
-    ${sleeveFitHtml}
-    <div style="margin-top:8px;font-size:0.75rem;color:var(--muted);">${escHtml(String(candidateQueue.equity_proxy_disclaimer || "Equity proxies are advisory and do not directly fill commodity sleeves unless formally classified."))}</div>
-    ${warnings.length ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">Warnings: ${escHtml(warnings.join(", "))}</div>` : ""}
-    ${advisories.length ? `<div style="margin-top:4px;font-size:0.74rem;color:var(--muted);">Controls: ${escHtml(advisories.join(", "))}</div>` : ""}
-  </div>`;
-}
-
-function _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, rotationSignal, candidateQueue) {
-  if (!commodityGuard && !fragilityWatch) {
-    return `<div class="panel" style="margin-top:10px;">
-      <p class="panel-title">Hard-Asset Sleeve Review</p>
-      <div style="font-size:0.8rem;color:var(--muted);">Guardrail payload unavailable for this run. Rotation monitor remains display-only and advisory.</div>
-    </div>`;
-  }
-
-  const g = commodityGuard || {};
-  const f = fragilityWatch || {};
-  const gStatus = String(g.status || "NONE");
-  const gSev = String(g.severity || "NONE");
-  const fStatus = String(f.status || "NONE");
-  const fSev = String(f.severity || "NONE");
-
-  const choices = Array.isArray(g.operator_choices) ? g.operator_choices : [];
-  const choiceLabel = v => {
-    const map = {
-      continue_with_equity_deployment: "Continue with equity deployment",
-      reserve_cash: "Reserve cash",
-      fill_hard_asset_sleeve: "Fill hard-asset sleeve",
-      mark_commodities_target_waived: "Waive commodity target",
-      rerun_with_custom_cash: "Re-run with custom cash",
-    };
-    return map[v] || String(v || "").replace(/_/g, " ");
-  };
-
-  const macroEvents = Array.isArray(f.macro_events) ? f.macro_events : [];
-  const macroText = macroEvents.length
-    ? `${macroEvents.slice(0, 3).join("; ")}${macroEvents.length > 3 ? "..." : ""}`
-    : "No near-window high-impact events";
-
-  const queueNodes = (candidateQueue && Array.isArray(candidateQueue.sleeve_nodes)) ? candidateQueue.sleeve_nodes : [];
-  const directCompletionCandidateCount = queueNodes.reduce(
-    (total, node) => total + (Array.isArray(node.direct_completion_candidates) ? node.direct_completion_candidates.length : 0),
-    0
-  );
-  const commodityCandidatesLabel = directCompletionCandidateCount > 0
-    ? `Yes (${directCompletionCandidateCount} direct)`
-    : g.commodity_candidates_available === true
-      ? "Yes"
-      : g.commodity_candidates_available === false
-        ? "No"
-        : "—";
-
-  const candidateQueueHtml = _renderHardAssetCandidateQueue(candidateQueue);
-
-  return `<div class="panel" style="margin-top:10px;">
-    <p class="panel-title">Hard-Asset Sleeve Review</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <span class="sev-badge sev-NONE">DISPLAY ONLY</span>
-      <span class="sev-badge sev-NONE">OPERATOR REVIEW</span>
-      <span class="sev-badge sev-NONE">NO AUTOMATIC RERANKING</span>
-      <span class="sev-badge sev-NONE">NO TRADE EXECUTION</span>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-      <span class="sev-badge ${_rrSeverityClass(gSev)}">${escHtml(gStatus)}</span>
-      <span class="sev-badge ${_rrSeverityClass(fSev)}">${escHtml(fStatus)}</span>
-      <span style="font-size:0.76rem;color:var(--muted);">Rotation signal: ${escHtml(f.rotation_signal || rotationSignal || "DATA_UNAVAILABLE")}</span>
-    </div>
-
-    <div style="font-size:0.84rem;color:var(--text);margin-bottom:8px;">
-      <strong>Hard-Asset Sleeve Unfilled</strong>
-      <div style="margin-top:4px;">${escHtml(g.message || f.message || "Advisory guardrail state unavailable.")}</div>
-    </div>
-
-    <div class="two-col" style="margin-top:8px;">
-      <div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Commodity Sleeve</div>
-        <div style="font-size:0.82rem;line-height:1.45;">
-          Commodities: <strong>${_rrFmtPct(g.commodities_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.commodities_target_pct)}</strong><br>
-          Gold: <strong>${_rrFmtPct(g.gold_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.gold_target_pct)}</strong><br>
-          Energy: <strong>${_rrFmtPct(g.energy_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.energy_target_pct)}</strong><br>
-          Broad Basket: <strong>${_rrFmtPct(g.broad_basket_actual_pct)}</strong> vs <strong>${_rrFmtPct(g.broad_basket_target_pct)}</strong>
-        </div>
-      </div>
-      <div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Deployment and Fragility Context</div>
-        <div style="font-size:0.82rem;line-height:1.45;">
-          Deployable cash: <strong>${_rrFmtMoney(g.deployment_cash)}</strong><br>
-          Equity deployment candidates: <strong>${escHtml(String(g.equity_deployment_count ?? "—"))}</strong><br>
-          Commodity candidates available: <strong>${escHtml(commodityCandidatesLabel)}</strong><br>
-          Tech exposure: <strong>${_rrFmtPct(f.tech_sector_pct)}</strong><br>
-          Ultra-mega drift: <strong>${_rrFmtPct(f.ultra_mega_drift_pp)}</strong><br>
-          Macro catalyst window: <strong>${f.macro_catalyst_window ? "Yes" : "No"}</strong>
-        </div>
-        <div style="margin-top:6px;font-size:0.76rem;color:var(--muted);">${escHtml(macroText)}</div>
-      </div>
-    </div>
-
-    ${choices.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
-      ${choices.map(c => `<span class="sev-badge sev-NONE">${escHtml(choiceLabel(c))}</span>`).join("")}
-    </div>` : ""}
-    ${candidateQueueHtml}
-  </div>`;
-}
-
-function _renderRotationRiskPanel(data) {
-  const el = document.getElementById("rotationRiskContainer");
-  if (!el) return;
-
-  const signal = data.signal || "DATA_UNAVAILABLE";
-  const dq = data.data_quality || {};
-  const px = data.portfolio_exposure || {};
-  const pr = data.proxy_returns || {};
-  const conf = data.confirmation || {};
-  const events = ((data.macro_context || {}).upcoming_high_impact_events) || [];
-  const missing = dq.missing_inputs || [];
-  const endpointDiag = data._endpoint_diagnostic || null;
-  const commodityGuard = data.commodity_fill_guard || null;
-  const fragilityWatch = data.rotation_fragility_watch || null;
-  let candidateQueue = data.hard_asset_candidate_queue || data.commodity_sleeve_completion_candidates || null;
-  const hasQueuePayload = candidateQueue && typeof candidateQueue === "object";
-  const hasQueueNodes = hasQueuePayload && Array.isArray(candidateQueue.sleeve_nodes) && candidateQueue.sleeve_nodes.length > 0;
-  if (!hasQueueNodes && commodityGuard) {
-    candidateQueue = _buildClientCandidateQueueFromGuard(commodityGuard);
-  }
-  const proxyDiag = data.proxy_diagnostics || null;
-
-  const signalBadge = `<span class="sev-badge ${_rrSignalClass(signal)}">${escHtml(signal)}</span>`;
-  const confirmBadge = conf.confirmation_passed
-    ? '<span class="sev-badge sev-LOW">CONFIRMED</span>'
-    : '<span class="sev-badge sev-NONE">NOT CONFIRMED</span>';
-
-  const rows = [5, 20, 60].map(w => {
-    const t = (pr.tech_returns || {})[`${w}d`];
-    const h = (pr.hard_assets_returns || {})[`${w}d`];
-    const s = (pr.rotation_spread_pct || {})[`${w}d`];
-    return `<tr>
-      <td>${w}d</td>
-      <td>${_rrFmtPct(t, 3)}</td>
-      <td>${_rrFmtPct(h, 3)}</td>
-      <td>${_rrFmtPct(s, 3)}</td>
-    </tr>`;
-  }).join("");
-
-  const eventHtml = events.length
-    ? `<ul style="margin:6px 0 0 18px;padding:0;">
-        ${events.slice(0, 4).map(e => `<li style="font-size:0.78rem;color:var(--muted);margin:2px 0;">${escHtml(e.event_name || e.event_id)} (${escHtml(e.event_date || "")}, ${escHtml(String(e.days_away ?? "?"))}d)</li>`).join("")}
-      </ul>`
-    : '<div style="font-size:0.78rem;color:var(--muted);">No high-impact events in next 14 days.</div>';
-
-  const missingHtml = missing.length
-    ? `<div style="margin-top:8px;font-size:0.76rem;color:var(--muted);">Missing inputs: ${escHtml(missing.join(", "))}</div>`
-    : "";
-
-  const diagHtml = endpointDiag
-    ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">
-        Endpoint: ${escHtml(endpointDiag.endpoint || "unknown")}
-        · HTTP: ${escHtml(String(endpointDiag.http_status ?? "n/a"))}
-        · Content-Type: ${escHtml(String(endpointDiag.response_content_type || "unknown"))}
-        · HTML-like: ${endpointDiag.response_looks_html ? "yes" : "no"}
-        · Error Type: ${escHtml(String(endpointDiag.error_type || "NONE"))}
-      </div>`
-    : "";
-
-  const priorityGate = data.hard_asset_priority_gate || data.commodity_vs_equity_priority_gate || _buildClientPriorityGate(commodityGuard, fragilityWatch, candidateQueue, signal);
-  const queueReady = !!(_lastAnalysisData && _lastAnalysisData.deployment_queue && Array.isArray(_lastAnalysisData.deployment_queue.queue) && _lastAnalysisData.deployment_queue.queue.length);
-  const todayOperatorActionPlan = data.today_operator_action_plan
-    || data.daily_operator_action_plan
-    || (priorityGate && queueReady ? _buildClientTodayOperatorActionPlan(priorityGate, candidateQueue) : null);
-  const priorityGateHtml = _renderHardAssetPriorityGate(priorityGate);
-  const todayOperatorActionPlanHtml = _renderTodayOperatorActionPlan(todayOperatorActionPlan);
-  const hardAssetReviewHtml = _renderHardAssetSleeveReview(commodityGuard, fragilityWatch, signal, candidateQueue);
-
-  const proxyDiagHtml = (() => {
-    if (!proxyDiag) return "";
-    const ic = proxyDiag.series_identity_check || {};
-    const techProxy = proxyDiag.tech_proxy || {};
-    const hardProxies = proxyDiag.hard_assets_proxies || [];
-    const warn = ic.warning;
-    const validationFailed = ic.same_replay_id || ic.identical_returns_all_windows;
-    const techSrc = escHtml(techProxy.series_type_used || "unknown");
-    const hardSrcs = [...new Set(hardProxies.map(p => p.series_type_used).filter(Boolean))].map(escHtml).join(", ") || "—";
-    const warnHtml = validationFailed
-      ? `<div style="margin-top:4px;font-size:0.78rem;color:var(--sev-HIGH-color,#e53e3e);font-weight:600;">
-           ⚠ Proxy validation failed — tech and hard-assets series are not distinct.
-           Rotation signal unavailable until proxy inputs are fixed.
-         </div>`
-      : "";
-    return `<div style="margin-top:6px;font-size:0.74rem;color:var(--muted);">
-      Proxy sources — Tech: ${techSrc} · Hard Assets: ${hardSrcs}
-      ${warn ? ` · Warning: ${escHtml(warn)}` : ""}
-      ${warnHtml}
-    </div>`;
-  })();
-
-  el.innerHTML = `<div class="panel section-gap">
-    <p class="panel-title">Rotation Risk Monitor</p>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-      ${signalBadge}
-      ${confirmBadge}
-      <span style="font-size:0.76rem;color:var(--muted);">Risk score: ${escHtml(String(data.risk_score ?? 0))}/100</span>
-      <span style="font-size:0.76rem;color:var(--muted);">As of ${escHtml(data.as_of_date || "")}</span>
-    </div>
-    <div style="font-size:0.84rem;color:var(--text);margin-bottom:10px;">${escHtml(data.headline || "")}</div>
-
-    <div class="two-col" style="margin-top:8px;">
-      <div>
-        <table class="alloc-table" style="font-size:0.8rem;">
-          <thead><tr><th>Window</th><th>Tech</th><th>Hard Assets</th><th>Spread</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-        <div style="margin-top:8px;font-size:0.76rem;color:var(--muted);">
-          Proxy cap bucket: ${escHtml(pr.selected_cap_bucket || "—")} · Latest proxy date: ${escHtml(pr.latest_proxy_date || "—")}
-        </div>
-      </div>
-      <div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Portfolio Exposure</div>
-        <div style="font-size:0.82rem;margin-bottom:6px;">Tech: <strong>${_rrFmtPct(px.tech_pct)}</strong> · Hard Assets: <strong>${_rrFmtPct(px.hard_assets_pct)}</strong> · Other: <strong>${_rrFmtPct(px.other_pct)}</strong></div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">Signal breadth: Tech bearish share ${_rrFmtPct((conf.tech_bearish_share ?? null) != null ? conf.tech_bearish_share * 100 : null, 1)}, Hard-assets bullish share ${_rrFmtPct((conf.hard_assets_bullish_share ?? null) != null ? conf.hard_assets_bullish_share * 100 : null, 1)}</div>
-        <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px;">Macro context</div>
-        ${eventHtml}
-      </div>
-    </div>
-
-    ${missingHtml}
-    ${diagHtml}
-    ${proxyDiagHtml}
-    ${priorityGateHtml}
-    ${todayOperatorActionPlanHtml}
-    ${hardAssetReviewHtml}
-    <div style="margin-top:10px;font-size:0.72rem;color:var(--muted);font-style:italic;">${escHtml(data.governance_note || "Display-only diagnostic.")}</div>
-  </div>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UI Clarity Sprint — Problem 5: Portfolio Construction Style framing card
-// Presentation-only. No changes to scoring, recommendations, or mandate logic.
-// ─────────────────────────────────────────────────────────────────────────────
-function renderPortfolioConstructionStyle(data) {
-  const el = document.getElementById("portfolioConstructionStyleContainer");
-  if (!el) return;
-
-  const allocScore  = parseFloat(data.overall_alignment_score ?? 0);
-  const mds         = data.multi_dimensional_score || {};
-  const convScore   = parseFloat(mds.portfolio_quality_score ?? mds.conviction_score ?? 0);
-  const asym        = data.intentional_asymmetry || {};
-  const asymState   = asym.asymmetry_state || "";
-
-  const allocPct    = (allocScore * 100).toFixed(0);  // overall_alignment_score is 0–1, ×100 is correct
-  const convPct     = convScore.toFixed(0);            // portfolio_quality_score is already 0–100, no ×100
-
-  // Style label based on asymmetry state
-  const styleLabels = {
-    HIGH_CONVICTION:    "Intentional Conviction-Weighted",
-    LIKELY_INTENTIONAL: "Active Conviction Tilt",
-    ACCIDENTAL:         "Passive Drift Detected",
-  };
-  const styleLabel = styleLabels[asymState] || "Active Equity Portfolio";
-
-  // Interpretation text
-  let interpText = "";
-  if (asymState === "HIGH_CONVICTION") {
-    interpText = `This portfolio is intentionally asymmetric. Allocation gaps reflect deliberate conviction weighting — not tracking error. ` +
-      `Under the active mandate, higher-conviction positions receive larger weights, independent of classical index targets.`;
-  } else if (asymState === "LIKELY_INTENTIONAL") {
-    interpText = `Moderate conviction tilt detected. Some allocation divergence reflects active positioning. ` +
-      `Review mandate parameters to confirm intentionality.`;
-  } else if (asymState === "ACCIDENTAL") {
-    interpText = `Allocation asymmetry appears circumstantial rather than planned. ` +
-      `Review whether current weights reflect active conviction or passive drift.`;
-  } else {
-    interpText = `Portfolio construction posture is being assessed. Load a PAR to see alignment metrics.`;
-  }
-
-  el.innerHTML = `<div class="pcs-card">
-    <div class="pcs-header">
-      <span class="pcs-title">Portfolio Construction Style</span>
-      <span class="pcs-style-badge">${escHtml(styleLabel)}</span>
-    </div>
-    <div class="pcs-metrics-row">
-      <div class="pcs-metric">
-        <div class="pcs-metric-val">${allocPct}%</div>
-        <div class="pcs-metric-label">Allocation Discipline</div>
-        <div class="pcs-metric-sub">Classical model alignment</div>
-      </div>
-      <div class="pcs-metric-divider">vs.</div>
-      <div class="pcs-metric">
-        <div class="pcs-metric-val">${convPct}%</div>
-        <div class="pcs-metric-label">Conviction Discipline</div>
-        <div class="pcs-metric-sub">Portfolio quality score</div>
-      </div>
-    </div>
-    <div class="pcs-interpretation">${escHtml(interpText)}</div>
-    <div class="pcs-governance-note">Display-only framing — no scoring influence.</div>
-  </div>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UX-PA-09 — "What matters right now" portfolio narrative summary
-// ─────────────────────────────────────────────────────────────────────────────
-function renderNarrativeSummary(data) {
-  const el = document.getElementById("narrativeSummaryContainer");
-  if (!el) return;
-
-  const recs = data.recommendations || [];
-  const alignment = data.alignment || [];
-  const score = parseFloat(data.overall_alignment_score ?? 0);
-
-  // Build top 3 observations
-  const obs = [];
-
-  // Stale PAR advisory
-  if (data.policy_is_stale) {
-    obs.push({ type: "warn", text: "Policy replay applied — viewed PAR pre-dates a policy change. Recommendations updated to reflect current policy." });
-  }
-
-  // Reconciliation issue
-  const reconFailed = (data.reconciliation_checks_failed || 0) > 0;
-  const reconWarned = (data.reconciliation_checks_warned || 0) > 0;
-  if (reconFailed) {
-    const nFail = data.reconciliation_checks_failed;
-    obs.push({ type: "warn", text: `${nFail} reconciliation check${nFail > 1 ? "s" : ""} failed — some holdings may be unclassified and excluded from allocation scoring.` });
-  } else if (reconWarned) {
-    obs.push({ type: "warn", text: `Reconciliation advisory: ${data.reconciliation_checks_warned} check(s) with non-critical warnings.` });
-  }
-
-  // Overall alignment
-  if (score < 0.50) {
-    obs.push({ type: "act", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — portfolio is materially off target. High-priority rebalancing needed.` });
-  } else if (score < 0.70) {
-    obs.push({ type: "obs", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — moderate deviation from target. Review overweight nodes.` });
-  } else {
-    obs.push({ type: "ok", text: `Allocation alignment is ${(score * 100).toFixed(0)}% — portfolio is broadly on target.` });
-  }
-
-  // Blocked actions
-  const blocked = recs.filter(r => r.execution_state === "BLOCKED_BY_POLICY");
-  if (blocked.length > 0) {
-    const syms = [...new Set(blocked.flatMap(r => r.affected_symbols || []))].slice(0, 3).join(", ");
-    obs.push({ type: "obs", text: `${blocked.length} action${blocked.length > 1 ? "s" : ""} blocked by operator policy (${syms}). Review if policy intent remains current.` });
-  }
-
-  // Overweight nodes
-  const overweight = alignment.filter(r => parseFloat(r.drift_pct || 0) > 2 && r.severity && r.severity !== "NONE").slice(0, 2);
-  if (overweight.length > 0) {
-    obs.push({ type: "obs", text: `Largest overweight: ${overweight.map(r => `${r.node_label || r.node_key} (+${parseFloat(r.drift_pct).toFixed(1)}pp)`).join(", ")}.` });
-  }
-
-  const topObs = obs.slice(0, 3);
-
-  // Build top 3 actionable items
-  const acts = [];
-  const actionRecs = recs.filter(r => r.card_type === "ACTION" && r.execution_state === "EXECUTABLE").slice(0, 3);
-  for (const r of actionRecs) {
-    const syms = (r.affected_symbols || []).slice(0, 2).join(", ");
-    acts.push({ type: "act", text: `${r.title || r.recommendation_type}${syms ? ` — ${syms}` : ""}` });
-  }
-  if (acts.length === 0) {
-    acts.push({ type: "ok", text: "No immediately executable actions. Portfolio is stable or all sell-context actions are policy-blocked." });
-  }
-  const topActs = acts.slice(0, 3);
-
-  const dotClass = { obs: "narrative-dot-obs", act: "narrative-dot-act", ok: "narrative-dot-ok", warn: "narrative-dot-act" };
-
-  const staleBadge = data.policy_is_stale
-    ? `<div class="narrative-stale-badge">&#9888; Policy replay applied — stale PAR corrected to current policy</div>`
-    : "";
-
-  el.innerHTML = `
-    <div class="narrative-summary">
-      ${staleBadge}
-      <div class="narrative-summary-title">&#9679; What matters right now</div>
-      <div class="narrative-cols">
-        <div>
-          <div class="narrative-col-title">Observations</div>
-          ${topObs.map(o => `
-            <div class="narrative-item">
-              <div class="narrative-dot ${dotClass[o.type] || 'narrative-dot-obs'}"></div>
-              <span>${escHtml(o.text)}</span>
-            </div>`).join("")}
-        </div>
-        <div>
-          <div class="narrative-col-title">Actionable Items</div>
-          ${topActs.map(a => `
-            <div class="narrative-item">
-              <div class="narrative-dot ${dotClass[a.type] || 'narrative-dot-act'}"></div>
-              <span>${escHtml(a.text)}</span>
-            </div>`).join("")}
-        </div>
-      </div>
-    </div>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UX-PA-02 — Reconciliation FAIL explainability panel
-// ─────────────────────────────────────────────────────────────────────────────
-function renderReconciliationPanel(data) {
-  const el = document.getElementById("reconciliationContainer");
-  if (!el) return;
-
-  const status = data.reconciliation_status || "";
-  const cert   = data.reconciliation_certification || "";
-  const checks = data.reconciliation_checks || [];
-
-  // Only show if there's a FAIL or WARN — hide on PASS to reduce clutter
-  const hasFail = checks.some(c => c.status === "FAIL");
-  const hasWarn = checks.some(c => c.status === "WARN");
-  if (!hasFail && !hasWarn && status === "PASS") { el.innerHTML = ""; return; }
-
-  const panelId = "reconBodyPanel";
-  const toggleId = "reconToggleBtn";
-
-  const nonPassChecks = checks.filter(c => c.status !== "PASS");
-
-  const rows = nonPassChecks.map(c => {
-    const subSummary = (c.sub_checks || []).length > 0
-      ? `<div class="recon-symbols">${(c.sub_checks).slice(0,5).map(s =>
-          `${escHtml(s.symbol || s.node || "")}${s.root_cause ? ` (${escHtml(s.root_cause)})` : ""}`
-        ).join(" · ")}</div>`
-      : "";
-    const affectsRecs = c.affects_recommendations != null
-      ? (c.affects_recommendations
-          ? `<span class="recon-affect-recs-warn">&#9888; May affect recommendations</span>`
-          : `<span class="recon-affect-recs-ok">&#10003; Recommendations unaffected</span>`)
-      : `<span class="recon-affect-recs-ok">&#10003; Recommendations unaffected</span>`;
-
-    return `<tr>
-      <td><span class="recon-status-${c.status}">${c.status}</span></td>
-      <td>
-        <strong>${escHtml(c.name || c.check_id)}</strong>
-        <div class="recon-impact">${escHtml(c.detail ? (Array.isArray(c.detail) ? c.detail[0] : c.detail) : "")}</div>
-        ${subSummary}
-      </td>
-      <td style="text-align:right;white-space:nowrap">${escHtml(c.expected || "")}</td>
-      <td style="text-align:right;white-space:nowrap">${escHtml(c.actual || "")}</td>
-      <td>
-        <div class="recon-guidance">${escHtml(c.operator_guidance || (c.status === "FAIL" ? "Resolve classification gap before acting on affected allocations." : "Advisory only — no action required."))}</div>
-        ${affectsRecs}
-      </td>
-    </tr>`;
-  }).join("");
-
-  el.innerHTML = `
-    <div class="recon-panel">
-      <div class="recon-header" onclick="document.getElementById('${panelId}').classList.toggle('recon-body-hidden');document.getElementById('${toggleId}').textContent=document.getElementById('${panelId}').classList.contains('recon-body-hidden')?'▸ Show':'▾ Hide'">
-        <span class="recon-title">Reconciliation &amp; Data Quality</span>
-        <span class="recon-badge recon-badge-${status || 'UNKNOWN'}">${status || '—'}</span>
-        <span class="recon-cert">${escHtml(cert)}</span>
-        <span class="recon-toggle" id="${toggleId}">▾ Hide</span>
-      </div>
-      <div class="recon-body" id="${panelId}">
-        <table class="recon-table">
-          <thead><tr>
-            <th style="width:60px">Status</th>
-            <th>Check / Detail</th>
-            <th style="text-align:right">Expected</th>
-            <th style="text-align:right">Actual</th>
-            <th>Guidance</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
 function renderMultiDimScores(data) {
   const el = document.getElementById("multiDimContainer");
   const mds = data.multi_dimensional_score;
   if (!el || !mds) { if (el) el.innerHTML = ""; return; }
 
   const dims = [
-    {
-      key: "allocation_alignment_score", label: "Allocation Alignment",
-      tooltip: "Distance from target model allocations", anchor: "allocationPanel",
-      defn: "How close the portfolio is to its target asset class weights. 100 = perfectly on target; lower = larger gaps from mandate.",
-    },
-    {
-      key: "portfolio_quality_score", label: "Portfolio Quality",
-      tooltip: "Concentration, signal quality, strategic classification", anchor: "deploymentQueueContainer",
-      defn: "Signal strength, concentration risk, and strategic profile of holdings. Low score = weak signals or concentrated exposure.",
-    },
-    {
-      key: "implementation_quality_score", label: "Implementation Quality",
-      tooltip: "Vehicle suitability and operational integrity", anchor: "portfolioActionPipelineSection",
-      defn: "How well each position is implemented — direct stock vs ETF, liquidity, and operational hygiene.",
-    },
-    {
-      key: "replay_alignment_score", label: "Replay Alignment",
-      tooltip: "Replay-supported exposure coverage and quality", anchor: "replayPanel",
-      defn: "How much of the portfolio has replay evidence backing it. Low = limited historical outcome data for current holdings.",
-    },
+    { key: "allocation_alignment_score",   label: "Allocation Alignment",   tooltip: "Distance from target model allocations" },
+    { key: "portfolio_quality_score",      label: "Portfolio Quality",       tooltip: "Concentration, signal quality, strategic classification" },
+    { key: "implementation_quality_score", label: "Implementation Quality",  tooltip: "Vehicle suitability and operational integrity" },
+    { key: "replay_alignment_score",       label: "Replay Alignment",        tooltip: "Replay-supported exposure coverage and quality" },
   ];
 
   const cards = dims.map(d => {
@@ -2927,9 +1164,6 @@ function renderMultiDimScores(data) {
     const pct  = Math.min(100, Math.max(0, raw));
     const color = pct >= 75 ? "var(--green)" : pct >= 50 ? "var(--accent-2)" : "var(--sev-high)";
     const label = pct >= 75 ? "Strong" : pct >= 50 ? "Moderate" : "Needs attention";
-    const navHtml = d.anchor
-      ? `<div class="multidim-nav" onclick="(function(){const el=document.getElementById('${d.anchor}');if(el){el.scrollIntoView({behavior:'smooth',block:'start'});}})()" title="Jump to section">&#8595; View</div>`
-      : "";
     return `<div class="multidim-card" title="${escHtml(d.tooltip)}">
       <div class="multidim-score" style="color:${color}">${pct.toFixed(0)}</div>
       <div class="multidim-label">${d.label}</div>
@@ -2937,8 +1171,6 @@ function renderMultiDimScores(data) {
       <div class="multidim-track">
         <div class="multidim-fill" style="width:${pct.toFixed(0)}%;background:${color}"></div>
       </div>
-      <div class="multidim-defn">${escHtml(d.defn)}</div>
-      ${navHtml}
     </div>`;
   }).join("");
 
@@ -3011,51 +1243,14 @@ function renderAllocationMap(rows) {
     return (a.recommendation_priority || 9) - (b.recommendation_priority || 9);
   });
 
-  // ── UX-PA-05: Top allocation drivers summary ──────────────────────────────
-  const l1Rows = sorted.filter(r => depthOf(r.node_key) === 1 && r.node_key !== "CASH");
-  const withDrift = l1Rows.map(r => ({
-    label: r.node_label || r.node_key,
-    drift: parseFloat(r.drift_pct) || 0,
-    actual: parseFloat(r.effective_actual_pct ?? r.actual_pct ?? 0) || 0,
-    target: parseFloat(r.target_pct) || 0,
-  })).filter(r => r.actual > 0 || Math.abs(r.drift) > 0);
-
-  const overweights = [...withDrift].sort((a, b) => b.drift - a.drift).filter(r => r.drift > 0.5).slice(0, 3);
-  const underweights = [...withDrift].sort((a, b) => a.drift - b.drift).filter(r => r.drift < -0.5).slice(0, 3);
-  const gaps = [...withDrift].sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift)).slice(0, 3);
-
-  const driverItem = (label, drift, cls) =>
-    `<div class="alloc-driver-item">
-      <span class="alloc-driver-sym">${escHtml(label)}</span>
-      <span class="alloc-driver-pct ${cls}">${drift > 0 ? "+" : ""}${drift.toFixed(1)}pp</span>
-    </div>`;
-
-  const driversHtml = `
-    <div class="alloc-driver-strip">
-      <div class="alloc-driver-card">
-        <div class="alloc-driver-title">Largest Overweights</div>
-        ${overweights.length ? overweights.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-pos")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">None above threshold</div>'}
-      </div>
-      <div class="alloc-driver-card">
-        <div class="alloc-driver-title">Largest Underweights</div>
-        ${underweights.length ? underweights.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-neg")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">None below threshold</div>'}
-      </div>
-      <div class="alloc-driver-card">
-        <div class="alloc-driver-title">Largest Alignment Gaps</div>
-        ${gaps.length ? gaps.map(r => driverItem(r.label, r.drift, "alloc-driver-pct-gap")).join("") : '<div class="alloc-driver-item" style="color:var(--muted);font-size:0.72rem">No gaps</div>'}
-      </div>
-    </div>`;
-
   const tbody = sorted.map(r => {
     const depth = depthOf(r.node_key);
     const driftN = parseFloat(r.drift_pct) || 0;
     const driftClass = driftN > 0 ? "drift-pos" : driftN < 0 ? "drift-neg" : "";
     const driftStr = driftN === 0 ? "—" : `<span class="${driftClass}">${driftN > 0 ? "+" : ""}${driftN.toFixed(1)}pp</span>`;
     const actual = parseFloat(r.effective_actual_pct ?? r.actual_pct ?? 0) || 0;
-    const actualDisplay = _fmtPctDisplay(r.effective_actual_pct ?? r.actual_pct, { digits: 1, tinyThreshold: 0.1 });
-    const directDisplay = _fmtPctDisplay(r.direct_actual_pct, { digits: 1, tinyThreshold: 0.1 });
-    const etfDisplay = _fmtPctDisplay(r.etf_derived_actual_pct, { digits: 1, tinyThreshold: 0.1 });
-    const targetDisplay = _fmtPctDisplay(r.target_pct, { digits: 1, tinyThreshold: 0.1 });
+    const direct = parseFloat(r.direct_actual_pct ?? 0) || 0;
+    const etf = parseFloat(r.etf_derived_actual_pct ?? 0) || 0;
 
     // Drift bar
     const barPct = Math.min(Math.abs(driftN) / Math.max(parseFloat(r.tactical_target_pct) || 10, 10) * 50, 50);
@@ -3066,10 +1261,10 @@ function renderAllocationMap(rows) {
 
     return `<tr>
       <td class="node-depth-${depth}">${r.node_label || r.node_key}</td>
-      <td style="text-align:right">${directDisplay}</td>
-      <td style="text-align:right">${etfDisplay}</td>
-      <td style="text-align:right"><strong>${actualDisplay}</strong></td>
-      <td style="text-align:right">${targetDisplay}</td>
+      <td style="text-align:right">${direct.toFixed(1)}%</td>
+      <td style="text-align:right">${etf.toFixed(1)}%</td>
+      <td style="text-align:right"><strong>${actual.toFixed(1)}%</strong></td>
+      <td style="text-align:right">${parseFloat(r.target_pct || 0).toFixed(1)}%</td>
       <td style="text-align:right">${driftStr}</td>
       <td>
         <div class="drift-bar-wrap">
@@ -3081,7 +1276,7 @@ function renderAllocationMap(rows) {
     </tr>`;
   }).join("");
 
-  el.innerHTML = driversHtml + `
+  el.innerHTML = `
     <table class="alloc-table">
       <thead><tr>
         <th>Node</th>
@@ -3210,14 +1405,6 @@ function toggleTrace(traceId) {
   if (!body) return;
   const open = body.classList.toggle("open");
   if (btn) btn.textContent = open ? "▾ Why this state?" : "▸ Why this state?";
-}
-
-// PRA-IMPL-03 — Lane collapse/expand toggle
-function _toggleLane(bodyId, btn) {
-  const body = document.getElementById(bodyId);
-  if (!body) return;
-  const collapsed = body.classList.toggle("lane-collapsed");
-  btn.textContent = collapsed ? "Show ▾" : "Hide ▴";
 }
 
 function togglePmiMandate(pmiId) {
@@ -3638,16 +1825,12 @@ function _yahooDirection(consensusLabel) {
   return "UNKNOWN";
 }
 
-/** Convert normalized Danelfin score (1–5) to direction.
- * Official Danelfin semantics: 7–10 = Bullish, 4–6 = Neutral, 1–3 = Bearish.
- * Normalized equivalents (÷2): ≥3.5 = Bullish, 2.0–3.49 = Neutral, <2.0 = Bearish.
- * AI-006B: corrected from <= 2.5 to < 2.0 to align with Danelfin's published Neutral zone (4–6 raw).
- */
+/** Convert normalized Danelfin score (1–5) to direction. */
 function _danelfinDirection(danelfinScore) {
   const d = parseFloat(danelfinScore);
   if (isNaN(d)) return "UNKNOWN";
   if (d >= 3.5) return "BULLISH";
-  if (d < 2.0)  return "BEARISH";
+  if (d <= 2.5) return "BEARISH";
   return "NEUTRAL";
 }
 
@@ -3687,38 +1870,34 @@ function _computeSignalAgreement(ov, ac, fs) {
   const yDir    = _yahooDirection(ac && ac.consensus_label);
   const danDir  = _danelfinDirection(ov && ov.danelfin_score);
 
-  // SIGNAL-UX-01 — full translations for display
-  const _tzR    = typeof _sihZacksTranslate    !== "undefined" ? _sihZacksTranslate(ov && ov.zacks_rating) : null;
-  const _tdR    = typeof _sihDanelfinTranslate !== "undefined" ? _sihDanelfinTranslate(ov && ov.danelfin_score) : null;
-  const _teR    = typeof _sihEssTranslate      !== "undefined" ? _sihEssTranslate((ov && ov.ess_score_text) || (fs && fs.ess_text)) : null;
-  const _taR    = (ac && typeof _sihAnalystConsensusTranslate !== "undefined") ? _sihAnalystConsensusTranslate(ac.abr, ac.consensus_label) : null;
-
+  const zRank   = _zacksNativeRank(ov && ov.zacks_rating);
+  const danRaw  = _danelfinNativeRaw(ov && ov.danelfin_score);
   const abrVal  = (ac && ac.abr != null) ? parseFloat(ac.abr).toFixed(2) : null;
   const essLabel = (ov && ov.ess_score_text) ? ov.ess_score_text.replace(/_/g, " ") : "—";
 
   const signals = [
     {
       name: "ESS",
-      native: _teR ? `${_teR.meaning}` : essLabel,
-      sublabel: `Primary Signal (55%)${_teR ? ' · Normalized ' + _teR.normalizedScore : ''}`,
+      native: essLabel,
+      sublabel: "Primary Signal (55%)",
       direction: essDir,
     },
     {
       name: "Zacks",
-      native: _tzR ? `${_tzR.nativeRating} ${_tzR.meaning}` : (ov && ov.zacks_rating ? `Score ${parseFloat(ov.zacks_rating).toFixed(1)} / 5` : "—"),
-      sublabel: _tzR ? `Normalized ${_tzR.normalizedScore} / 5` : "",
+      native: zRank != null ? `Rank #${zRank} ${_zacksRankLabel(zRank)}` : "—",
+      sublabel: zRank != null ? `Score ${parseFloat(ov.zacks_rating).toFixed(1)} / 5` : "",
       direction: zDir,
     },
     {
       name: "Yahoo ABR",
-      native: _taR ? `${_taR.nativeRating} · ${_taR.meaning}` : (abrVal != null ? `ABR ${abrVal}` : "—"),
-      sublabel: _taR ? `Normalized ${_taR.normalizedScore}` : (ac && ac.consensus_label ? ac.consensus_label.replace(/_/g, " ") : ""),
+      native: abrVal != null ? `ABR ${abrVal}` : "—",
+      sublabel: ac && ac.consensus_label ? ac.consensus_label.replace(/_/g, " ") : "",
       direction: yDir,
     },
     {
       name: "Danelfin",
-      native: _tdR ? `${_tdR.nativeRating}` : (ov && ov.danelfin_score ? `${ov.danelfin_score}` : "—"),
-      sublabel: _tdR ? `${_tdR.meaning} · Normalized ${_tdR.normalizedScore}` : (ov && ov.danelfin_score ? `Score ${parseFloat(ov.danelfin_score).toFixed(1)} / 5` : ""),
+      native: danRaw != null ? `${danRaw} / 10` : "—",
+      sublabel: danRaw != null ? `Score ${parseFloat(ov.danelfin_score).toFixed(1)} / 5` : "",
       direction: danDir,
     },
   ];
@@ -3726,7 +1905,6 @@ function _computeSignalAgreement(ov, ac, fs) {
   const available = signals.filter(s => s.direction !== "UNKNOWN");
   const bullish   = available.filter(s => s.direction === "BULLISH").length;
   const total     = available.length;
-  const observationText = total > 0 ? `${bullish}/${total}` : "No observations";
 
   let label, confidence;
   if (total === 0) {
@@ -3749,7 +1927,7 @@ function _computeSignalAgreement(ov, ac, fs) {
     ((essDir === "BEARISH" && majorityBullish) ||
      (essDir === "BULLISH" && !majorityBullish && total - bullish > bullish));
 
-  return { signals, bullish, total, observationText, label, confidence, essOverride };
+  return { signals, bullish, total, label, confidence, essOverride };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3855,7 +2033,6 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
   const yahooFreshDate = (ac && ac.refresh_date) || "";
   const zacksFreshDate = meta.zacks_refresh_date || "";
   const danFreshDate   = meta.danelfin_refresh_date || "";
-  const essGapWarning  = meta.ess_coverage_warning || null;
 
   const freshnessData = [
     { name: "ESS",      date: essFreshDate,   source: "Fidelity / StarMine" },
@@ -3873,19 +2050,6 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
       <td style="padding:4px 8px">${_freshnessChip(status)}</td>
     </tr>`;
   }).join("");
-
-  const essCoverageHtml = (essGapWarning && Number(essGapWarning.warning_count || 0) > 0)
-    ? `<div class="sa-ess-override" style="margin-top:8px;border-color:#c0392b;background:#fff5f5;">
-        ⚠ <strong>ESS Coverage Warning:</strong>
-        ${Number(essGapWarning.warning_count || 0)} holdings require ESS attention.
-        (${Number(essGapWarning.true_missing_count || 0)} missing,
-        ${Number(essGapWarning.stale_coverage_count || 0)} stale,
-        ${Number(essGapWarning.no_fresh_starmine_count || 0)} no fresh StarMine)
-        ${Array.isArray(essGapWarning.example_symbols) && essGapWarning.example_symbols.length
-          ? `Examples: ${escHtml(essGapWarning.example_symbols.join(", "))}`
-          : ""}
-      </div>`
-    : "";
 
   // ── Yahoo target divergence flag ──────────────────────────────────────────
   const yahooFlag = (ac && ac.abr != null && ac.upside_pct != null &&
@@ -3911,7 +2075,7 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
   return `<div class="sa-panel">
     <div class="sa-panel-header">
       <span class="sa-panel-title">Signal Agreement</span>
-      <span class="sa-count">${escHtml(ag.observationText || "No observations")}</span>
+      <span class="sa-count">${ag.bullish}&thinsp;/&thinsp;${ag.total}</span>
       <span class="sa-label" style="color:${labelColor}">${ag.label}</span>
       <span class="sa-conf ${confCls}">Confidence: ${ag.confidence}</span>
     </div>
@@ -3940,170 +2104,9 @@ function _signalAgreementPanelHtml(ov, ac, fs) {
         </tr></thead>
         <tbody>${freshnessRows}</tbody>
       </table>
-      ${essCoverageHtml}
     </div>` : ""}
     ${yahooFlag}
   </div>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DISLOCATION-03 — Security-Level Conflict Alpha Badges
-// Governance: display-only. No scoring, CW-DAS, ESS, UCF, Replay, CRA, PAP.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Load security alpha summary from API and populate the cache.
- * Called once after analysis loads; non-blocking.
- */
-async function _loadSecurityAlpha() {
-  try {
-    const resp = await fetch("/api/conflict-review/security-alpha-summary");
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (data && data.securities) {
-      _securityAlphaCache = data.securities;
-    }
-  } catch (_) { /* non-blocking */ }
-}
-
-/**
- * Get SecurityConflictAlpha for a symbol from the cache.
- * Returns null if not available.
- */
-function _getSecurityAlpha(symbol) {
-  if (!_securityAlphaCache || !symbol) return null;
-  return _securityAlphaCache[(symbol || "").toUpperCase()] || null;
-}
-
-/**
- * Render a compact inline conflict alpha badge for a security.
- * Used in DQ cards, RQ rows, and dislocation watchlist.
- */
-function _securityAlphaBadgeHtml(symbol) {
-  const sca = _getSecurityAlpha(symbol);
-  if (!sca || !sca.alpha_class || !sca.is_conflict) return "";
-
-  const cfg = {
-    ALPHA_LEADER:  { cls: "diso3-leader",  icon: "↑", label: "ALPHA LEADER" },
-    ALPHA_LAGGARD: { cls: "diso3-laggard", icon: "↓", label: "ALPHA LAGGARD" },
-    ALPHA_NEUTRAL: { cls: "diso3-neutral", icon: "→", label: "ALPHA NEUTRAL" },
-  };
-  const c = cfg[sca.alpha_class] || { cls: "", icon: "·", label: sca.alpha_class };
-  const excessStr = sca.excess_return_pct != null
-    ? ` ${sca.excess_return_pct >= 0 ? "+" : ""}${sca.excess_return_pct}%`
-    : "";
-  const title = `${escHtml(sca.pattern_label || sca.signal_pattern)} · Excess: ${excessStr} · ${escHtml(sca.significance || "")}`;
-
-  return `<span class="diso3-badge ${c.cls}" title="${title}">${c.icon} ${c.label}${excessStr}</span>`;
-}
-
-/**
- * Render a full Security Alpha Insight card (for profile drilldowns).
- */
-function _securityAlphaInsightHtml(symbol) {
-  const sca = _getSecurityAlpha(symbol);
-  if (!sca) return "";
-
-  if (!sca.is_conflict && sca.alpha_class === "ALPHA_NEUTRAL") {
-    return `<div class="diso3-insight diso3-no-conflict">
-      <span class="diso3-insight-label">Signal Conflict</span>
-      <span style="color:var(--muted);font-size:0.76rem">No active conflict — signals aligned.</span>
-    </div>`;
-  }
-  if (!sca.is_conflict) return "";
-
-  const cfg = {
-    ALPHA_LEADER:  { cls: "diso3-leader-card",  badge: "↑ ALPHA LEADER",  badgeCls: "diso3-leader" },
-    ALPHA_LAGGARD: { cls: "diso3-laggard-card", badge: "↓ ALPHA LAGGARD", badgeCls: "diso3-laggard" },
-    ALPHA_NEUTRAL: { cls: "diso3-neutral-card", badge: "→ ALPHA NEUTRAL",  badgeCls: "diso3-neutral" },
-  };
-  const c = cfg[sca.alpha_class] || { cls: "", badge: sca.alpha_class || "—", badgeCls: "" };
-
-  const excessStr  = sca.excess_return_pct != null
-    ? `<span class="${sca.excess_return_pct >= 0 ? "scr-ret-pos" : "scr-ret-neg"}">${sca.excess_return_pct >= 0 ? "+" : ""}${sca.excess_return_pct}%</span>`
-    : "—";
-  const avgStr = sca.avg_return_30d_pct != null
-    ? `${sca.avg_return_30d_pct >= 0 ? "+" : ""}${sca.avg_return_30d_pct}%`
-    : "—";
-  const winStr = sca.win_rate_pct != null ? `${sca.win_rate_pct}%` : "—";
-  const sigBadge = sca.significance && sca.significance !== "INSUFFICIENT_DATA"
-    ? `<span class="scr-sig-badge scr-sig-${sca.significance.toLowerCase()}">${sca.significance}</span>`
-    : "";
-  const obsCopy = sca.observations > 0
-    ? `<span style="font-size:0.70rem;color:var(--muted)">${sca.observations} obs</span>` : "";
-
-  // DISLOCATION-06: attach calibration
-  const cal = _getCalibration(sca.signal_pattern);
-  const confBadge = cal ? _confidenceBadgeHtml(sca.signal_pattern) : "";
-  const maeStr  = cal && cal.mae_pp != null ? `MAE ±${cal.mae_pp}pp` : null;
-  const band2   = cal && cal.accuracy_bands ? cal.accuracy_bands["within_2pp"] : null;
-  const calMeta = (maeStr || band2 != null) ? `<div class="diso6-cal-meta">${
-    [maeStr, band2 != null ? `${band2}% within ±2pp` : null, cal && cal.n ? `${cal.n} calibration obs` : null]
-      .filter(Boolean).join(" · ")
-  }</div>` : "";
-
-  return `<div class="diso3-insight ${c.cls}">
-    <div class="diso3-insight-header">
-      <span class="diso3-insight-label">Conflict Alpha</span>
-      <span class="diso3-badge ${c.badgeCls}">${c.badge}</span>
-      ${sigBadge}
-      ${confBadge}
-      ${obsCopy}
-    </div>
-    <div class="diso3-insight-pattern">${escHtml(sca.pattern_label || sca.signal_pattern)}</div>
-    <div class="diso3-insight-metrics">
-      <span><span class="diso3-met-lbl">Excess Return</span> ${excessStr}</span>
-      <span><span class="diso3-met-lbl">Avg 30d Return</span> ${avgStr}</span>
-      <span><span class="diso3-met-lbl">Above-Median Rate</span> ${winStr}</span>
-    </div>
-    ${calMeta}
-    <div class="diso3-insight-text">${escHtml(sca.insight || "")}</div>
-    <div class="diso3-insight-gov">Informational only — research finding, not a trade signal.</div>
-  </div>`;
-}
-
-/**
- * DISLOCATION-06: Load calibration index.
- */
-async function _loadCalibrationCache() {
-  try {
-    const resp = await fetch("/api/predictive/calibration");
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (data && data.patterns) {
-      _calibrationCache = {};
-      for (const c of data.patterns) {
-        if (c.pattern) _calibrationCache[c.pattern] = c;
-      }
-    }
-  } catch (_) { /* non-blocking */ }
-}
-
-/**
- * Get calibration data for a conflict pattern.
- */
-function _getCalibration(pattern) {
-  if (!_calibrationCache || !pattern) return null;
-  return _calibrationCache[pattern] || null;
-}
-
-/**
- * DISLOCATION-06: Render confidence badge for a conflict pattern.
- */
-function _confidenceBadgeHtml(pattern) {
-  const cal = _getCalibration(pattern);
-  if (!cal || !cal.confidence || cal.confidence === "INSUFFICIENT_DATA") return "";
-  const cfg = {
-    VERY_HIGH: { cls: "diso6-very-high", label: "⭐ VERY HIGH CONFIDENCE" },
-    HIGH:      { cls: "diso6-high",      label: "↑ HIGH CONFIDENCE" },
-    MEDIUM:    { cls: "diso6-medium",    label: "~ MEDIUM CONFIDENCE" },
-    LOW:       { cls: "diso6-low",       label: "↓ LOW CONFIDENCE" },
-  };
-  const c = cfg[cal.confidence] || { cls: "", label: cal.confidence };
-  const mae = cal.mae_pp != null ? ` · MAE ±${cal.mae_pp}pp` : "";
-  const band2 = (cal.accuracy_bands || {})["within_2pp"];
-  const acc = band2 != null ? ` · ${band2}% within ±2pp` : "";
-  return `<span class="diso6-badge ${c.cls}" title="Calibration n=${cal.n || 0}${mae}${acc}">${c.label}</span>`;
 }
 
 function _actionBadge(action) {
@@ -4179,7 +2182,6 @@ function renderHoldingsTable(holdings, containerId, sortMode) {
           ${_fidelityPanelHtml(fs)}
           ${_consensusPanelHtml(ac, h.ess_score_text)}
           ${_consensusStackHtml(fs, ac)}
-          ${_signalIntelligencePanelHtml(h.symbol, h, ac, fs)}
         </td>
       </tr>`;
   }).join("");
@@ -4209,346 +2211,6 @@ function toggleRpsExplain(explainId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AI-006C — Signal Intelligence Panel (Explainable Signal Decomposition)
-// Display-only. No scoring, ranking, or recommendation changes.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Build the full signal intelligence explainability panel for a holding row.
- * Shows: CW-DAS decomposition, UCF reasoning, driver summary, conflict analysis.
- * All data sourced from existing analysis artifacts — no new backend calls.
- */
-function _signalIntelligencePanelHtml(sym, ov, ac, fs) {
-  if (!sym) return "";
-  const symU = sym.toUpperCase();
-
-  // ── Data sources ──────────────────────────────────────────────────────────
-  const ucfBySymbol = (_lastAnalysisData && _lastAnalysisData.ucf_verdicts_by_symbol) || {};
-  const ucf = ucfBySymbol[symU] || {};
-  const srcSig = ucf.source_signals || {};
-  const dqBySymbol = {};
-  if (_lastAnalysisData && _lastAnalysisData.deployment_queue && _lastAnalysisData.deployment_queue.queue) {
-    for (const c of _lastAnalysisData.deployment_queue.queue) {
-      dqBySymbol[c.symbol] = c;
-    }
-  }
-  const dqEntry = dqBySymbol[symU] || {};
-  const bd = dqEntry.score_breakdown || {};
-
-  const essText    = (ov && ov.ess_score_text)  || (fs && fs.ess_text) || "";
-  const danelfin   = ov && ov.danelfin_score != null ? parseFloat(ov.danelfin_score) : null;
-  const zacks      = ov && ov.zacks_rating   != null ? parseFloat(ov.zacks_rating)   : null;
-  const composite  = ov && ov.composite_score != null ? parseFloat(ov.composite_score) : null;
-  const replayPct  = ov && ov.replay_percentile != null ? parseFloat(ov.replay_percentile) : null;
-  const replayOn   = ov && (ov.replay_supported === true || ov.replay_supported === "True");
-  const ucfLabel   = ucf.ucf_label  || "";
-  const ucfScore   = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score)  : null;
-  const ucfRank    = ucf.ucf_rank   != null ? parseInt(ucf.ucf_rank)     : null;
-  const ucfSummary = ucf.signal_summary || "";
-  const conflictFlags = ucf.conflict_flags || [];
-  const matrix = (fs && fs.consensus_matrix) || {};
-
-  // Nothing useful to show if we have no data
-  const hasData = essText || composite != null || ucfLabel || (bd.signal != null);
-  if (!hasData) return "";
-
-  // ── Helper: direction coloring ────────────────────────────────────────────
-  const dirColor = d => d === "BULLISH" ? "var(--green)" : d === "BEARISH" ? "var(--sev-high)" : "var(--muted)";
-  const dirChip  = d => `<span style="color:${dirColor(d)};font-weight:700;font-size:0.8rem">${d || "—"}</span>`;
-
-  // ── Section A: CW-DAS Score Decomposition ─────────────────────────────────
-  let cwdasHtml = "";
-  if (bd.signal != null || Object.keys(bd).length > 0) {
-    const totalScore = dqEntry.deployment_score != null ? parseFloat(dqEntry.deployment_score).toFixed(1) : "—";
-    const bars = [
-      { lbl: "Signal",      val: bd.signal,             max: 30,  tip: "ESS + Danelfin + Zacks weighted direction signal",    positive: true },
-      { lbl: "Replay",      val: bd.replay,             max: 20,  tip: "Replay backing strength and percentile",              positive: true },
-      { lbl: "Conviction",  val: bd.conviction,         max: 35,  tip: "UCF tier × conviction multiplier (CCL 1.75×, HCA 1.25×)", positive: true },
-      { lbl: "Sizing",      val: bd.sizing,             max: 8,   tip: "Headroom to portfolio weight warning threshold",      positive: true },
-      { lbl: "Momentum",    val: bd.momentum,           max: 10,  tip: "ESS momentum direction score",                       positive: true },
-      { lbl: "Fund. Mod",   val: bd.fundamental_modifier, max: 5, tip: "Fundamental consistency bonus or penalty",           positive: null },
-      { lbl: "Redund. Pen", val: -(bd.redundancy_pen||0), max: 0, tip: "Allocation node overweight penalty",                 positive: false },
-      { lbl: "Conc. Pen",   val: -(bd.conc_pen||0),    max: 0,   tip: "Concentration penalty for outsized positions",       positive: false },
-    ].filter(b => b.val != null && b.val !== 0);
-
-    const barRows = bars.map(b => {
-      const v = parseFloat(b.val) || 0;
-      const sign = v >= 0 ? "+" : "";
-      const isPos = b.positive === true || (b.positive === null && v > 0);
-      const col   = isPos ? "var(--green)" : "var(--sev-high)";
-      const pct   = b.max > 0 ? Math.min(100, Math.abs(v) / b.max * 100) : Math.min(100, Math.abs(v) * 20);
-      return `<div class="si-bd-row" title="${escHtml(b.tip)}">
-        <span class="si-bd-lbl">${escHtml(b.lbl)}</span>
-        <div class="si-bd-bar-wrap"><div class="si-bd-bar" style="width:${pct.toFixed(0)}%;background:${col}"></div></div>
-        <span class="si-bd-val" style="color:${col}">${sign}${v.toFixed(1)}</span>
-      </div>`;
-    }).join("");
-
-    cwdasHtml = `<div class="si-section">
-      <div class="si-section-title">CW-DAS Score Decomposition
-        <span class="si-section-sub">Deployment Score: <strong>${totalScore}</strong></span>
-        ${bd.thesis_integrity ? `<span class="si-badge si-badge-${bd.thesis_integrity === 'INTACT' ? 'green' : 'warn'}">${escHtml(bd.thesis_integrity)}</span>` : ""}
-        ${bd.fundamental_consistency ? `<span class="si-badge si-badge-${bd.fundamental_consistency === 'CONSISTENT' ? 'green' : 'warn'}">${escHtml(bd.fundamental_consistency.replace(/_/g," "))}</span>` : ""}
-      </div>
-      <div class="si-bd-grid">${barRows}</div>
-      ${dqEntry.notes ? `<div class="si-notes">${escHtml(dqEntry.notes)}</div>` : ""}
-    </div>`;
-  }
-
-  // ── Section B: UCF Explainability ─────────────────────────────────────────
-  let ucfHtml = "";
-  if (ucfLabel) {
-    const ucfLabelColor = {
-      CORE_CONVICTION_LEADER: "#1a6ea8",
-      HIGH_CONVICTION_ANCHOR: "#1976d2",
-      DEPLOYMENT_CANDIDATE:   "#2e7d52",
-      TACTICAL_GROWTH:        "#6a5acd",
-      MAINTAIN:               "#888",
-      TRIM_WATCH:             "#c0392b",
-    }[ucfLabel] || "var(--muted)";
-
-    const ucfDrivers = [];
-    if (srcSig.composite_score != null) ucfDrivers.push({ factor: "Composite Score", val: parseFloat(srcSig.composite_score).toFixed(2) + " / 5", rationale: "Blended ESS+Danelfin+Zacks signal score" });
-    if (srcSig.signal_direction)         ucfDrivers.push({ factor: "Signal Direction", val: srcSig.signal_direction, rationale: "Dominant signal direction across all providers" });
-    if (srcSig.replay_supported)         ucfDrivers.push({ factor: "Replay Support",  val: replayPct != null ? `${Math.round(replayPct)}th percentile` : "Active", rationale: "Historical setup has replay-backed evidence" });
-    if (srcSig.cw_das_score != null)     ucfDrivers.push({ factor: "CW-DAS Score",   val: parseFloat(srcSig.cw_das_score).toFixed(1), rationale: "Conviction-Weighted Deployment Allocation Score" });
-    if (srcSig.cw_das_rank != null)      ucfDrivers.push({ factor: "CW-DAS Rank",    val: "#" + srcSig.cw_das_rank + " in portfolio", rationale: "Portfolio-wide deployment priority ranking" });
-    if (srcSig.trim_priority_score != null && srcSig.trim_priority_score > 0)
-                                          ucfDrivers.push({ factor: "Trim Pressure",  val: parseFloat(srcSig.trim_priority_score).toFixed(0) + " / 100", rationale: "Higher = greater signal to reduce" });
-
-    const driverRows = ucfDrivers.map(d => `
-      <tr>
-        <td style="font-weight:600;font-size:0.80rem;padding:4px 8px;white-space:nowrap">${escHtml(d.factor)}</td>
-        <td style="font-size:0.80rem;padding:4px 8px;font-weight:700">${escHtml(d.val)}</td>
-        <td style="font-size:0.76rem;color:var(--muted);padding:4px 8px">${escHtml(d.rationale)}</td>
-      </tr>`).join("");
-
-    const deploymentStatus = ucf.deployment
-      ? (ucf.deployment.deployment_blocked
-          ? `<span class="si-badge si-badge-warn">Blocked: ${escHtml(ucf.deployment.deployment_block_reason || "overweight node")}</span>`
-          : `<span class="si-badge si-badge-green">Deployment Eligible</span>`)
-      : "";
-
-    ucfHtml = `<div class="si-section">
-      <div class="si-section-title">UCF Classification
-        <span style="color:${ucfLabelColor};font-weight:700;font-size:0.88rem;margin-left:6px">${escHtml(ucfLabel.replace(/_/g," "))}</span>
-        ${ucfScore != null ? `<span class="si-section-sub">Score: ${ucfScore.toFixed(1)}</span>` : ""}
-        ${ucfRank  != null ? `<span class="si-section-sub">Rank: #${ucfRank}</span>` : ""}
-        ${deploymentStatus}
-      </div>
-      ${ucfSummary ? `<div class="si-summary-text">${escHtml(ucfSummary)}</div>` : ""}
-      ${driverRows ? `<table class="si-driver-table"><tbody>${driverRows}</tbody></table>` : ""}
-      ${conflictFlags.length ? `<div class="si-conflict-flags">${conflictFlags.map(f => `<span class="si-badge si-badge-warn">⚑ ${escHtml(f.replace(/_/g," "))}</span>`).join(" ")}</div>` : ""}
-    </div>`;
-  }
-
-  // ── Section C: Recommendation Driver Summary ──────────────────────────────
-  const bullishDrivers = [];
-  const bearishDrivers = [];
-  const neutralDrivers = [];
-
-  // ESS
-  if (essText) {
-    const essDir = (essText === "VERY_BULLISH" || essText === "BULLISH") ? "bullish"
-                 : (essText === "VERY_BEARISH" || essText === "BEARISH") ? "bearish" : "neutral";
-    const essLabel = essText.replace(/_/g," ");
-    if (essDir === "bullish")  bullishDrivers.push({ icon: "✓", label: `ESS (StarMine): ${essLabel}`, strength: essText === "VERY_BULLISH" ? "STRONG" : "MODERATE" });
-    else if (essDir === "bearish") bearishDrivers.push({ icon: "✗", label: `ESS (StarMine): ${essLabel}`, strength: essText === "VERY_BEARISH" ? "STRONG" : "MODERATE" });
-    else neutralDrivers.push({ icon: "·", label: `ESS (StarMine): ${essLabel}`, strength: "WEAK" });
-  }
-
-  // Replay
-  if (replayOn && replayPct != null) {
-    if (replayPct >= 60) bullishDrivers.push({ icon: "✓", label: `Replay: ${Math.round(replayPct)}th percentile`, strength: replayPct >= 80 ? "STRONG" : "MODERATE" });
-    else neutralDrivers.push({ icon: "·", label: `Replay: ${Math.round(replayPct)}th percentile`, strength: "WEAK" });
-  } else if (replayOn) {
-    bullishDrivers.push({ icon: "✓", label: "Replay: Supported", strength: "MODERATE" });
-  }
-
-  // Composite score
-  if (composite != null) {
-    if (composite >= 3.5)      bullishDrivers.push({ icon: "✓", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: composite >= 4.5 ? "STRONG" : "MODERATE" });
-    else if (composite <= 2.5) bearishDrivers.push({ icon: "✗", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: composite <= 1.5 ? "STRONG" : "MODERATE" });
-    else neutralDrivers.push({ icon: "·", label: `Composite Score: ${composite.toFixed(2)} / 5`, strength: "WEAK" });
-  }
-
-  // Danelfin
-  if (danelfin != null) {
-    if (danelfin >= 3.5)      bullishDrivers.push({ icon: "✓", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: danelfin >= 4.5 ? "STRONG" : "MODERATE" });
-    else if (danelfin <= 2.5) bearishDrivers.push({ icon: "✗", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: danelfin <= 1.5 ? "STRONG" : "MODERATE" });
-    else neutralDrivers.push({ icon: "·", label: `Danelfin AI: ${danelfin.toFixed(1)} / 5`, strength: "WEAK" });
-  }
-
-  // Zacks
-  if (zacks != null) {
-    if (zacks <= 2.0)      bullishDrivers.push({ icon: "✓", label: `Zacks: ${zacks.toFixed(0)} (${zacks <= 1.5 ? "Strong Buy" : "Buy"})`, strength: zacks <= 1.5 ? "STRONG" : "MODERATE" });
-    else if (zacks >= 4.0) bearishDrivers.push({ icon: "✗", label: `Zacks: ${zacks.toFixed(0)} (Sell)`, strength: "MODERATE" });
-    else neutralDrivers.push({ icon: "·", label: `Zacks: ${zacks.toFixed(0)} (Hold)`, strength: "WEAK" });
-  }
-
-  // Analyst consensus
-  if (ac && ac.consensus_label && ac.consensus_label !== "NO_CONSENSUS") {
-    const isBuy = ["STRONG_BUY","BUY","MODERATE_BUY"].includes(ac.consensus_label);
-    const isSell = ["SELL"].includes(ac.consensus_label);
-    const label = `Analyst Consensus: ${ac.consensus_label.replace(/_/g," ")}${ac.upside_pct != null ? ` (${ac.upside_pct >= 0 ? "+" : ""}${parseFloat(ac.upside_pct).toFixed(1)}% upside)` : ""}`;
-    if (isBuy)       bullishDrivers.push({ icon: "✓", label, strength: ac.consensus_label === "STRONG_BUY" ? "STRONG" : "MODERATE" });
-    else if (isSell) bearishDrivers.push({ icon: "✗", label, strength: "MODERATE" });
-    else             neutralDrivers.push({ icon: "·", label, strength: "WEAK" });
-  }
-
-  // Fundamental modifier
-  if (bd.fundamental_modifier != null && bd.fundamental_modifier !== 0) {
-    const fm = parseFloat(bd.fundamental_modifier);
-    if (fm >= 1.5) bullishDrivers.push({ icon: "✓", label: `Fundamental Quality: +${fm.toFixed(1)} bonus (strong business quality)`, strength: fm >= 3 ? "STRONG" : "MODERATE" });
-    else if (fm <= -1.5) bearishDrivers.push({ icon: "✗", label: `Fundamental Quality: ${fm.toFixed(1)} penalty (thesis deterioration)`, strength: Math.abs(fm) >= 3 ? "STRONG" : "MODERATE" });
-  }
-
-  // Deployment block
-  if (ucf.deployment && ucf.deployment.deployment_blocked) {
-    bearishDrivers.push({ icon: "✗", label: `Deployment: Blocked (${ucf.deployment.deployment_block_reason || "overweight node"})`, strength: "MODERATE" });
-  }
-
-  const strengthColor = s => s === "STRONG" ? "var(--green)" : s === "MODERATE" ? "#e67e22" : "var(--muted)";
-  const driverItem = (d) => `<div class="si-driver-item ${d.icon === "✓" ? "si-driver-bullish" : d.icon === "✗" ? "si-driver-bearish" : "si-driver-neutral"}">
-    <span class="si-driver-icon">${d.icon}</span>
-    <span class="si-driver-label">${escHtml(d.label)}</span>
-    <span class="si-driver-strength" style="color:${strengthColor(d.strength)}">${escHtml(d.strength)}</span>
-  </div>`;
-
-  const driverSummaryHtml = (bullishDrivers.length + bearishDrivers.length + neutralDrivers.length > 0)
-    ? `<div class="si-section">
-        <div class="si-section-title">Recommendation Driver Summary</div>
-        <div class="si-drivers-grid">
-          ${bullishDrivers.length ? `<div class="si-driver-col">
-            <div class="si-driver-col-header si-col-bullish">Bullish Evidence (${bullishDrivers.length})</div>
-            ${bullishDrivers.map(driverItem).join("")}
-          </div>` : ""}
-          ${bearishDrivers.length ? `<div class="si-driver-col">
-            <div class="si-driver-col-header si-col-bearish">Bearish Evidence (${bearishDrivers.length})</div>
-            ${bearishDrivers.map(driverItem).join("")}
-          </div>` : ""}
-          ${neutralDrivers.length ? `<div class="si-driver-col">
-            <div class="si-driver-col-header si-col-neutral">Neutral (${neutralDrivers.length})</div>
-            ${neutralDrivers.map(driverItem).join("")}
-          </div>` : ""}
-        </div>
-      </div>`
-    : "";
-
-  // ── Section D: Conflict Explanation ──────────────────────────────────────
-  let conflictHtml = "";
-  const matrixClass = matrix.classification || "";
-  if (matrixClass === "MAJOR_DIVERGENCE" || matrixClass === "PARTIAL_ALIGNMENT" || conflictFlags.length > 0) {
-    const essDir   = matrix.ess_direction   || _essDirection(essText);
-    const zDir     = matrix.zacks_direction || "UNKNOWN";
-    const yahDir   = matrix.yahoo_direction || (ac ? _essDirection(ac.consensus_label === "STRONG_BUY" || ac.consensus_label === "BUY" ? "BULLISH" : ac.consensus_label === "SELL" ? "BEARISH" : "NEUTRAL") : "UNKNOWN");
-    const danDir   = danelfin != null ? (danelfin >= 3.5 ? "BULLISH" : danelfin <= 2.5 ? "BEARISH" : "NEUTRAL") : "UNKNOWN";
-
-    const sigs = [
-      { name: "ESS (StarMine)", dir: essDir,  native: essText ? essText.replace(/_/g," ") : "—" },
-      { name: "Danelfin AI",    dir: danDir,  native: danelfin != null ? danelfin.toFixed(1) + " / 5" : "—" },
-      { name: "Zacks",          dir: zDir,    native: zacks != null ? zacks.toFixed(0) + " (1=StrongBuy)" : "—" },
-      { name: "Yahoo Consensus",dir: yahDir,  native: ac ? (ac.consensus_label || "—").replace(/_/g," ") : "—" },
-    ].filter(s => s.dir && s.dir !== "UNKNOWN");
-
-    const conflictRows = sigs.map(s => `<div class="si-conflict-row">
-      <span class="si-conflict-name">${escHtml(s.name)}</span>
-      <span class="si-conflict-native" style="color:var(--muted)">${escHtml(s.native)}</span>
-      ${dirChip(s.dir)}
-    </div>`).join("");
-
-    const conflictSource = matrixClass === "MAJOR_DIVERGENCE"
-      ? "Institutional quantitative signals (ESS, Danelfin) diverge from analyst consensus. This is the root of the signal disagreement."
-      : "Signals show partial alignment — some sources agree while others diverge.";
-
-    conflictHtml = `<div class="si-section si-section-conflict">
-      <div class="si-section-title">Signal Conflict Analysis
-        <span class="si-badge ${matrixClass === "MAJOR_DIVERGENCE" ? "si-badge-warn" : "si-badge-neutral"}">${escHtml(matrixClass.replace(/_/g," "))}</span>
-      </div>
-      <div class="si-conflict-grid">${conflictRows}</div>
-      <div class="si-conflict-source"><strong>Conflict Source:</strong> ${escHtml(conflictSource)}</div>
-    </div>`;
-  }
-
-  // ── Assemble panel ────────────────────────────────────────────────────────
-  if (!cwdasHtml && !ucfHtml && !driverSummaryHtml && !conflictHtml) return "";
-
-  return `<details class="si-panel">
-    <summary class="si-panel-summary">
-      <span class="si-panel-title">▸ Signal Intelligence</span>
-      <span class="si-panel-sub">CW-DAS · UCF · Evidence · Conflicts</span>
-    </summary>
-    <div class="si-panel-body">
-      ${driverSummaryHtml}
-      ${cwdasHtml}
-      ${ucfHtml}
-      ${conflictHtml}
-    </div>
-  </details>`;
-}
-
-function _formatExplanationDriverList(items, formatter) {
-  if (!Array.isArray(items) || !items.length) return `<div class="explain-empty">None available.</div>`;
-  return `<ul class="explain-list">${items.map((item) => `<li>${formatter(item)}</li>`).join("")}</ul>`;
-}
-
-function _buildExplanationBlock(rec) {
-  const explanationMap = (_analysisResult && _analysisResult.explanations_by_recommendation) || {};
-  const explanation = explanationMap[rec.recommendation_id];
-  if (!explanation) return "";
-
-  const supporting = _formatExplanationDriverList(explanation.supporting_reasons || [], (item) => escHtml(String(item || "")));
-  const policy = _formatExplanationDriverList(explanation.policy_drivers || [], (item) => {
-    const symbol = item.symbol ? `${escHtml(item.symbol)}: ` : "";
-    const value = item.value || item.source_type || item.driver_type || "";
-    return `${symbol}${escHtml(String(value))}`;
-  });
-  const signals = _formatExplanationDriverList(explanation.signal_drivers || [], (item) => {
-    const symbol = item.symbol ? `${escHtml(item.symbol)} ` : "";
-    const field = item.field ? `${escHtml(item.field)}=` : "";
-    return `${escHtml(item.source || "Signal")}: ${symbol}${field}${escHtml(String(item.value ?? ""))}`;
-  });
-  const funding = _formatExplanationDriverList(explanation.funding_drivers || [], (item) => {
-    const syms = Array.isArray(item.symbols) && item.symbols.length ? ` (${item.symbols.map((s) => escHtml(s)).join(", ")})` : "";
-    const pct = item.available_pct != null ? ` ~${Number(item.available_pct).toFixed(1)}%` : "";
-    return `${escHtml(String(item.source_type || item.driver_type || ""))}${syms}${pct}`;
-  });
-  const philosophies = _formatExplanationDriverList(explanation.philosophy_drivers || [], (item) => `${escHtml(String(item.philosophy || ""))} (${escHtml(String(item.score || 0))})`);
-
-  return `
-    <details class="rec-explanation-block">
-      <summary>Recommendation Explanation</summary>
-      <div class="rec-explanation-grid">
-        <div class="explain-section">
-          <div class="explain-label">Primary Reason</div>
-          <div class="explain-primary">${escHtml(explanation.primary_reason || "")}</div>
-        </div>
-        <div class="explain-section">
-          <div class="explain-label">Supporting Factors</div>
-          ${supporting}
-        </div>
-        <div class="explain-section">
-          <div class="explain-label">Policy Drivers</div>
-          ${policy}
-        </div>
-        <div class="explain-section">
-          <div class="explain-label">Signal Drivers</div>
-          ${signals}
-        </div>
-        <div class="explain-section">
-          <div class="explain-label">Funding Drivers</div>
-          ${funding}
-        </div>
-        <div class="explain-section">
-          <div class="explain-label">Applied Philosophy</div>
-          ${philosophies}
-        </div>
-      </div>
-      <div class="explain-version">Explanation Version: ${escHtml(explanation.explanation_version || "1")}</div>
-    </details>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Recommendations
 // ─────────────────────────────────────────────────────────────────────────────
 function renderRecommendations(recs) {
@@ -4565,29 +2227,7 @@ function renderRecommendations(recs) {
   // Cache all recs by ID for later use in drilldown functions
   recs.forEach(r => { if (r.recommendation_id) _recDataCache[r.recommendation_id] = r; });
 
-  // ── PRA-IMPL-03: Partition recs into lanes ──────────────────────────────
-  const laneAction   = [];
-  const laneBlocked  = [];
-  const laneAnchor   = [];
-  const laneNarrative = [];
-  const laneExplain  = [];
-  const laneObs      = [];
-
-  recs.forEach(r => {
-    const ct = r.card_type       || "DIAGNOSTIC";
-    const es = r.execution_state || "EXECUTABLE";
-    const rt = r.recommendation_type || "";
-    if (_CONVICTION_ANCHOR_TYPES.has(rt))   { laneAnchor.push(r); }
-    else if (_NARRATIVE_TYPES.has(rt))      { laneNarrative.push(r); }
-    else if (_EXPLAINABILITY_TYPES.has(rt)) { laneExplain.push(r); }
-    else if (ct === "ACTION") {
-      if (es === "BLOCKED_BY_POLICY" || es === "DEFERRED_BY_POLICY") { laneBlocked.push(r); }
-      else { laneAction.push(r); }
-    } else { laneObs.push(r); }
-  });
-
-  // ── Card builder (same logic as before, reused for all lanes) ──────────
-  const buildCard = (r, i) => {
+  const cards = recs.map((r, i) => {
     const symbols = (r.affected_symbols || []).map(s =>
       `<span class="rec-symbol">${s}</span>`
     ).join("");
@@ -4595,41 +2235,6 @@ function renderRecommendations(recs) {
     const driftStr = r.drift_pct != null
       ? `<span style="font-size:0.78rem;color:var(--muted)">Drift: ${parseFloat(r.drift_pct) > 0 ? "+" : ""}${parseFloat(r.drift_pct).toFixed(1)}pp</span>`
       : "";
-
-    // Policy execution state badge (PRA-IMPL-02 / ARCH-04 per-symbol)
-    const execState = r.execution_state || "";
-    const symStates = r.symbol_execution_states || {};
-    let policyBadgeHtml = "";
-    if (execState === "BLOCKED_BY_POLICY") {
-      // All symbols blocked — find the blocked one for the unblock hint
-      const blockedSym = Object.keys(symStates).find(s => symStates[s].execution_state === "BLOCKED_BY_POLICY") || (r.affected_symbols || [])[0] || "";
-      const unblockHint = blockedSym
-        ? `<span class="rec-unblock-hint">To unblock: remove DO_NOT_SELL policy on ${escHtml(blockedSym)}.</span>`
-        : "";
-      policyBadgeHtml = `<span class="rec-policy-badge policy-blocked">🔒 Operator Protected — not executable</span>${unblockHint}`;
-    } else if (execState === "DEFERRED_BY_POLICY") {
-      // All symbols deferred — find the deferred one for the hint
-      const deferredSym = Object.keys(symStates).find(s => symStates[s].execution_state === "DEFERRED_BY_POLICY") || (r.affected_symbols || []).find(s => s) || "";
-      const deferHint = deferredSym
-        ? `<span class="rec-unblock-hint">To prioritize: remove SELL_LAST policy on ${escHtml(deferredSym)}.</span>`
-        : "";
-      policyBadgeHtml = `<span class="rec-policy-badge policy-deferred">⏸ Sell Last — deferred</span>${deferHint}`;
-    } else if (execState === "EXECUTABLE" && Object.keys(symStates).length > 0) {
-      // ARCH-04: rec is executable but some symbols may still be individually constrained — show compact per-symbol badges
-      const constrainedSyms = Object.entries(symStates).filter(([, v]) => v.execution_state !== "EXECUTABLE");
-      if (constrainedSyms.length > 0) {
-        const symBadges = constrainedSyms.map(([sym, v]) => {
-          if (v.execution_state === "BLOCKED_BY_POLICY") {
-            return `<span class="rec-policy-badge policy-blocked" title="To unblock: remove DO_NOT_SELL policy on ${escHtml(sym)}">🔒 ${escHtml(sym)}: Blocked</span>`;
-          }
-          if (v.execution_state === "DEFERRED_BY_POLICY") {
-            return `<span class="rec-policy-badge policy-deferred" title="To prioritize: remove SELL_LAST policy on ${escHtml(sym)}">⏸ ${escHtml(sym)}: Sell Last</span>`;
-          }
-          return "";
-        }).filter(Boolean).join(" ");
-        policyBadgeHtml = symBadges ? `<div class="rec-sym-policy-strip">${symBadges}</div>` : "";
-      }
-    }
 
     // Phase C — rec_state badge
     const state = r.rec_state || "ACTIVE";
@@ -4684,6 +2289,7 @@ function renderRecommendations(recs) {
     const optimizerViewHtml   = _buildOptimizerViewBlock(r);
 
     // Phase 23.5 — Block Diagnostics + Next Best Action panel
+    // Replaces the old simple banner for MANDATE_BLOCKED / NO_CANDIDATES cases.
     const blockDiagnosticsHtml = _renderBlockDiagnosticsPanel(r);
 
     // Drill-down toggle button — only shown when drilldown data exists
@@ -4693,11 +2299,12 @@ function renderRecommendations(recs) {
       ? `<button class="drill-toggle" id="drill-toggle-${r.recommendation_id}"
            onclick="toggleDrilldown('${r.recommendation_id}')">▼ View ${holdingCount} Holdings</button>`
       : "";
-        const explanationHtml = _buildExplanationBlock(r);
 
     const recType = r.recommendation_type || "";
     const isPhaseE = _PHASE_E_TYPES.has(recType);
 
+    // Phase 22D.2 WS-C: Legacy simple banner kept only for NON-INCREASE_UNDERWEIGHT blocked recs.
+    // For INCREASE_UNDERWEIGHT, the full Block Diagnostics panel (blockDiagnosticsHtml) is used.
     let blockedWarningHtml = "";
     if (recType !== "INCREASE_UNDERWEIGHT" && r.optimizer_metadata) {
       const decision = r.optimizer_metadata.optimizer_decision || "";
@@ -4718,7 +2325,6 @@ function renderRecommendations(recs) {
     return `<div class="rec-card pri-${r.priority} state-${state} type-${recType} urgency-${r.mandate_urgency || ""}">
       ${isPhaseE ? _phaseETypeHeader(recType) : ""}
       <div class="rec-title">#${i+1} &nbsp; ${escHtml(r.title)}</div>
-      ${policyBadgeHtml}
       <div class="rec-rationale">${escHtml(r.rationale)}</div>
       ${blockedWarningHtml}
       ${blockDiagnosticsHtml}
@@ -4738,7 +2344,6 @@ function renderRecommendations(recs) {
         ? `<div class="cash-context-block"><div class="cash-context-label">Cash Mandate Context</div>${escHtml(r.cash_mandate_context)}</div>`
         : ""}
       ${phaseEHtml}
-      ${explanationHtml}
       ${traceHtml}
       ${optimizerBadgesHtml}
       ${optimizerViewHtml}
@@ -4752,156 +2357,9 @@ function renderRecommendations(recs) {
       ${drillBtn}
       <div class="rec-drilldown" id="drilldown-panel-${r.recommendation_id}"></div>
     </div>`;
-  };
+  }).join("");
 
-  // ── Lane section builder ────────────────────────────────────────────────
-  let globalIdx = 0;
-  const buildLane = (items, laneClass, label, collapsedByDefault = false) => {
-    if (!items.length) return "";
-    const bodyId = `lane-body-${laneClass}`;
-    const bodyClass = collapsedByDefault ? "rec-lane-body lane-collapsed" : "rec-lane-body";
-    const toggleLabel = collapsedByDefault ? "Show ▾" : "Hide ▴";
-    const cards = items.map(r => buildCard(r, ++globalIdx)).join("");
-    return `<div class="rec-lane">
-      <div class="rec-lane-header lane-${laneClass}">
-        <span class="lane-label">${label}</span>
-        <span class="lane-count">${items.length}</span>
-        <button class="rec-lane-toggle" onclick="_toggleLane('${bodyId}', this)">${toggleLabel}</button>
-      </div>
-      <div class="${bodyClass}" id="${bodyId}">
-        ${cards}
-      </div>
-    </div>`;
-  };
-
-  // ── PRA-IMPL-06: Conviction Anchors — ranked Top 5 + full registry ─────
-  const buildConvictionAnchorLane = (items) => {
-    if (!items.length) return "";
-
-    // Ranking: tier → composite score → replay → portfolio weight
-    const _TIER_ORDER = {
-      CORE_CONVICTION_LEADER: 0,
-      HIGH_CONVICTION_ANCHOR: 1,
-      TACTICAL_GROWTH_CANDIDATE: 2,
-      WATCH_TRIM_CANDIDATE: 3,
-    };
-    const _tierShort = t =>
-      t === "CORE_CONVICTION_LEADER" ? "CCL"
-      : t === "HIGH_CONVICTION_ANCHOR" ? "HCA"
-      : t === "TACTICAL_GROWTH_CANDIDATE" ? "TGC"
-      : t === "WATCH_TRIM_CANDIDATE" ? "WTC" : "—";
-
-    // Build per-symbol deduplicated list (prefer CONVICTION_EXPLAINABILITY_CARD for info depth)
-    const bySymbol = {};
-    for (const r of items) {
-      const sym = (r.affected_symbols || [])[0] || r.recommendation_id;
-      if (!bySymbol[sym] || r.recommendation_type === "CONVICTION_EXPLAINABILITY_CARD") {
-        bySymbol[sym] = r;
-      }
-    }
-    const unique = Object.values(bySymbol);
-
-    // Sort unique symbols by tier → composite → replay → weight using drilldown data
-    unique.sort((a, b) => {
-      // Extract tier from reasoning_trace or title (available from card data)
-      const getTier = r => {
-        const trace = r.reasoning_trace || r.title || "";
-        if (trace.includes("CORE_CONVICTION_LEADER")) return 0;
-        if (trace.includes("HIGH_CONVICTION_ANCHOR"))  return 1;
-        if (trace.includes("TACTICAL_GROWTH_CANDIDATE")) return 2;
-        if (trace.includes("WATCH_TRIM_CANDIDATE")) return 3;
-        // Fallback: priority field (lower = better conviction)
-        return (r.priority || 9);
-      };
-      const getComposite = r => {
-        const dd = r.drilldown || {};
-        const holdings = dd.holdings || [];
-        if (holdings.length) return parseFloat(holdings[0].composite_score || 0);
-        return 0;
-      };
-      const getReplay = r => {
-        const dd = r.drilldown || {};
-        const holdings = dd.holdings || [];
-        return holdings.some(h => h.replay_supported === true || h.replay_supported === "True") ? 0 : 1;
-      };
-      const getWeight = r => {
-        const dd = r.drilldown || {};
-        const holdings = dd.holdings || [];
-        return holdings.reduce((s, h) => s + parseFloat(h.percent_of_portfolio || 0), 0);
-      };
-      const ta = getTier(a), tb = getTier(b);
-      if (ta !== tb) return ta - tb;
-      const ca = getComposite(a), cb = getComposite(b);
-      if (Math.abs(ca - cb) > 0.001) return cb - ca;
-      const ra = getReplay(a), rb = getReplay(b);
-      if (ra !== rb) return ra - rb;
-      return getWeight(b) - getWeight(a);
-    });
-
-    const TOP_N = 5;
-    const top5   = unique.slice(0, TOP_N);
-    const restAll = items; // full original list for registry
-
-    // Build Top 5 compact cards
-    const buildTopCard = (r, idx) => {
-      const sym = (r.affected_symbols || [])[0] || "—";
-      const trace = r.reasoning_trace || r.title || "";
-      let tier = "—", tierCls = "tier-none";
-      if (trace.includes("CORE_CONVICTION_LEADER"))     { tier = "CCL"; tierCls = "anchor-tier-ccl"; }
-      else if (trace.includes("HIGH_CONVICTION_ANCHOR"))  { tier = "HCA"; tierCls = "anchor-tier-hca"; }
-      else if (trace.includes("TACTICAL_GROWTH_CANDIDATE")) { tier = "TGC"; tierCls = "anchor-tier-tgc"; }
-
-      const dd = r.drilldown || {};
-      const holdings = dd.holdings || [];
-      const composite = holdings.length ? parseFloat(holdings[0].composite_score || 0) : 0;
-      const compStr = composite > 0 ? composite.toFixed(3) : "—";
-
-      // Pull a short rationale from the first sentence of the narrative
-      const rationale = (r.rationale || "").split(".")[0].trim();
-      const shortRationale = rationale.length > 100 ? rationale.slice(0, 97) + "…" : rationale;
-
-      return `<div class="anchor-top-card" onclick="document.getElementById('lane-body-anchor-full').classList.remove('lane-collapsed');document.querySelector('#lane-body-anchor-full .rec-lane-toggle')&&(document.querySelector('#lane-body-anchor-full .rec-lane-toggle').textContent='Hide ▴')">
-        <div class="anchor-top-header">
-          <span class="anchor-top-sym">${sym}</span>
-          <span class="anchor-tier-badge ${tierCls}">${tier}</span>
-          ${composite > 0 ? `<span class="anchor-top-score">${compStr}</span>` : ""}
-        </div>
-        <div class="anchor-top-rationale">${shortRationale || r.title || ""}</div>
-      </div>`;
-    };
-
-    const top5Html = top5.map((r, i) => buildTopCard(r, i)).join("");
-
-    // Full registry: all original cards (deduplicated by symbol for count display, full for cards)
-    const registryBodyId = "lane-body-anchor-full";
-    const registryCards = restAll.map(r => buildCard(r, ++globalIdx)).join("");
-
-    return `<div class="rec-lane">
-      <div class="rec-lane-header lane-anchor">
-        <span class="lane-label">Conviction Anchors</span>
-        <span class="lane-count">${items.length}</span>
-        <button class="rec-lane-toggle" onclick="_toggleLane('lane-body-anchor-full', this)">Show all ▾</button>
-      </div>
-      <div class="anchor-top-section">
-        <div class="anchor-top-label">Top Conviction Anchors</div>
-        <div class="anchor-top-grid">${top5Html}</div>
-      </div>
-      <div class="rec-lane-body lane-collapsed" id="${registryBodyId}">
-        ${registryCards}
-      </div>
-    </div>`;
-  };
-
-  const html = [
-    buildLane(laneAction,    "action",    "Actions",              false),
-    buildLane(laneBlocked,   "blocked",   "Blocked / Deferred",   false),
-    buildLane(laneObs,       "anchor",    "Observations",         false),
-    buildConvictionAnchorLane(laneAnchor),
-    buildLane(laneNarrative, "narrative", "Portfolio Narrative",  true),
-    buildLane(laneExplain,   "explain",   "Explainability",       true),
-  ].join("");
-
-  el.innerHTML = sepHtml + html;
+  el.innerHTML = sepHtml + `<div class="rec-list">${cards}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5006,55 +2464,6 @@ function _renderConstructionEvidence(r) {
 
 // Lookup STI trim score from the last analysis data
 let _lastAnalysisData = null;
-
-// ── SIGNAL-GOV-02A: Signal conflict badge cache ───────────────────────────
-// Populated on analysis load; keyed by UPPERCASE symbol.
-let _signalConflictCache = {};
-
-/**
- * Fetch signal conflict badges for a list of symbols (batch call).
- * Stores results in _signalConflictCache.  Non-blocking; UI degrades gracefully.
- */
-async function _loadSignalConflicts(symbols) {
-  if (!symbols || symbols.length === 0) return;
-  const unique = [...new Set(symbols.map(s => String(s || "").toUpperCase()).filter(Boolean))];
-  try {
-    const resp = await fetch(`/api/signal-conflicts?symbols=${unique.join(",")}`);
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (data && data.conflicts) {
-      Object.assign(_signalConflictCache, data.conflicts);
-    }
-  } catch (_) { /* non-blocking */ }
-}
-
-/**
- * Render HTML for SIGNAL-GOV-02A advisory conflict badges for a symbol.
- * Returns empty string if no conflicts.
- */
-function _signalConflictBadgesHtml(symbol) {
-  const conflicts = _signalConflictCache[(symbol || "").toUpperCase()] || [];
-  if (!conflicts.length) return "";
-
-  const SEV_CLASS = { WARN: "gov02-badge-warn", INFO: "gov02-badge-info" };
-  const TYPE_LABELS = {
-    SIGNIFICANT_CONFLICT:        "SIGNIFICANT CONFLICT",
-    HIGH_ANALYST_DISAGREEMENT:   "ANALYST DISAGREEMENT",
-    CONFLICTING_SIGNAL:          "CONFLICTING SIGNAL",
-    HOLD_CONSENSUS:              "HOLD CONSENSUS",
-    HIGH_HOLD_RATIO:             "HIGH HOLD RATIO",
-  };
-
-  const badges = conflicts.map(c => {
-    const cls   = SEV_CLASS[c.severity] || "gov02-badge-info";
-    const label = TYPE_LABELS[c.type] || c.type.replace(/_/g, " ");
-    const title = escHtml(c.description || "");
-    return `<span class="gov02-conflict-badge ${cls}" title="${title}">${label}</span>`;
-  }).join(" ");
-
-  return `<div class="gov02-conflict-strip">${badges}</div>`;
-}
-
 function _getSymbolTrimScore(sym) {
   if (!_lastAnalysisData) return null;
   const profiles = _lastAnalysisData.strategic_profiles || [];
@@ -5162,7 +2571,7 @@ function renderSecurityOverlays(overlays) {
     const agrLabelCls = (ag.label === "FULL ALIGNMENT" || ag.label === "STRONG ALIGNMENT")
       ? "sa-agree-full" : (ag.label === "MIXED" ? "sa-agree-mixed" : "sa-agree-diverge");
     const agrCell = `<span class="sa-agree-chip ${agrLabelCls}">${ag.label}</span>
-      <span style="font-size:0.72rem;color:var(--muted);white-space:nowrap"> ${escHtml(ag.observationText || "No observations")}</span>`;
+      <span style="font-size:0.72rem;color:var(--muted);white-space:nowrap"> ${ag.bullish}/${ag.total}</span>`;
     const confCls = { HIGH: "sa-conf-high", MEDIUM: "sa-conf-medium", LOW: "sa-conf-low" }[ag.confidence] || "";
     const confCell = `<span class="${confCls}">${ag.confidence}</span>`;
 
@@ -5267,7 +2676,7 @@ function renderOptimizerSummary(recs) {
     <div class="opt-summary-grid">
       ${_optStatCard(withMeta.length, "Recs Reviewed", "")}
       ${_optStatCard(mandateBlocked, "Mandate Blocked", mandateBlocked > 0 ? "warn" : "")}
-      ${_optStatCard(etfGateFailed,  "Superior Security Available", etfGateFailed  > 0 ? "alert" : "")}
+      ${_optStatCard(etfGateFailed,  "ETF Gate Failed", etfGateFailed  > 0 ? "alert" : "")}
       ${_optStatCard(secSuperior,    "Security Superior", "")}
       ${_optStatCard(noActionable,   "No Candidates", "")}
       ${_optStatCard(noConflict,     "No Conflict", "")}
@@ -5311,7 +2720,7 @@ function _buildOptimizerBadges(r) {
   );
   for (const c of etfFailed) {
     badges.push(
-      `<span class="opt-badge opt-badge-ETF_GATE_FAILED" title="${escHtml(c.etf_gate)}">SUPERIOR_SECURITY_AVAILABLE: ${escHtml(c.symbol)}</span>`
+      `<span class="opt-badge opt-badge-ETF_GATE_FAILED" title="${escHtml(c.etf_gate)}">ETF_GATE_FAILED: ${escHtml(c.symbol)}</span>`
     );
   }
 
@@ -5386,29 +2795,6 @@ function _buildOptimizerViewBlock(r) {
                : etfCandidates.some(c => !String(c.etf_gate || "").startsWith("PASS")) ? " optview-chip-blocked"
                : "";
 
-  // Mandate dual-view framing block (Problem 1 — UI Clarity Sprint)
-  // Only shown when mandate_blocked: explains the classical-vs-policy divergence.
-  const mandateDualViewHtml = om.mandate_blocked
-    ? `<div class="optview-mandate-dualview">
-        <div class="optview-dualview-row">
-          <span class="optview-view-badge optview-view-classical">CLASSICAL ALLOCATION VIEW</span>
-          <span class="optview-dualview-text">
-            Allocation gap detected in <strong>${escHtml(om.target_node || "—")}</strong>.
-            A standard model would treat this as underweight and recommend ETF deployment to close the gap.
-          </span>
-        </div>
-        <div class="optview-dualview-row optview-dualview-override-row">
-          <span class="optview-view-badge optview-view-override">CONCENTRATED ALPHA POLICY OVERRIDE</span>
-          <span class="optview-dualview-text">
-            This underweight is <strong>intentional</strong> under the active mandate
-            (<strong>${escHtml(om.mandate_type || "—")}</strong>).
-            Deployment into generic ETF vehicles is not warranted.
-            Recommended action: deploy capital into higher-conviction individual securities in this node.
-          </span>
-        </div>
-      </div>`
-    : "";
-
   // Security alternatives HTML
   const secAltHtml = secAlts.length
     ? secAlts.map(c =>
@@ -5434,7 +2820,6 @@ function _buildOptimizerViewBlock(r) {
 
   return `<button class="optimizer-view-toggle" onclick="toggleOptimizerView('${optId}')">&#9656; Optimizer View</button>
   <div class="optimizer-view-body" id="${optId}">
-    ${mandateDualViewHtml}
     <div class="optview-row">
       <div class="optview-label">Legacy Recommendation</div>
       <div class="optview-val">${escHtml(legacyVehicles)}</div>
@@ -5802,12 +3187,6 @@ function toggleNbaSection(id) {
 let _dqShowAll = false;
 const DQ_DEFAULT_ROWS = 10;
 
-// ISSUE-05 — Deployment Queue filter state
-let _dqFilterThesis      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
-let _dqFilterConsistency = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
-let _dqFilterModifier    = "ALL";  // "ALL" | "POSITIVE" | "NEUTRAL" | "NEGATIVE"
-let _dqOutsideClickBound = false;
-
 function renderDeploymentQueue(data) {
   const el = document.getElementById("deploymentQueueContainer");
   if (!el) return;
@@ -5819,10 +3198,6 @@ function renderDeploymentQueue(data) {
   }
 
   _dqShowAll = false;  // reset on each render
-  // ISSUE-05: reset filters to "All" defaults on each new analysis load
-  _dqFilterThesis      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
-  _dqFilterConsistency = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
-  _dqFilterModifier    = "ALL";
 
   const queue   = dq.queue;
   const cashCtx = dq.cash_context || {};
@@ -5909,7 +3284,6 @@ function renderDeploymentQueue(data) {
     <div class="dq-summary-card dq-cash">
       <div class="dq-summary-val dq-gold">${formatMV(_adjDeployableMv)}</div>
       <div class="dq-summary-lbl">${_hasSettlement ? "Adj. Deployable Cash" : "Deployable Cash"}</div>
-      <div class="dq-summary-sublbl" title="Excess above ${_cashTargetPct}% mandate floor. Full cash: ${formatMV(cashCtx.cash_mv || 0)}. Floor reserve: ${formatMV(cashCtx.floor_mv || 0)}.">Excess above ${_cashTargetPct}% mandate floor ⓘ</div>
     </div>
     <div class="dq-summary-card">
       <div class="dq-summary-val">${dq.candidate_count || queue.length}</div>
@@ -6006,42 +3380,13 @@ function renderDeploymentQueue(data) {
     <div class="dq-section-header">
       <span class="dq-section-title">Capital Deployment Queue</span>
       <span class="dq-version-badge">${escHtml(dq.queue_version || "CW-DAS-1.0")}</span>
-      <div class="dq-filters" id="dq-filters" onclick="event.stopPropagation()">
-        <div class="dq-filter-group">
-          <button class="dq-filter-btn" id="dq-fb-thesis" onclick="_dqToggleFilterPanel(event,'thesis')">Thesis &#9662;</button>
-          <div class="dq-filter-panel" id="dq-fp-thesis">
-            <label><input type="checkbox" checked onchange="_dqThesisChange('INTACT',this.checked)"> INTACT</label>
-            <label><input type="checkbox" checked onchange="_dqThesisChange('QUESTIONABLE',this.checked)"> QUESTIONABLE</label>
-            <label><input type="checkbox" checked onchange="_dqThesisChange('DETERIORATING',this.checked)"> DETERIORATING</label>
-          </div>
-        </div>
-        <div class="dq-filter-group">
-          <button class="dq-filter-btn" id="dq-fb-consistency" onclick="_dqToggleFilterPanel(event,'consistency')">Consistency &#9662;</button>
-          <div class="dq-filter-panel" id="dq-fp-consistency">
-            <label><input type="checkbox" checked onchange="_dqConsistencyChange('CONSISTENT',this.checked)"> CONSISTENT</label>
-            <label><input type="checkbox" checked onchange="_dqConsistencyChange('MIXED',this.checked)"> MIXED</label>
-            <label><input type="checkbox" checked onchange="_dqConsistencyChange('CONTRADICTORY',this.checked)"> CONTRADICTORY</label>
-            <label><input type="checkbox" checked onchange="_dqConsistencyChange('DATA_ANOMALY',this.checked)"> DATA ANOMALY</label>
-          </div>
-        </div>
-        <div class="dq-filter-group">
-          <button class="dq-filter-btn" id="dq-fb-modifier" onclick="_dqToggleFilterPanel(event,'modifier')">Modifier &#9662;</button>
-          <div class="dq-filter-panel" id="dq-fp-modifier">
-            <label><input type="radio" name="dq-mod-radio" value="ALL" checked onchange="_dqModifierChange('ALL')"> All</label>
-            <label><input type="radio" name="dq-mod-radio" value="POSITIVE" onchange="_dqModifierChange('POSITIVE')"> Positive (&gt;0)</label>
-            <label><input type="radio" name="dq-mod-radio" value="NEUTRAL" onchange="_dqModifierChange('NEUTRAL')"> Neutral (0)</label>
-            <label><input type="radio" name="dq-mod-radio" value="NEGATIVE" onchange="_dqModifierChange('NEGATIVE')"> Negative (&lt;0)</label>
-          </div>
-        </div>
-      </div>
-      <span class="dq-filtered-count" id="dq-filtered-count"></span>
-      <span class="dq-advisory-note">Guidance only &#8212; not a trade instruction</span>
+      <span class="dq-advisory-note">Guidance only — not a trade instruction</span>
     </div>
     ${summaryHtml}
     ${cashContextHtml}
     ${cashSummaryHtml}
     <div class="da-action-section">
-      <div class="da-action-section-header">Deployment Candidates — Top 10</div>
+      <div class="da-action-section-header">Recommended Actions — Top 10</div>
       ${actionCardsHtml}
     </div>
     ${tableHtml}
@@ -6054,15 +3399,8 @@ function renderDeploymentQueue(data) {
     </div>
   </div>`;
 
-  // Render initial rows — apply filters (default = all pass)
-  _dqRenderTableRows(_dqApplyFilters(queue), tableId, DQ_DEFAULT_ROWS);
-  // Attach outside-click handler once to close open filter panels
-  if (!_dqOutsideClickBound) {
-    document.addEventListener("click", function() {
-      document.querySelectorAll(".dq-filter-panel.open").forEach(p => p.classList.remove("open"));
-    });
-    _dqOutsideClickBound = true;
-  }
+  // Render initial rows
+  _dqRenderTableRows(queue, tableId, DQ_DEFAULT_ROWS);
 }
 
 // Phase 7.5F — Cash deployment summary strip
@@ -6145,46 +3483,6 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
 
     const rankBadge = rec.rank <= 2 ? " da-card-top" : "";
 
-    // DIL Phase 1 — Deployment candidate intelligence panel
-    const _acBySymDQ   = (_lastAnalysisData && _lastAnalysisData.analyst_consensus_by_symbol) || {};
-    const _fssBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol)  || {};
-    const _ucfBySymDQ  = (_analysisResult   && _analysisResult.ucf_verdicts_by_symbol)        || {};
-    const _fmpBySymDQ  = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol)           || {};
-    const _pcBySymDQ   = (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol)      || {};
-    const _ovBySymDQ2  = {};
-    for (const ov2 of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
-      if (ov2 && ov2.symbol) _ovBySymDQ2[(ov2.symbol || "").toUpperCase()] = ov2;
-    }
-    const _dilDQ = computeDIL(
-      sym,
-      _acBySymDQ[sym.toUpperCase()] || {},
-      _fssBySymDQ[sym.toUpperCase()] || {},
-      _fmpBySymDQ[sym.toUpperCase()] || null,
-      _ucfBySymDQ[sym.toUpperCase()] || {},
-      _ovBySymDQ2[sym.toUpperCase()] || {},
-      { isReduction: false, isDeployment: true, category: cand.narrative_tier || "" },
-      _pcBySymDQ[sym.toUpperCase()] || null
-    );
-    const _dilDQId = `da-intel-${rec.rank}`;
-
-    // THESIS-EXPLAIN-01: build investment thesis panel for DQ candidate
-    const _thesisDQ = _buildInvestmentThesis(
-      sym,
-      _acBySymDQ[sym.toUpperCase()] || {},
-      _fssBySymDQ[sym.toUpperCase()] || {},
-      _fmpBySymDQ[sym.toUpperCase()] || null,
-      _ovBySymDQ2[sym.toUpperCase()] || {},
-      _ucfBySymDQ[sym.toUpperCase()] || {},
-      _pcBySymDQ[sym.toUpperCase()] || null
-    );
-    // UI-CONSISTENCY-07: Fidelity rating for DQ (parity with RQ)
-    const _dqFidFs = _fssBySymDQ[sym.toUpperCase()] || {};
-    const _dqFidRatingHtml = _dqFidFs.fidelity_rating
-      ? `<span class="dq-fid-rating-badge fid-${(_dqFidFs.fidelity_rating || "").toLowerCase().replace(/[^a-z]/g,"_")}">${escHtml(_dqFidFs.fidelity_rating.replace(/_/g," "))}</span>`
-      : "";
-    const _dilBtnHtml = `<button class="da-intel-btn" onclick="(function(){const p=document.getElementById('${_dilDQId}');if(p){p.classList.toggle('dil-open');this.textContent=p.classList.contains('dil-open')?'▲ Intel':'⚡ Intel';}}).call(this)">⚡ Intel</button>
-      <div class="da-intel-panel" id="${_dilDQId}">${_dilHtml(_dilDQ)}${_thesisHtml(_thesisDQ)}</div>`;
-
     return `<div class="da-action-card${rankBadge}">
       <div class="da-card-header">
         <span class="da-card-action">BUY</span>
@@ -6192,7 +3490,6 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
         <span class="da-card-badges">
           <span class="dq-tier dq-tier-${tierShort}">${tierShort}</span>
           <span class="da-dp-tier">${dpTierLabel}</span>
-          ${_dqFidRatingHtml}
         </span>
       </div>
       <div class="da-card-amount">+${formatMV(addAmt)}</div>
@@ -6203,9 +3500,6 @@ function _daRenderActionCards(queue, dpBySymbol, limit) {
       </div>
       <div class="da-card-mv">${curMV} → ${projMV}</div>
       <div class="da-card-reasons">${reasonsHtml}</div>
-      ${_signalConflictBadgesHtml(sym)}
-      ${_securityAlphaBadgeHtml(sym)}
-      ${_dilBtnHtml}
     </div>`;
   }).join("");
 
@@ -6304,21 +3598,19 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
                        : (c.current_weight_pct != null ? pct(c.current_weight_pct) + " (cur)" : "—");
     const trim = parseFloat(c.trim_score || 0);
 
-    // SIGNAL-UX-01 — native translations via centralized registry
+    // Phase 7.5N — native value labels for signal cards
     const ac2 = _consBySymbol[sym] || _consBySymbol[(sym || "").toUpperCase()] || null;
     const fs2 = _fidBySymbol2[sym] || _fidBySymbol2[(sym || "").toUpperCase()] || null;
-    const _tZacks    = typeof _sihZacksTranslate    !== "undefined" ? _sihZacksTranslate(zacks) : null;
-    const _tDanelfin = typeof _sihDanelfinTranslate !== "undefined" ? _sihDanelfinTranslate(danelfin) : null;
-    const _tEss      = typeof _sihEssTranslate      !== "undefined" ? _sihEssTranslate(essText) : null;
-    const _tAbr      = (ac2 && typeof _sihAnalystConsensusTranslate !== "undefined")
-                       ? _sihAnalystConsensusTranslate(ac2.abr, ac2.consensus_label) : null;
-    // Backward-compat aliases used by legacy dq-sig-card rendering below
-    const zRank2 = _tZacks ? parseInt(_tZacks.nativeRating.replace("#","")) : null;
-    const danRaw2 = _tDanelfin ? parseInt(_tDanelfin.nativeRating) : null;
-    const essNative   = _tEss ? _tEss.meaning : (essText !== "—" ? essText.replace(/_/g, " ") : "—");
-    const zacksNative = _tZacks ? `${_tZacks.nativeRating} ${_tZacks.meaning}` : (zacks !== "—" ? zacks : "—");
-    const danNative   = _tDanelfin ? _tDanelfin.nativeRating : (danelfin !== "—" ? danelfin : "—");
-    const abrNative2  = _tAbr ? `${_tAbr.nativeRating} · ${_tAbr.meaning}` : null;
+    const zRank2 = _zacksNativeRank(zacks);
+    const danRaw2 = _danelfinNativeRaw(danelfin);
+    const essNative   = essText !== "—" ? essText.replace(/_/g, " ") : "—";
+    const zacksNative = zRank2 != null
+      ? `#${zRank2} ${_zacksRankLabel(zRank2)}`
+      : (zacks !== "—" ? zacks : "—");
+    const danNative  = danRaw2 != null ? `${danRaw2} / 10` : (danelfin !== "—" ? danelfin : "—");
+    const abrNative2 = ac2 && ac2.abr != null
+      ? `ABR ${parseFloat(ac2.abr).toFixed(2)}${ac2.consensus_label ? " · " + ac2.consensus_label.replace(/_/g, " ") : ""}`
+      : null;
 
     return `<tr class="dq-data-row${rankCls}" onclick="_dqToggleBreakdown('${bdId}')">
       <td><span class="dq-rank-num${rankNumCls}">#${c.rank}${c.policy_rank_boost ? '<span title="Preferred Accumulation rank boost" style="font-size:0.7rem;margin-left:2px">⭐</span>' : ''}</span></td>
@@ -6352,23 +3644,23 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-sig-lbl">Composite</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(essNative)}</div>
-            <div class="dq-sig-sublabel">Primary Signal (55%) · Normalized ${_tEss ? _tEss.normalizedScore : "—"} · <span style="${_tEss ? _sihDirColorStyle(_tEss.dirClass) : ''}">${_tEss ? _tEss.direction : "—"}</span></div>
+            <div class="dq-sig-val">${escHtml(essText)}</div>
+            <div class="dq-sig-sublabel">Primary Signal (55%)</div>
             <div class="dq-sig-lbl">ESS</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(_tDanelfin ? _tDanelfin.nativeRating : danNative)}</div>
-            <div class="dq-sig-sublabel">${_tDanelfin ? escHtml(_tDanelfin.meaning) + ' · Normalized ' + _tDanelfin.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tDanelfin.dirClass) + '">' + _tDanelfin.direction + '</span>' : 'Normalized 1–5'}</div>
+            <div class="dq-sig-val">${escHtml(danNative)}</div>
+            <div class="dq-sig-sublabel">${danRaw2 != null ? "AI Score" : "Normalized 1–5"}</div>
             <div class="dq-sig-lbl">Danelfin</div>
           </div>
           <div class="dq-sig-card">
-            <div class="dq-sig-val">${escHtml(_tZacks ? _tZacks.nativeRating : (zacks !== "—" ? zacks : "—"))}</div>
-            <div class="dq-sig-sublabel">${_tZacks ? escHtml(_tZacks.meaning) + ' · Normalized ' + _tZacks.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tZacks.dirClass) + '">' + _tZacks.direction + '</span>' : 'Normalized ' + (zacks !== "—" ? parseFloat(zacks).toFixed(1) + " / 5" : "—")}</div>
+            <div class="dq-sig-val">${escHtml(zacksNative)}</div>
+            <div class="dq-sig-sublabel">Normalized ${zacks !== "—" ? parseFloat(zacks).toFixed(1) + " / 5" : "—"}</div>
             <div class="dq-sig-lbl">Zacks</div>
           </div>
           ${abrNative2 != null ? `<div class="dq-sig-card">
-            <div class="dq-sig-val" style="font-size:0.80rem">${escHtml(_tAbr ? _tAbr.nativeRating : abrNative2)}</div>
-            <div class="dq-sig-sublabel">${_tAbr ? escHtml(_tAbr.meaning) + ' · Normalized ' + _tAbr.normalizedScore + ' · <span style="' + _sihDirColorStyle(_tAbr.dirClass) + '">' + _tAbr.direction + '</span>' : 'Not in v1 composite'}</div>
+            <div class="dq-sig-val" style="font-size:0.80rem">${escHtml(abrNative2)}</div>
+            <div class="dq-sig-sublabel">Not in v1 composite</div>
             <div class="dq-sig-lbl">Yahoo ABR</div>
           </div>` : ""}
           <div class="dq-sig-card">
@@ -6381,11 +3673,8 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
           </div>
         </div>
         ${ucfSummary ? `<div class="dq-signal-summary">${escHtml(ucfSummary)}</div>` : ""}
-        ${_signalConflictBadgesHtml(sym)}
-        ${_securityAlphaInsightHtml(sym)}
         ${_signalAgreementPanelHtml(ov, ac2, fs2)}
-        ${_dqAnalystTargetHtml(ac2)}
-        <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)} <span style="font-size:0.68rem;color:var(--muted);font-weight:400">(CW-DAS v${escHtml(c.cw_das_version||'1.1')})</span></div>
+        <div class="dq-breakdown-header">CW-DAS Score Breakdown — ${escHtml(c.symbol)}</div>
         <div class="dq-breakdown-grid">
           <div class="dq-bd-card">
             <div class="dq-bd-val">${bd.signal != null ? bd.signal.toFixed(1) : "—"}</div>
@@ -6399,10 +3688,6 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-bd-val">${bd.conviction != null ? bd.conviction.toFixed(0) : "—"}</div>
             <div class="dq-bd-lbl">Conviction<br>/35</div>
           </div>
-          ${(bd.fundamental_modifier != null && bd.fundamental_modifier !== 0) ? `<div class="dq-bd-card">
-            <div class="dq-bd-val${bd.fundamental_modifier > 0 ? ' dq-score-high' : ' dq-penalty'}">${bd.fundamental_modifier > 0 ? '+' : ''}${bd.fundamental_modifier.toFixed(1)}</div>
-            <div class="dq-bd-lbl">Fund.<br>Mod</div>
-          </div>` : ''}
           <div class="dq-bd-card">
             <div class="dq-bd-val">${bd.sizing != null ? bd.sizing.toFixed(1) : "—"}</div>
             <div class="dq-bd-lbl">Sizing<br>/8</div>
@@ -6412,11 +3697,11 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
             <div class="dq-bd-lbl">Momentum<br>/10</div>
           </div>
           <div class="dq-bd-card">
-            <div class="dq-bd-val${bd.redundancy_pen > 0 ? " dq-penalty" : ""}">${bd.redundancy_pen != null ? "\u2212" + bd.redundancy_pen.toFixed(0) : "\u2014"}</div>
+            <div class="dq-bd-val${bd.redundancy_pen > 0 ? " dq-penalty" : ""}">${bd.redundancy_pen != null ? "−" + bd.redundancy_pen.toFixed(0) : "—"}</div>
             <div class="dq-bd-lbl">Redund.<br>Pen</div>
           </div>
           <div class="dq-bd-card">
-            <div class="dq-bd-val${bd.conc_pen > 0 ? " dq-penalty" : ""}">${bd.conc_pen != null ? "\u2212" + bd.conc_pen.toFixed(0) : "\u2014"}</div>
+            <div class="dq-bd-val${bd.conc_pen > 0 ? " dq-penalty" : ""}">${bd.conc_pen != null ? "−" + bd.conc_pen.toFixed(0) : "—"}</div>
             <div class="dq-bd-lbl">Conc.<br>Pen</div>
           </div>
           <div class="dq-bd-card">
@@ -6425,9 +3710,6 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
           </div>
         </div>
         <div class="dq-breakdown-notes">${escHtml(c.notes || "")}</div>
-        ${_dqCompanySnapshotHtml(sym, _securityMetadata)}
-        ${_dqFundamentalSnapshotHtml(sym, _securityMetadata, ov)}
-        ${_dqWhySIHLikesItHtml(c, ucf, ov, bd, dp, trim)}
       </td>
     </tr>`;
   }).join("");
@@ -6445,15 +3727,14 @@ function _dqToggleViewAll() {
   if (!dq || !Array.isArray(dq.queue)) return;
 
   _dqShowAll = !_dqShowAll;
-  const filtered = _dqApplyFilters(dq.queue);
-  const limit = _dqShowAll ? filtered.length : DQ_DEFAULT_ROWS;
-  _dqRenderTableRows(filtered, "dq-queue-table-body", limit);
+  const limit = _dqShowAll ? dq.queue.length : DQ_DEFAULT_ROWS;
+  _dqRenderTableRows(dq.queue, "dq-queue-table-body", limit);
 
   const btn = document.getElementById("dq-view-all-btn");
   if (btn) {
     btn.textContent = _dqShowAll
-      ? `\u25b2 Show top ${DQ_DEFAULT_ROWS} only`
-      : `\u25bc View all ${filtered.length} candidates`;
+      ? `▲ Show top ${DQ_DEFAULT_ROWS} only`
+      : `▼ View all ${dq.queue.length} candidates`;
   }
 }
 
@@ -6463,2030 +3744,6 @@ function _dqToggleBlocked() {
   if (!body) return;
   const open = body.classList.toggle("open");
   if (btn) btn.textContent = (open ? "▾" : "▸") + btn.textContent.slice(1);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ISSUE-05 — Deployment Queue Filters (Thesis / Consistency / Modifier)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ISSUE-04C — Dislocation Watchlist Panel
-// Governance: display-only. Backend payload authoritative. No scoring influence.
-// ─────────────────────────────────────────────────────────────────────────────
-// ARCH-02 — Reduction Queue
-// Sibling to the Deployment Queue. Shows top 10 CRA capital sources ranked by
-// the existing CRA priority system (URGENT > HIGH > MODERATE > LOW > DEFER).
-// Data source: _craProposal.sources (loaded by loadCRAProposal).
-// No CW-DAS normalization. No cross-system score merging.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DIL Phase 1 — Decision Intelligence Layer
-// Interpretive posture engine. Display-only. No scoring or ranking influence.
-// Every output cites its signal source and date. Operator remains decision maker.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _actionLatencyBadgeHtml(actionLatency, sourceIntent) {
-  const intent = String(sourceIntent || "").toUpperCase();
-  if (intent && intent !== "THESIS_TRIM" && intent !== "THESIS_EXIT") return "";
-
-  const status = (actionLatency && actionLatency.status) || "NONE";
-  if (status === "MISSED_ACTION_REVIEW") {
-    return `<span class="rq-intent-badge rq-intent-thesis-exit" title="Prior trim signal aged without action and adverse move thresholds were breached.">MISSED ACTION REVIEW</span>`;
-  }
-  if (status === "TRIM_SIGNAL_AGING") {
-    return `<span class="rq-intent-badge rq-intent-thesis-trim" title="Trim signal is aging without observed action.">TRIM SIGNAL AGING</span>`;
-  }
-  if (status === "PARTIAL_ACTION_REVIEW") {
-    return `<span class="rq-intent-badge rq-intent-ow-repair" title="Partial trim action was observed. Review remaining reduction intent before reissuing full-size trim guidance.">PARTIAL FOLLOW-THROUGH</span>`;
-  }
-  if (status === "ACTION_DUE") {
-    return `<span class="rq-intent-badge rq-intent-reallocation" title="Active trim intent detected. Operator review due.">ACTION DUE</span>`;
-  }
-  return "";
-}
-
-function _actionLatencyPanelHtml(actionLatency, sourceIntent) {
-  const intent = String(sourceIntent || "").toUpperCase();
-  if (intent && intent !== "THESIS_TRIM" && intent !== "THESIS_EXIT") return "";
-
-  const status = (actionLatency && actionLatency.status) || "NONE";
-  if (status === "NONE") return "";
-
-  const msg = actionLatency.message || "";
-  const firstSeen = actionLatency.first_trim_signal_date || "—";
-  const age = actionLatency.signal_age_days != null ? `${actionLatency.signal_age_days} day(s)` : "—";
-  const lastStatus = actionLatency.last_action_status || "NO_ACTION_RECORDED";
-  const triggers = Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : [];
-
-  const triggerHtml = triggers.length
-    ? `<ul class="dil-key-points">${triggers.map(t => `<li>${escHtml(t)}</li>`).join("")}</ul>`
-    : "";
-
-  return `<div class="dil-section">
-    <div class="dil-section-title">Action Latency Review <span class="dil-price-ctx-note">display-only</span></div>
-    <div class="dil-posture dil-conflict">${escHtml(status.replace(/_/g, " "))}</div>
-    <div class="dil-rationale-text">${escHtml(msg)}</div>
-    <div class="dil-price-context">
-      <div class="dil-price-ctx-grid">
-        <div class="dil-price-ctx-cell"><span class="dil-pc-label">First Trim Signal</span><span class="dil-pc-val">${escHtml(firstSeen)}</span></div>
-        <div class="dil-price-ctx-cell"><span class="dil-pc-label">Signal Age</span><span class="dil-pc-val">${escHtml(age)}</span></div>
-        <div class="dil-price-ctx-cell"><span class="dil-pc-label">Last Action Status</span><span class="dil-pc-val">${escHtml(lastStatus)}</span></div>
-      </div>
-      ${triggerHtml}
-    </div>
-    <div class="dil-advisory">Missed-action states are advisory only. No automatic trade execution is performed.</div>
-  </div>`;
-}
-
-function computeDIL(sym, ac, fs, fmpEntry, ucf, ov, context, priceCtx, actionLatency) {
-  // context = { isReduction: bool, isDeployment: bool, category: string }
-  // priceCtx = { return_1d, return_5d, return_1m, pct_52w_range, next_earnings_date, ... } (optional, display-only)
-  const today_str = new Date().toISOString().split("T")[0];
-
-  // Signal extraction
-  const fsObj     = fs  || {};
-  const ovObj     = ov  || {};
-  const acObj     = ac  || {};
-  const ucfObj    = ucf || {};
-  const fmpObj    = fmpEntry || {};
-
-  const essText   = fsObj.ess_text    || ovObj.ess_score_text || "";
-  const fidRating = fsObj.fidelity_rating || "";
-  const consMat   = fsObj.consensus_matrix || {};
-  const matrixClass = consMat.classification || "";
-
-  const abr        = acObj.abr != null ? parseFloat(acObj.abr) : null;
-  const analystCnt = acObj.analyst_count || 0;
-  const consLabel  = acObj.consensus_label || "";
-  const upsidePct  = acObj.upside_pct != null ? parseFloat(acObj.upside_pct) : null;
-  const consRefresh = acObj.refresh_date || null;
-
-  const zacks    = ovObj.zacks_rating  != null ? parseFloat(ovObj.zacks_rating)  : null;
-  const danelfin = ovObj.danelfin_score != null ? parseFloat(ovObj.danelfin_score) : null;
-  const composite = ovObj.composite_score != null ? parseFloat(ovObj.composite_score) : null;
-  const replayPct = ovObj.replay_percentile != null ? parseFloat(ovObj.replay_percentile) : null;
-
-  const ucfLabel = ucfObj.ucf_label || "";
-  const ucfScore = ucfObj.ucf_score != null ? parseFloat(ucfObj.ucf_score) : null;
-  const ucfSummary = ucfObj.signal_summary || "";
-
-  const category = context.category || "";
-  const alStatus = ((actionLatency && actionLatency.status) || "NONE").toUpperCase();
-
-  // FMP fundamentals
-  const epsSurprise = fmpObj.latest_eps_surprise_pct != null ? parseFloat(fmpObj.latest_eps_surprise_pct) : null;
-  const beatRate    = fmpObj.beat_rate_8q != null ? parseFloat(fmpObj.beat_rate_8q) : null;
-  const revGrowth   = fmpObj.revenue_growth_q1_yoy != null ? parseFloat(fmpObj.revenue_growth_q1_yoy) : null;
-  const revAccel    = fmpObj.revenue_acceleration != null ? parseFloat(fmpObj.revenue_acceleration) : null;
-  const fmpDate     = fmpObj.fmp_sourced_date || null;
-  const fmpCovered  = (fmpObj.fmp_coverage_status || "NO_DATA") !== "NO_DATA";
-
-  // Signal direction flags
-  const isESSBearish  = essText.includes("BEARISH") || fidRating === "SELL" || fidRating === "STRONG_SELL";
-  const isESSBullish  = essText.includes("BULLISH") || fidRating === "STRONG_BUY" || fidRating === "BUY";
-  const isStreetBullish = abr !== null && abr <= 2.5 && consLabel.includes("BUY");
-  const isStreetBearish = (abr !== null && abr >= 3.5) || consLabel.includes("SELL");
-  const isETFNoSignal   = !essText && !composite && category === "LOW_CONVICTION_REDUCTION";
-
-  // Signal alignment
-  let alignment = matrixClass;
-  if (!alignment) {
-    if (isESSBearish && isStreetBullish)  alignment = "MAJOR_DIVERGENCE";
-    else if (isESSBullish && !isStreetBearish) alignment = "FULL_ALIGNMENT_BULLISH";
-    else if (isESSBearish && !isStreetBullish) alignment = "FULL_ALIGNMENT_BEARISH";
-    else alignment = "PARTIAL_ALIGNMENT";
-  }
-
-  // Earnings context classification (FMP)
-  let earningsCtx = "EARNINGS_CONTEXT_UNKNOWN";
-  if (fmpCovered && beatRate !== null && epsSurprise !== null) {
-    if (beatRate < 0.5 && revGrowth !== null && revGrowth < 0) earningsCtx = "FUNDAMENTAL_DETERIORATION";
-    else if (beatRate > 0.70 && epsSurprise < -20)             earningsCtx = "SINGLE_QUARTER_MISS";
-    else if (beatRate > 0.75 && revGrowth !== null && revGrowth > 0.1) earningsCtx = "STRONG_FUNDAMENTAL";
-    else                                                        earningsCtx = "IN_LINE_FUNDAMENTAL";
-  }
-
-  // Stale data check
-  const isConvictionProtected = ucfLabel === "CORE_CONVICTION_LEADER" || ucfLabel === "HIGH_CONVICTION_ANCHOR";
-
-  // ── Posture determination ────────────────────────────────────────────────
-  let posture, postureClass, rationale, keyPoints = [], evidence = [];
-
-  if (context.isReduction) {
-    if (alStatus === "MISSED_ACTION_REVIEW") {
-      posture = "MISSED ACTION REVIEW"; postureClass = "dil-conflict";
-      rationale = `${escHtml(sym)} had an active trim signal prior to a material adverse move, and no follow-through action is recorded. Review trim, hold override, or exit now.`;
-      keyPoints = [
-        `First trim signal: ${actionLatency.first_trim_signal_date || "unknown"}`,
-        `Signal age: ${actionLatency.signal_age_days != null ? actionLatency.signal_age_days + " day(s)" : "unknown"}`,
-        ...(Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : []),
-      ];
-    }
-    else if (alStatus === "TRIM_SIGNAL_AGING") {
-      posture = "ACTION DUE"; postureClass = "dil-investigate";
-      rationale = `${escHtml(sym)} has an aging trim signal with no observed action completion. Operator review is due.`;
-      keyPoints = [
-        `First trim signal: ${actionLatency.first_trim_signal_date || "unknown"}`,
-        `Signal age: ${actionLatency.signal_age_days != null ? actionLatency.signal_age_days + " day(s)" : "unknown"}`,
-      ];
-    }
-    else if (alStatus === "ACTION_DUE") {
-      posture = "ACTION DUE"; postureClass = "dil-investigate";
-      rationale = `${escHtml(sym)} has an active trim intent and requires operator review before deterioration risk compounds.`;
-      keyPoints = [
-        ...(Array.isArray(actionLatency.adverse_move_triggers) ? actionLatency.adverse_move_triggers : []),
-      ];
-    }
-    else
-    // --- PASSIVE REDUCTION (ETF / no ESS signal)
-    if (isETFNoSignal) {
-      posture = "PASSIVE REDUCTION"; postureClass = "dil-passive";
-      rationale = `${escHtml(sym)} is held as a passive allocation vehicle. No individual ESS signal data exists. Reduction frees capital for higher-conviction direct holdings under the Concentrated Alpha mandate.`;
-      keyPoints = ["No individual ESS coverage — ETF or passive fund", "Reduction is portfolio construction, not signal-driven", "FVI tier reflects vehicle quality (independent of conviction)"];
-    }
-    // --- UCF CONVICTION ANCHOR — floor at INVESTIGATE
-    else if (isConvictionProtected && isESSBearish) {
-      posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
-      rationale = `${escHtml(sym)} carries a UCF conviction classification of ${escHtml(ucfLabel)}. Despite the bearish ESS, reducing a conviction anchor requires a higher evidence standard. Investigate before proceeding.`;
-      keyPoints = [`UCF ${escHtml(ucfLabel)} — high strategic portfolio importance`, "Bearish ESS alone insufficient for conviction-anchor reduction", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
-    }
-    // --- FULL ALIGNMENT BEARISH + FUNDAMENTAL DETERIORATION
-    else if ((alignment.includes("FULL_ALIGNMENT_BEARISH") || (!isStreetBullish && isESSBearish)) && earningsCtx === "FUNDAMENTAL_DETERIORATION") {
-      posture = "HIGH CONFIDENCE REDUCTION"; postureClass = "dil-high-confidence-red";
-      rationale = `${escHtml(sym)}: All signals agree — ESS bearish, analyst consensus bearish, and FMP fundamentals show persistent earnings weakness with declining revenue. Multi-source confirmed reduction signal.`;
-      keyPoints = ["Full signal alignment: ESS + analysts + FMP all confirm", beatRate !== null ? `Beat rate 8Q: ${(beatRate*100).toFixed(0)}% (weak earnings track record)` : "", revGrowth !== null ? `Revenue growth: ${(revGrowth*100).toFixed(1)}% YoY` : "", "Multiple independent sources confirm deterioration"].filter(Boolean);
-    }
-    // --- SINGLE QUARTER MISS (PRIM pattern)
-    else if (earningsCtx === "SINGLE_QUARTER_MISS" && isESSBearish && isStreetBullish) {
-      posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
-      const beatStr = beatRate !== null ? `${(beatRate*100).toFixed(0)}%` : "—";
-      const missStr = epsSurprise !== null ? `${Math.abs(epsSurprise).toFixed(1)}%` : "—";
-      const revStr  = revGrowth  !== null ? `${(revGrowth*100).toFixed(1)}%` : "—";
-      rationale = `${escHtml(sym)}'s bearish ESS conflicts with street consensus (${escHtml(consLabel)}, ${analystCnt} analysts). Historical beat rate is ${beatStr} over 8 quarters, but the most recent quarter missed by ${missStr}. Revenue remains positive (+${revStr} YoY). This pattern suggests a single-quarter operational miss, not a fundamental deterioration. Analyst targets may be pre-revision.`;
-      keyPoints = [`ESS BEARISH — likely momentum from the EPS miss`, `Street: ${escHtml(consLabel)} (${analystCnt} analysts${upsidePct !== null ? ", " + upsidePct.toFixed(1) + "% upside" : ""})`, `Beat rate 8Q: ${beatStr} — historically strong executor`, `EPS miss: −${missStr} (one-quarter outlier)`, `Revenue growth: +${revStr} YoY — business still growing`, "Recommended: wait 3–5 days for post-earnings analyst revisions"];
-    }
-    // --- MAJOR DIVERGENCE + STRONG FUNDAMENTAL
-    else if (alignment === "MAJOR_DIVERGENCE" && earningsCtx === "STRONG_FUNDAMENTAL") {
-      posture = "CONFLICTING EVIDENCE"; postureClass = "dil-conflict";
-      rationale = `${escHtml(sym)} shows major signal divergence. ESS is bearish while fundamentals are strong and analysts are bullish. The ESS may be capturing short-term momentum rather than fundamental weakness. Operator judgment required — do not act mechanically.`;
-      keyPoints = ["⚠ MAJOR DIVERGENCE: ESS bearish vs. Street bullish", beatRate !== null ? `FMP: beat rate ${(beatRate*100).toFixed(0)}% (strong)` : "", revGrowth !== null ? `Revenue growth: +${(revGrowth*100).toFixed(1)}%` : "", "ESS is momentum-based; may not reflect forward fundamentals", "Consider: is the price move temporary or thesis-breaking?"].filter(Boolean);
-    }
-    // --- ACTIONABLE (bearish + some corroboration)
-    else if (isESSBearish) {
-      const corroborated = zacks !== null && zacks >= 3.5 || danelfin !== null && danelfin <= 3;
-      if (corroborated || alignment.includes("FULL_ALIGNMENT_BEARISH")) {
-        posture = "ACTIONABLE"; postureClass = "dil-actionable";
-        rationale = `${escHtml(sym)}: Bearish ESS corroborated by at least one additional signal (Zacks/Danelfin). Reduction signal has multi-source support. ${earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? "Earnings context: " + earningsCtx.replace(/_/g," ") + "." : ""}`;
-        keyPoints = [`ESS: ${escHtml(essText || fidRating || "BEARISH")}`, zacks !== null ? `Zacks: ${zacks.toFixed(1)} (corroborates)` : "", composite !== null ? `Composite: ${composite.toFixed(2)}` : ""].filter(Boolean);
-      } else {
-        posture = "INVESTIGATE BEFORE ACTING"; postureClass = "dil-investigate";
-        rationale = `${escHtml(sym)}: Bearish ESS signal is not strongly corroborated by other sources. ${isStreetBullish ? "Street analysts are bullish — divergence detected." : ""} Investigate before acting.`;
-        keyPoints = ["ESS BEARISH — single-source signal", isStreetBullish ? `Street: ${escHtml(consLabel)} (${analystCnt} analysts) — disagrees with ESS` : "", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
-      }
-    }
-    // --- DEFAULT MONITOR
-    else {
-      posture = "MONITOR"; postureClass = "dil-monitor";
-      rationale = `${escHtml(sym)}: Reduction is driven by ${escHtml(category.replace(/_/g," "))} rather than signal deterioration. Signal picture does not provide strong independent confirmation.`;
-      keyPoints = [`Category: ${escHtml(category.replace(/_/g," "))}`, isESSBullish ? "Note: ESS is bullish — this is an allocation-driven reduction, not signal-driven" : ""].filter(Boolean);
-    }
-  }
-
-  // ── DEPLOYMENT posture ──────────────────────────────────────────────────
-  else if (context.isDeployment) {
-    if (alignment === "FULL_ALIGNMENT_BULLISH" && (earningsCtx === "STRONG_FUNDAMENTAL" || earningsCtx === "IN_LINE_FUNDAMENTAL")) {
-      posture = "HIGH CONFIDENCE BUY"; postureClass = "dil-high-confidence-buy";
-      rationale = `${escHtml(sym)}: All signals aligned bullish — ESS, analyst consensus, and FMP fundamentals all support this deployment candidate.`;
-      keyPoints = ["Full signal alignment: ESS + Street + FMP all bullish", beatRate !== null ? `Beat rate 8Q: ${(beatRate*100).toFixed(0)}%` : "", revGrowth !== null ? `Revenue growth: +${(revGrowth*100).toFixed(1)}% YoY` : "", ucfLabel ? `UCF: ${escHtml(ucfLabel)}` : ""].filter(Boolean);
-    } else if (isESSBullish && alignment !== "MAJOR_DIVERGENCE") {
-      posture = "ACTIONABLE"; postureClass = "dil-actionable";
-      rationale = `${escHtml(sym)}: Bullish ESS signal with ${alignment === "FULL_ALIGNMENT_BULLISH" ? "full" : "partial"} signal agreement. CW-DAS conviction ranking supported by signal evidence.`;
-      keyPoints = [`ESS: ${escHtml(essText || fidRating || "BULLISH")}`, isStreetBullish ? `Street: ${escHtml(consLabel)} (${analystCnt} analysts)` : "Street consensus: neutral/mixed", replayPct !== null && replayPct > 50 ? `Replay: ${replayPct.toFixed(0)}th percentile` : "", earningsCtx !== "EARNINGS_CONTEXT_UNKNOWN" ? `Earnings context: ${earningsCtx.replace(/_/g," ")}` : ""].filter(Boolean);
-    } else if (alignment === "MAJOR_DIVERGENCE") {
-      posture = "CONFLICTING EVIDENCE"; postureClass = "dil-conflict";
-      rationale = `${escHtml(sym)}: CW-DAS model is bullish based on conviction tier and replay, but external signals diverge. Verify before deploying.`;
-      keyPoints = ["⚠ Signal divergence detected", "CW-DAS conviction supported; external signals mixed"];
-    } else {
-      posture = "ACTIONABLE"; postureClass = "dil-actionable";
-      rationale = `${escHtml(sym)}: CW-DAS deployment candidate. Conviction tier and replay support the recommendation.`;
-      keyPoints = [ucfLabel ? `UCF: ${escHtml(ucfLabel)}` : "", replayPct !== null ? `Replay: ${replayPct.toFixed(0)}th pct` : ""].filter(Boolean);
-    }
-  }
-
-  // ── Evidence list (always cited with source + date) ──────────────────────
-  if (essText || fidRating)
-    evidence.push(`${escHtml(fidRating || essText || "—")} [Fidelity StarMine, ${today_str}]`);
-  if (zacks != null) {
-    // ZACKS-SOURCE-02: use symbol-level sourced_date if available (not universe-level)
-    const zacksSymDate = fsObj.zacks_sourced_date || today_str;
-    const zacksSrcType = fsObj.zacks_source_type || "DIRECT_ZACKS";
-    const zacksSrcLabel = zacksSrcType === "DIRECT_ZACKS" ? "Zacks Direct" : "Zacks";
-    // SIGNAL-UX-01: include native translation in evidence string
-    const _tZev = typeof _sihZacksTranslate !== "undefined" ? _sihZacksTranslate(zacks) : null;
-    const zacksEvStr = _tZev
-      ? `Zacks ${_tZev.nativeRating} (${_tZev.meaning}) · Normalized: ${_tZev.normalizedScore} · Direction: ${_tZev.direction} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`
-      : `Zacks: ${zacks.toFixed(1)} [${zacksSrcLabel}, ${escHtml(zacksSymDate)}]`;
-    evidence.push(zacksEvStr);
-  }
-  if (abr != null) {
-    // SIGNAL-UX-01: include native translation in evidence string
-    const _tAev = typeof _sihAnalystConsensusTranslate !== "undefined" ? _sihAnalystConsensusTranslate(abr, consLabel) : null;
-    const abrEvStr = _tAev
-      ? `Yahoo ABR ${_tAev.nativeRating} (${_tAev.meaning}) · Normalized: ${_tAev.normalizedScore} · Direction: ${_tAev.direction} [Yahoo, ${escHtml(consRefresh || "—")}]`
-      : `ABR: ${abr.toFixed(2)} (${escHtml(consLabel)}, ${analystCnt} analysts) [Yahoo, ${escHtml(consRefresh || "—")}]`;
-    evidence.push(abrEvStr);
-  }
-  if (epsSurprise != null)
-    evidence.push(`EPS surprise: ${epsSurprise.toFixed(1)}% [FMP, ${escHtml(fmpDate || "—")}]`);
-  if (beatRate != null)
-    evidence.push(`Beat rate 8Q: ${(beatRate*100).toFixed(0)}% [FMP, ${escHtml(fmpDate || "—")}]`);
-  if (revGrowth != null)
-    evidence.push(`Revenue growth Q1 YoY: ${(revGrowth*100).toFixed(1)}% [FMP, ${escHtml(fmpDate || "—")}]`);
-  if (matrixClass)
-    evidence.push(`Signal alignment: ${escHtml(matrixClass.replace(/_/g," "))} [Computed, ${today_str}]`);
-  if (ucfLabel)
-    evidence.push(`UCF: ${escHtml(ucfLabel)} [Computed, PAR time]`);
-
-  // DIL Phase 2 — price context (display-only; no scoring influence)
-  const pcObj = priceCtx || {};
-  let priceContextDisplay = null;
-  if (pcObj.return_1d != null || pcObj.return_5d != null || pcObj.pct_52w_range != null) {
-    const fmt = v => v != null ? `${v > 0 ? "+" : ""}${Number(v).toFixed(2)}%` : "—";
-    const r1d = pcObj.return_1d != null ? fmt(pcObj.return_1d) : "—";
-    const r5d = pcObj.return_5d != null ? fmt(pcObj.return_5d) : "—";
-    const r1m = pcObj.return_1m != null ? fmt(pcObj.return_1m) : "—";
-    const w52 = pcObj.pct_52w_range != null ? `${Number(pcObj.pct_52w_range).toFixed(0)}th %ile` : "—";
-    const earningsNote = pcObj.next_earnings_date
-      ? `Next earnings: ${escHtml(pcObj.next_earnings_date)}`
-      : "";
-    priceContextDisplay = { r1d, r5d, r1m, w52, earningsNote };
-  }
-
-  return { posture, postureClass, rationale, keyPoints: keyPoints.filter(Boolean), evidence, priceContextDisplay };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THESIS-EXPLAIN-01 — Investment Thesis Layer ("Why It Is Working")
-// Display-only. Synthesizes from existing signal data. No scoring influence.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Static analyst accuracy benchmarks (published industry figures, display-only)
-// ANALYST-ACCURACY-01 governance: informational context only, no weighting change.
-const _ANALYST_ACCURACY = {
-  "StarMine / ESS": 87,
-  "Danelfin AI":    82,
-  "Zacks":          63,
-  "Jefferson Research": 64,
-  "McLean Capital": 71,
-};
-
-function _buildInvestmentThesis(sym, ac, fs, fmpEntry, ov, ucf, priceCtx) {
-  // Synthesize a "Why It Is Working" thesis from existing signal data.
-  // Governance: presentation-only. Never influences scores, ranks, or recs.
-  const acObj  = ac  || {};
-  const fsObj  = fs  || {};
-  const fmpObj = fmpEntry || {};
-  const ovObj  = ov  || {};
-  const ucfObj = ucf || {};
-  const pcObj  = priceCtx || {};
-
-  const meta = _securityMetadata[sym.toUpperCase()] || {};
-  const sector   = meta.sector   || ovObj.sector   || "—";
-  const industry = meta.industry || ovObj.industry || "—";
-
-  const essText     = fsObj.ess_text    || ovObj.ess_score_text || "";
-  const fidRating   = fsObj.fidelity_rating || "";
-  const zacks       = ovObj.zacks_rating != null ? parseFloat(ovObj.zacks_rating) : null;
-  const danelfin    = ovObj.danelfin_score != null ? parseFloat(ovObj.danelfin_score) : null;
-  const composite   = ovObj.composite_score != null ? parseFloat(ovObj.composite_score) : null;
-  const abr         = acObj.abr != null ? parseFloat(acObj.abr) : null;
-  const upsidePct   = acObj.upside_pct != null ? parseFloat(acObj.upside_pct) : null;
-  const consLabel   = acObj.consensus_label || "";
-  const analystCnt  = acObj.analyst_count || 0;
-  const beatRate    = fmpObj.beat_rate_8q != null ? parseFloat(fmpObj.beat_rate_8q) : null;
-  const revGrowth   = fmpObj.revenue_growth_q1_yoy != null ? parseFloat(fmpObj.revenue_growth_q1_yoy) : null;
-  const epsSurprise = fmpObj.latest_eps_surprise_pct != null ? parseFloat(fmpObj.latest_eps_surprise_pct) : null;
-  const revAccel    = fmpObj.revenue_acceleration != null ? parseFloat(fmpObj.revenue_acceleration) : null;
-  const ucfLabel    = ucfObj.ucf_label || "";
-
-  // ── Why It Is Working (positive conviction drivers) ──────────────────────
-  const whyWorking = [];
-  const isESSBullish  = essText.includes("BULLISH");
-  const isZacksBullish = zacks !== null && zacks <= 2;
-  const isDanelfinStrong = danelfin !== null && danelfin >= 4.0;
-  const isStreetBullish = abr !== null && abr <= 2.0 && consLabel.includes("BUY");
-  const hasUpside = upsidePct !== null && upsidePct >= 10;
-  const hasBeatMomentum = beatRate !== null && beatRate >= 0.70;
-  const hasRevGrowth = revGrowth !== null && revGrowth > 0.05;
-  const hasRevAccel = revAccel !== null && revAccel > 0;
-  const hasEarningsMomentum = epsSurprise !== null && epsSurprise > 0;
-  const isCCL = ucfLabel === "CORE_CONVICTION_LEADER";
-  const isHCA = ucfLabel === "HIGH_CONVICTION_ANCHOR";
-  const recentReturn5d  = pcObj.return_5d  != null ? parseFloat(pcObj.return_5d) : null;
-  const pct52w = pcObj.pct_52w_range != null ? parseFloat(pcObj.pct_52w_range) : null;
-
-  if (isESSBullish) whyWorking.push("Bullish signal momentum (ESS)");
-  if (isZacksBullish) whyWorking.push(`Strong Zacks rank (${zacks !== null ? zacks.toFixed(0) : "—"})`);
-  if (isDanelfinStrong) whyWorking.push(`Danelfin AI positive (${danelfin !== null ? danelfin.toFixed(1) : "—"}/5)`);
-  if (isStreetBullish && analystCnt > 0) whyWorking.push(`Street consensus: ${escHtml(consLabel)} (${analystCnt} analysts)`);
-  if (hasUpside) whyWorking.push(`Price target upside: +${upsidePct.toFixed(1)}%`);
-  if (hasBeatMomentum) whyWorking.push(`Strong earnings track record: ${(beatRate * 100).toFixed(0)}% beat rate`);
-  if (hasRevGrowth) whyWorking.push(`Revenue growth: +${(revGrowth * 100).toFixed(1)}% YoY`);
-  if (hasRevAccel) whyWorking.push("Revenue acceleration detected");
-  if (hasEarningsMomentum && epsSurprise > 5) whyWorking.push(`EPS surprise: +${epsSurprise.toFixed(1)}%`);
-  if (isCCL) whyWorking.push("Portfolio conviction anchor: CORE CONVICTION LEADER");
-  else if (isHCA) whyWorking.push("Portfolio conviction anchor: HIGH CONVICTION ANCHOR");
-  if (recentReturn5d !== null && recentReturn5d > 2) whyWorking.push(`Recent price momentum: +${recentReturn5d.toFixed(1)}% (5d)`);
-  if (pct52w !== null && pct52w >= 70) whyWorking.push(`Near 52-week high (${pct52w.toFixed(0)}th percentile)`);
-
-  // ── Key Risks ─────────────────────────────────────────────────────────────
-  const keyRisks = [];
-  const isESSBearish = essText.includes("BEARISH");
-  const weakBeatRate = beatRate !== null && beatRate < 0.50;
-  const negRevGrowth = revGrowth !== null && revGrowth < 0;
-  const isStreetBearish = abr !== null && abr >= 3.5;
-  const negEPS = epsSurprise !== null && epsSurprise < -10;
-  const near52wLow = pct52w !== null && pct52w <= 25;
-
-  if (isESSBearish) keyRisks.push("Signal deterioration detected (ESS bearish)");
-  if (weakBeatRate) keyRisks.push(`Weak earnings execution: ${(beatRate * 100).toFixed(0)}% beat rate`);
-  if (negRevGrowth) keyRisks.push(`Revenue contraction: ${(revGrowth * 100).toFixed(1)}% YoY`);
-  if (isStreetBearish) keyRisks.push(`Analyst consensus cautious: ABR ${abr.toFixed(2)}`);
-  if (negEPS) keyRisks.push(`EPS miss: ${epsSurprise.toFixed(1)}%`);
-  if (near52wLow) keyRisks.push(`Price near 52-week low (${pct52w.toFixed(0)}th percentile)`);
-
-  if (!whyWorking.length && !keyRisks.length) return null;  // No thesis to show
-
-  return { whyWorking, keyRisks, sector, industry };
-}
-
-function _thesisHtml(thesis) {
-  if (!thesis) return "";
-  const { whyWorking, keyRisks, sector, industry } = thesis;
-
-  const hasWhy = whyWorking.length > 0;
-  const hasRisks = keyRisks.length > 0;
-
-  const whyHtml = hasWhy
-    ? `<div class="thesis-section">
-        <div class="thesis-section-label">Why It Is Working</div>
-        <ul class="thesis-list thesis-positive">${whyWorking.slice(0, 5).map(w => `<li>${escHtml(w)}</li>`).join("")}</ul>
-      </div>`
-    : "";
-
-  const risksHtml = hasRisks
-    ? `<div class="thesis-section">
-        <div class="thesis-section-label">Key Risks</div>
-        <ul class="thesis-list thesis-risks">${keyRisks.slice(0, 4).map(r => `<li>${escHtml(r)}</li>`).join("")}</ul>
-      </div>`
-    : "";
-
-  const contextHtml = (sector !== "—" || industry !== "—")
-    ? `<div class="thesis-context">
-        ${sector !== "—" ? `<span class="thesis-context-chip">${escHtml(sector)}</span>` : ""}
-        ${industry !== "—" ? `<span class="thesis-context-chip thesis-context-industry">${escHtml(industry)}</span>` : ""}
-      </div>`
-    : "";
-
-  return `<div class="thesis-panel">
-    <div class="thesis-header">Investment Thesis <span class="thesis-governance">display-only</span></div>
-    ${contextHtml}
-    ${whyHtml}
-    ${risksHtml}
-  </div>`;
-}
-
-function _dilHtml(dilResult) {
-  if (!dilResult || !dilResult.posture) return "";
-  const { posture, postureClass, rationale, keyPoints, evidence, priceContextDisplay } = dilResult;
-
-  const kpHtml = keyPoints.length > 0
-    ? `<ul class="dil-key-points">${keyPoints.map(p => `<li>${p}</li>`).join("")}</ul>`
-    : "";
-
-  const evHtml = evidence.length > 0
-    ? `<div class="dil-evidence">
-        <div class="dil-evidence-title">Signal Evidence</div>
-        <ul>${evidence.map(e => {
-          const parts = e.match(/^(.*)\s\[([^,\]]+),\s*([^\]]+)\]$/);
-          return parts
-            ? `<li>${escHtml(parts[1])} <span class="dil-src">[${escHtml(parts[2])}, ${escHtml(parts[3])}]</span></li>`
-            : `<li>${e}</li>`;
-        }).join("")}</ul>
-      </div>`
-    : "";
-
-  const pcHtml = priceContextDisplay
-    ? `<div class="dil-price-context">
-        <div class="dil-price-ctx-title">Price Context <span class="dil-price-ctx-note">(display-only)</span></div>
-        <div class="dil-price-ctx-grid">
-          <div class="dil-price-ctx-cell"><span class="dil-pc-label">1D</span><span class="dil-pc-val">${priceContextDisplay.r1d}</span></div>
-          <div class="dil-price-ctx-cell"><span class="dil-pc-label">5D</span><span class="dil-pc-val">${priceContextDisplay.r5d}</span></div>
-          <div class="dil-price-ctx-cell"><span class="dil-pc-label">1M</span><span class="dil-pc-val">${priceContextDisplay.r1m}</span></div>
-          <div class="dil-price-ctx-cell"><span class="dil-pc-label">52W</span><span class="dil-pc-val">${priceContextDisplay.w52}</span></div>
-        </div>
-        ${priceContextDisplay.earningsNote ? `<div class="dil-earnings-note">${priceContextDisplay.earningsNote}</div>` : ""}
-      </div>`
-    : "";
-
-  // ANALYST-ACCURACY-01: show analyst accuracy context alongside opinion (display-only)
-  const accuracyItems = [];
-  if (evidence.some(e => e.includes("ESS") || e.includes("StarMine"))) {
-    const acc = _ANALYST_ACCURACY["StarMine / ESS"];
-    if (acc) accuracyItems.push({ name: "StarMine / ESS", accuracy: acc });
-  }
-  if (evidence.some(e => e.includes("Zacks"))) {
-    const acc = _ANALYST_ACCURACY["Zacks"];
-    if (acc) accuracyItems.push({ name: "Zacks", accuracy: acc });
-  }
-  if (evidence.some(e => e.includes("Danelfin") || e.includes("AI Score"))) {
-    const acc = _ANALYST_ACCURACY["Danelfin AI"];
-    if (acc) accuracyItems.push({ name: "Danelfin AI", accuracy: acc });
-  }
-  const accuracyHtml = accuracyItems.length
-    ? `<div class="dil-accuracy-row">
-        <span class="dil-accuracy-label">Source Accuracy (historical):</span>
-        ${accuracyItems.map(a => `<span class="dil-accuracy-chip">${escHtml(a.name)}: <strong>${a.accuracy}%</strong></span>`).join("")}
-        <span class="dil-accuracy-note">Display-only. No weighting change.</span>
-      </div>`
-    : "";
-
-  return `<div class="dil-section">
-    <div class="dil-section-title">⚡ Decision Intelligence</div>
-    <div class="dil-posture ${escHtml(postureClass)}">${escHtml(posture)}</div>
-    <div class="dil-rationale-text">${rationale}</div>
-    ${kpHtml}
-    ${evHtml}
-    ${accuracyHtml}
-    ${pcHtml}
-    <div class="dil-advisory">Advisory only — all postures are interpretive. Operator remains the decision maker.</div>
-  </div>`;
-}
-
-function renderReductionQueuePlaceholder() {
-  const el = document.getElementById("reductionQueueContainer");
-  if (!el) return;
-  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
-    <div class="rq-header">
-      <span class="rq-title">Reduction Queue - Top 10</span>
-      <span class="rq-advisory">Loading capital source data...</span>
-    </div>
-    <div class="rq-loading">Waiting for CRA capital sources...</div>
-  </div></div>`;
-}
-
-function renderReductionQueueUnavailable(message, reason) {
-  const el = document.getElementById("reductionQueueContainer");
-  if (!el) return;
-  const msg = message || "CRA unavailable - capital source data not loaded.";
-  const why = reason ? `Reason: ${reason}` : "Reason: backend returned degraded state";
-  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
-    <div class="rq-header">
-      <span class="rq-title">Reduction Queue - Top 10</span>
-      <span class="rq-advisory">CRA unavailable</span>
-    </div>
-    <div class="rq-no-data">CRA unavailable - capital source data not loaded.<br>${escHtml(msg)}<br><small>${escHtml(why)}</small></div>
-  </div></div>`;
-}
-const _RQ_PRIORITY_ORDER = { URGENT: 0, HIGH: 1, MODERATE: 2, LOW: 3, DEFER: 4 };
-const _RQ_CATEGORY_LABELS = {
-  SIGNAL_DETERIORATION:   "Signal Deterioration",
-  STRATEGIC_EXIT:         "Strategic Exit",
-  OVERWEIGHT_REDUCTION:   "Overweight Reduction",
-  TAX_AWARE_EXIT:         "Tax-Aware Exit",
-  LOW_CONVICTION_REDUCTION: "Passive Exposure",
-};
-
-// CRA-EXPLAIN-02 — Source intent metadata
-const _RQ_INTENT_META = {
-  THESIS_EXIT: {
-    badge: "THESIS EXIT",
-    cls: "rq-intent-thesis-exit",
-    explanation: null, // conviction is impaired — no positive-conviction note needed
-  },
-  THESIS_TRIM: {
-    badge: "THESIS TRIM",
-    cls: "rq-intent-thesis-trim",
-    explanation: null,
-  },
-  TAX_FUNDING_SOURCE: {
-    badge: "TAX FUNDING",
-    cls: "rq-intent-tax-funding",
-    explanation: "This position remains a positive-conviction holding. " +
-      "It is selected as a funding source due to tax characteristics rather than " +
-      "deterioration in conviction.",
-  },
-  PORTFOLIO_REALLOCATION: {
-    badge: "REALLOCATION",
-    cls: "rq-intent-reallocation",
-    explanation: "This position is being reduced for portfolio construction efficiency. " +
-      "This is not a negative thesis assessment.",
-  },
-  OVERWEIGHT_REPAIR: {
-    badge: "OVERWEIGHT REPAIR",
-    cls: "rq-intent-ow-repair",
-    explanation: "This position is being reduced to repair an overweight allocation node. " +
-      "This is not necessarily a bearish signal.",
-  },
-};
-
-function renderReductionQueue(sources, totalPool, fviData, overlayBySymbol, ucfBySymbol, fidBySymbol) {
-  const el = document.getElementById("reductionQueueContainer");
-  if (!el) return;
-
-  // Normalise lookup maps (may be null/undefined from caller)
-  overlayBySymbol = overlayBySymbol || {};
-  ucfBySymbol     = ucfBySymbol     || {};
-  fidBySymbol     = fidBySymbol     || {};
-
-  if (!sources || sources.length === 0) {
-    el.innerHTML = `<div class="rq-section"><div class="rq-panel">
-      <div class="rq-header">
-        <span class="rq-title">Reduction Queue — Top 10</span>
-      </div>
-      <div class="rq-no-data">No capital sources identified. Portfolio may be fully deployed or all candidates are below the minimum proceeds threshold.</div>
-    </div></div>`;
-    return;
-  }
-
-  // Sort: priority ascending (URGENT first), then proceeds descending
-  const sorted = [...sources].sort((a, b) => {
-    const pa = _RQ_PRIORITY_ORDER[a.priority] ?? 9;
-    const pb = _RQ_PRIORITY_ORDER[b.priority] ?? 9;
-    if (pa !== pb) return pa - pb;
-    return (b.estimated_proceeds || 0) - (a.estimated_proceeds || 0);
-  });
-
-  const top10 = sorted.slice(0, 10);
-  const _actionLatencyBySym = (_lastAnalysisData && _lastAnalysisData.action_latency_by_symbol) || {};
-
-  // Pool summary (exclude BLOCKED + DEFER from pool)
-  const poolSources = sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
-  const poolTotal = totalPool != null ? totalPool : poolSources.reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
-  const blockedCount = sources.filter(s => s.blocked_by_policy).length;
-
-  // ── CRA-EXPLAIN-02: Intent Summary Card ──────────────────────────────────
-  // Aggregate by source_intent for the quick-glance breakdown above the queue.
-  const intentBuckets = {};
-  for (const s of poolSources) {
-    const intent = s.source_intent || "PORTFOLIO_REALLOCATION";
-    if (!intentBuckets[intent]) intentBuckets[intent] = { count: 0, capital: 0 };
-    intentBuckets[intent].count++;
-    intentBuckets[intent].capital += (s.estimated_proceeds || 0);
-  }
-  const intentOrder = ["THESIS_EXIT","THESIS_TRIM","TAX_FUNDING_SOURCE","OVERWEIGHT_REPAIR","PORTFOLIO_REALLOCATION"];
-  const intentCardRows = intentOrder
-    .filter(k => intentBuckets[k] && intentBuckets[k].count > 0)
-    .map(k => {
-      const meta = _RQ_INTENT_META[k] || { badge: k, cls: "" };
-      const b = intentBuckets[k];
-      return `<div class="rq-intent-summary-item">
-        <span class="rq-intent-badge ${meta.cls}">${escHtml(meta.badge)}</span>
-        <span class="rq-intent-count">${b.count} position${b.count !== 1 ? "s" : ""}</span>
-        <span class="rq-intent-capital">${formatMV(Math.round(b.capital))}</span>
-      </div>`;
-    }).join("");
-
-  const intentSummaryHtml = intentCardRows ? `<div class="rq-intent-summary-card">
-    <div class="rq-intent-summary-title">Capital Sources Summary</div>
-    <div class="rq-intent-summary-grid">${intentCardRows}</div>
-    <div class="rq-intent-summary-note">
-      Positions labelled TAX FUNDING, OVERWEIGHT REPAIR, or REALLOCATION are not negative thesis assessments —
-      they are being tapped as capital sources for structural or tax reasons.
-    </div>
-  </div>` : "";
-
-  const rows = top10.map((s, idx) => {
-    const blocked = s.blocked_by_policy;
-    const deferred = s.policy_type === "SELL_LAST";
-    const reviewRequired = s.operator_review_required;
-    const rowClass = blocked ? " rq-row-blocked" : "";
-
-    // Priority badge
-    const pri = s.priority || "LOW";
-    const priBadge = `<span class="rq-pri rq-pri-${pri}">${escHtml(pri)}</span>`;
-
-    // Proceeds + sizing
-    const proceeds = s.estimated_proceeds || 0;
-    const sizing = s.sizing_pct != null ? Math.round(s.sizing_pct * 100) + "%" : "—";
-    const proceedsHtml = `<span class="rq-proceeds">${formatMV(proceeds)}</span><br><span class="rq-sizing">${sizing} of ${formatMV(s.current_value_usd || 0)}</span>`;
-
-    // Policy state badge
-    let policyBadge = "";
-    if (blocked) {
-      policyBadge = `<span class="rq-policy-blocked">🔒 Blocked</span>`;
-    } else if (deferred) {
-      policyBadge = `<span class="rq-policy-deferred">⏸ Sell Last</span>`;
-    } else if (reviewRequired) {
-      policyBadge = `<span class="rq-policy-review">⚠ Review</span>`;
-    }
-
-    // FVI tier
-    let fviBadge = "";
-    if (fviData) {
-      const fvi = fviData[s.symbol] || fviData[(s.symbol || "").toUpperCase()];
-      if (fvi && fvi.fvi_tier) {
-        const tier = fvi.fvi_tier;
-        fviBadge = `<span class="rq-fvi fvi-${tier}" title="Fund Vehicle Intelligence: ${tier}">${tier}</span>`;
-      }
-    }
-
-    const catLabel = _RQ_CATEGORY_LABELS[s.category] || escHtml(s.category || "—");
-    const essText = s.ess_score_text ? `<span class="ess-text ess-${(s.ess_score_text || '').toLowerCase().replace('_','-')}" style="font-size:0.68rem">${escHtml(s.ess_score_text)}</span>` : "";
-
-    // ── ARCH-05: Intelligence Profile ──────────────────────────────────────
-    const profileId = `rq-profile-${idx}`;
-    const sym = s.symbol || "";
-    const symUpper = sym.toUpperCase();
-    const actionLatency = _actionLatencyBySym[symUpper] || null;
-
-    // Overlay signals (security_overlays)
-    const ov  = overlayBySymbol[symUpper] || {};
-    const ucf = ucfBySymbol[symUpper]     || {};
-    const fid = fidBySymbol[symUpper]     || {};
-    const ac  = (renderReductionQueue._consBySymbol || {})[symUpper] || {};
-
-    const composite    = parseFloat(ov.composite_score || fid.composite_score || 0);
-    const essOv        = ov.ess_score_text || "";
-    const sigDir       = ov.signal_direction || "";
-    const zacks        = ov.zacks_rating  || fid.zacks_rating  || "";
-    const danelfin     = ov.danelfin_score || fid.danelfin_score || "";
-    const replayPct    = ov.replay_percentile  != null ? parseFloat(ov.replay_percentile) : null;
-    const portPct      = parseFloat(ov.percent_of_portfolio || s.current_value_usd / 4650 || 0);
-    const ucfLabel     = ucf.ucf_label  || "";
-    const ucfRank      = ucf.ucf_rank   || "";
-    const ucfScore     = ucf.ucf_score  != null ? parseFloat(ucf.ucf_score) : null;
-    const sigSummary   = ucf.signal_summary || s.evidence_summary || "";
-
-    // Analyst consensus (Yahoo supplemental)
-    const abr           = ac.abr           != null ? parseFloat(ac.abr).toFixed(2) : null;
-    const analystCount  = ac.analyst_count || null;
-    const priceTarget   = ac.price_target  != null ? parseFloat(ac.price_target).toFixed(2) : null;
-    const upsidePct     = ac.upside_pct    != null ? parseFloat(ac.upside_pct).toFixed(1) : null;
-    const consLabel     = ac.consensus_label || null;
-    const consStrength  = ac.consensus_strength || null;
-    const consRefresh   = ac.refresh_date   || null;
-
-    // Fidelity StarMine rating + consensus matrix alignment
-    const fidRating     = fid.fidelity_rating    || null;
-    const fidDirection  = fid.fidelity_direction || null;
-    const consMat       = fid.consensus_matrix   || {};
-    const consMatClass  = consMat.classification || null;  // FULL_ALIGNMENT_BULLISH / MAJOR_DIVERGENCE / PARTIAL_ALIGNMENT
-    const essDir        = consMat.ess_direction    || null;
-    const yahooDir      = consMat.yahoo_direction  || null;
-    const zacksDir      = consMat.zacks_direction  || null;
-    const sigCount      = consMat.signals_available || 0;
-
-    const _valClass = (v, good, bad) => {
-      if (!v) return "";
-      const u = String(v).toUpperCase();
-      if (u.includes(good)) return "val-bullish";
-      if (u.includes(bad)) return "val-bearish";
-      return "val-neutral";
-    };
-
-    const profileItem = (lbl, val, cls) =>
-      val !== null && val !== undefined && String(val).trim() !== ""
-        ? `<div class="rq-profile-row-item"><span class="rq-profile-lbl">${lbl}</span><span class="rq-profile-val ${cls || ''}">${escHtml(String(val))}</span></div>`
-        : "";
-
-    // Suggested reduction weight
-    const currentMV  = s.current_value_usd || 0;
-    const proceedsEst = proceeds;
-    const suggestedMV = Math.max(0, currentMV - proceedsEst);
-    const totalPortMV = (_lastAnalysisData && _lastAnalysisData.total_market_value) || 0;
-    const suggestedPct = totalPortMV > 0 ? (suggestedMV / totalPortMV * 100).toFixed(2) + "%" : "—";
-
-    // PAP-EXPLAIN-02 Fix: Use CRA-specific rationale first, UCF signal_summary only as secondary context.
-    // The UCF signal_summary describes conviction stance (e.g. "Hold; do not prioritize for new cash")
-    // which correctly reflects retention intent — but when shown alone as the reduction rationale, it
-    // contradicts the CRA's selection of this position as a funding source.
-    // Resolution: CRA reduction_reason/evidence_summary = WHY it's a source; UCF summary = conviction context.
-    const _normalizeReason = (value) => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
-    let rationale = "";
-    const craReason = String(s.reduction_reason || s.evidence_summary || "").trim();
-    const normalizedCraReason = _normalizeReason(craReason);
-    const normalizedSigSummary = _normalizeReason(sigSummary);
-    if (craReason) {
-      rationale = escHtml(craReason);
-      // If UCF says something different (e.g. Hold), surface it as explicit context — not contradiction
-      if (
-        sigSummary &&
-        normalizedSigSummary !== normalizedCraReason &&
-        !sigSummary.toLowerCase().includes("trim") &&
-        !sigSummary.toLowerCase().includes("reduce")
-      ) {
-        rationale += `<div class="rq-conviction-context">
-          <span class="rq-conv-label">UCF Conviction:</span>
-          <span class="rq-conv-text">${escHtml(sigSummary)}</span>
-          <span class="rq-conv-note">This position has positive conviction. It is selected as a funding source due to its tax characteristics, not signal deterioration. Proceeds fund higher-conviction opportunities.</span>
-        </div>`;
-      }
-    } else if (s.category === "TAX_AWARE_EXIT") {
-      rationale = `${escHtml(sym)} carries an unrealized loss (~${s.unrealized_gain_loss != null ? '$' + Math.abs(s.unrealized_gain_loss).toFixed(0) : 'unknown'}). Tax-loss harvesting improves after-tax returns. Proceeds fund higher-conviction positions.`;
-      if (sigSummary) {
-        rationale += `<div class="rq-conviction-context"><span class="rq-conv-label">UCF Conviction:</span> <span class="rq-conv-text">${escHtml(sigSummary)}</span></div>`;
-      }
-    } else if (s.category === "LOW_CONVICTION_REDUCTION") {
-      rationale = `${escHtml(sym)} is held as a passive allocation vehicle with no individual ESS signal data. Under the Concentrated Alpha mandate, this position represents an opportunity cost — capital that could fund a higher-conviction direct holding.`;
-    } else if (s.category === "OVERWEIGHT_REDUCTION") {
-      rationale = `${escHtml(sym)} is in an allocation node that is overweight vs. the mandate target. Partial reduction brings the portfolio back toward strategic alignment.`;
-    } else if (s.category === "SIGNAL_DETERIORATION") {
-      rationale = `${escHtml(sym)} shows deteriorating signal quality. ESS and conviction scores have weakened. Priority reduction candidate.`;
-      if (sigSummary) rationale += ` ${escHtml(sigSummary)}`;
-    } else {
-      rationale = sigSummary ? escHtml(sigSummary) : (s.evidence_summary ? escHtml(s.evidence_summary) : `${escHtml(sym)}: ${catLabel}`);
-    }
-
-    // Fidelity deep-link
-    const fidelityUrl = `https://digital.fidelity.com/prgw/digital/research/quote/dashboard/ratings-sentiment?symbol=${encodeURIComponent(sym)}`;
-    const fidelityLink = `<a class="rq-fidelity-link" href="${fidelityUrl}" target="_blank" rel="noopener noreferrer">&#128279; Fidelity Ratings</a>`;
-
-    const profileHtml = `
-      <div class="rq-profile-grid">
-        <div>
-          <div class="rq-profile-section-title">Signal Intelligence</div>
-          ${profileItem("ESS (StarMine)", fidRating || essOv || "—", _valClass(fidRating || essOv, "BULLISH", "BEARISH"))}
-          ${profileItem("Signal Direction", sigDir || "—", _valClass(sigDir, "BULLISH", "BEARISH"))}
-          ${profileItem("Zacks Rating", zacks || "—", "")}
-          ${profileItem("Danelfin Score", danelfin || "—", "")}
-          ${profileItem("Composite Score", composite > 0 ? composite.toFixed(2) : "—", composite > 3 ? "val-bullish" : composite > 0 && composite < 2.5 ? "val-bearish" : "val-neutral")}
-          ${replayPct != null ? profileItem("Replay Percentile", replayPct.toFixed(0) + "th", replayPct >= 50 ? "val-bullish" : "val-bearish") : ""}
-        </div>
-        <div>
-          <div class="rq-profile-section-title">Analyst Consensus &amp; Validation</div>
-          ${consLabel ? profileItem("Consensus", consLabel.replace(/_/g, " "), _valClass(consLabel, "BUY", "SELL")) : ""}
-          ${abr ? profileItem("ABR", abr + (analystCount ? " (" + analystCount + " analysts)" : ""), parseFloat(abr) <= 2 ? "val-bullish" : parseFloat(abr) >= 3.5 ? "val-bearish" : "val-neutral") : ""}
-          ${priceTarget ? profileItem("Price Target", "$" + priceTarget, "") : ""}
-          ${upsidePct != null ? profileItem("Upside vs Target", upsidePct + "%", parseFloat(upsidePct) > 15 ? "val-bullish" : parseFloat(upsidePct) < -5 ? "val-bearish" : "val-neutral") : ""}
-          ${consRefresh ? `<div style="font-size:0.65rem;color:var(--muted);margin-top:4px;">Consensus as of ${escHtml(consRefresh)}</div>` : ""}
-          ${consMatClass ? `
-          <div class="rq-profile-section-title" style="margin-top:10px;">Signal Agreement</div>
-          <div class="rq-profile-row-item">
-            <span class="rq-profile-lbl">Alignment</span>
-            <span class="rq-profile-val ${_valClass(consMatClass, 'BULLISH', 'DIVERGENCE')}" style="font-size:0.7rem">${escHtml(consMatClass.replace(/_/g,' '))}</span>
-          </div>
-          ${essDir   ? profileItem("ESS direction",   essDir,   _valClass(essDir,   "BULLISH", "BEARISH")) : ""}
-          ${yahooDir ? profileItem("Yahoo consensus", yahooDir, _valClass(yahooDir, "BULLISH", "BEARISH")) : ""}
-          ${zacksDir ? profileItem("Zacks direction", zacksDir, _valClass(zacksDir, "BULLISH", "BEARISH")) : ""}
-          ` : ""}
-        </div>
-        <div>
-          <div class="rq-profile-section-title">Portfolio Context</div>
-          ${profileItem("Current Weight", portPct.toFixed(2) + "%", "")}
-          ${profileItem("Current Value", formatMV(currentMV), "")}
-          ${profileItem("Est. Proceeds", formatMV(proceedsEst), "")}
-          ${profileItem("Suggested Weight", suggestedPct, "")}
-          ${profileItem("Reduction Category", catLabel, "")}
-          ${ucfLabel ? profileItem("UCF Label", ucfLabel, _valClass(ucfLabel, "CONVICTION", "TRIM_WATCH")) : ""}
-          ${ucfScore != null ? profileItem("UCF Score", ucfScore.toFixed(1), ucfScore >= 60 ? "val-bullish" : ucfScore < 30 ? "val-bearish" : "val-neutral") : ""}
-          ${ucfRank ? profileItem("UCF Rank", "#" + ucfRank + " of portfolio", "") : ""}
-          ${fviBadge ? `<div class="rq-profile-row-item"><span class="rq-profile-lbl">FVI Tier</span><span class="rq-profile-val">${fviBadge}</span></div>` : ""}
-          ${profileItem("Policy State", blocked ? "🔒 DO_NOT_SELL" : deferred ? "⏸ SELL_LAST" : "Executable", blocked ? "val-bearish" : "")}
-          <div style="margin-top:8px;">${fidelityLink}</div>
-        </div>
-        <div class="rq-rationale" style="grid-column:1/-1;">
-          <strong>Reduction Rationale:</strong> ${rationale}
-        </div>
-      </div>`;
-
-    // ── DIL Phase 1: compute and inject decision intelligence panel ──────────
-    const _fmpBySymDIL = (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol) || {};
-    const _pcBySymDIL  = (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol) || {};
-    const _dilResult = computeDIL(
-      sym,
-      (renderReductionQueue._consBySymbol || {})[symUpper] || {},
-      fidBySymbol[symUpper] || {},
-      _fmpBySymDIL[symUpper] || null,
-      ucfBySymbol[symUpper] || {},
-      overlayBySymbol[symUpper] || {},
-      { isReduction: true, isDeployment: false, category: s.category || "" },
-      _pcBySymDIL[symUpper] || null,
-      actionLatency
-    );
-    const dilPanelHtml = _dilHtml(_dilResult);
-    // DISLOCATION-03: conflict alpha insight for reduction candidates
-    const rqAlphaHtml = _securityAlphaInsightHtml(sym);
-
-    // THESIS-EXPLAIN-01: investment thesis for reduction candidates
-    const _rqThesis = _buildInvestmentThesis(
-      sym,
-      (renderReductionQueue._consBySymbol || {})[symUpper] || {},
-      fidBySymbol[symUpper] || {},
-      (_lastAnalysisData && _lastAnalysisData.fmp_data_by_symbol || {})[symUpper] || null,
-      overlayBySymbol[symUpper] || {},
-      ucfBySymbol[symUpper] || {},
-      (_lastAnalysisData && _lastAnalysisData.price_context_by_symbol || {})[symUpper] || null
-    );
-    const rqThesisPanelHtml = _thesisHtml(_rqThesis);
-
-    // ── CRA-EXPLAIN-02: intent badge + explanation ─────────────────────────
-    const intentMeta = _RQ_INTENT_META[s.source_intent] || null;
-    const intentBadgeHtml = intentMeta
-      ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
-      : "";
-    const actionLatencyBadge = _actionLatencyBadgeHtml(actionLatency, s.source_intent);
-    const actionLatencyPanelHtml = _actionLatencyPanelHtml(actionLatency, s.source_intent);
-    const intentExplanationHtml = (intentMeta && intentMeta.explanation)
-      ? `<div class="rq-intent-explanation">${escHtml(intentMeta.explanation)}</div>`
-      : "";
-
-    const mainRow = `<tr class="rq-row${rowClass}">
-      <td class="rq-rank">${idx + 1}</td>
-      <td>
-        <div class="rq-sym">${escHtml(sym)}</div>
-        <div class="rq-cat">${catLabel} ${essText} ${intentBadgeHtml} ${actionLatencyBadge}</div>
-        ${intentExplanationHtml}
-        <button class="rq-expand-btn" onclick="(function(){const p=document.getElementById('${profileId}');if(p){p.classList.toggle('rq-open');this.textContent=p.classList.contains('rq-open')?'▲ Less':'▼ Profile';}}).call(this)">▼ Profile</button>
-      </td>
-      <td>${priBadge}</td>
-      <td>${proceedsHtml}</td>
-      <td>${policyBadge || '<span style="color:var(--muted);font-size:0.72rem">—</span>'}${fviBadge ? '<br>' + fviBadge : ''}</td>
-    </tr>`;
-
-    const profileRow = `<tr class="rq-profile-row" id="${profileId}">
-      <td></td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${actionLatencyPanelHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
-    </tr>`;
-
-    return mainRow + profileRow;
-  }).join("");
-
-  const blockedNote = blockedCount > 0
-    ? `<span style="font-size:0.7rem;color:var(--muted);margin-left:8px">${blockedCount} blocked by policy</span>`
-    : "";
-
-  el.innerHTML = `<div class="rq-section"><div class="rq-panel">
-    <div class="rq-header">
-      <span class="rq-title">Reduction Queue — Top 10</span>
-      <span class="rq-pool-badge">${formatMV(poolTotal)} est. pool</span>
-      ${blockedNote}
-      <span class="rq-advisory">Source capital — guidance only, not trade instructions</span>
-    </div>
-    ${intentSummaryHtml}
-    <table class="rq-table">
-      <thead><tr>
-        <th style="width:28px">Rank</th>
-        <th>Symbol / Reason</th>
-        <th>Priority</th>
-        <th>Est. Proceeds</th>
-        <th>Policy / FVI</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div></div>`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _disShowWatch = false;  // WATCH tier visibility toggle
-
-function renderDislocationWatchlist(data) {
-  const el = document.getElementById("dislocationWatchlistContainer");
-  if (!el) return;
-
-  const disMap = data.dislocation_by_symbol || {};
-  if (!Object.keys(disMap).length) { el.style.display = "none"; return; }
-
-  // Filter to non-NONE entries
-  const all = Object.values(disMap).filter(d => d.tier !== "NONE");
-  if (!all.length) { el.style.display = "none"; return; }
-
-  el.style.display = "";
-
-  // Count by tier
-  const hcCount   = all.filter(d => d.tier === "HIGH_CONVICTION").length;
-  const modCount  = all.filter(d => d.tier === "MODERATE").length;
-  const watchCount = all.filter(d => d.tier === "WATCH").length;
-
-  // Get overlay lookup for thesis/consistency columns
-  const overlays = (data.security_overlays || []);
-  const ovBySymbol = {};
-  for (const ov of overlays) {
-    const s = (ov.symbol || ov.Symbol || "").toUpperCase();
-    if (s) ovBySymbol[s] = ov;
-  }
-
-  _disShowWatch = false;   // reset on each render
-
-  el.innerHTML = `<div class="dq-panel dis-panel">
-    <div class="dis-section-header">
-      <span class="dis-section-title">Dislocation Watchlist</span>
-      <span class="dis-version-badge">A1 v${escHtml(all[0]?.version || "1.0")}</span>
-      <span class="dis-advisory-note">Guidance only — not a trade instruction</span>
-    </div>
-    <div class="dis-subtitle">Evidence of divergence between verified fundamentals and current market signals.</div>
-    <div class="dis-advisory-strip">
-      ⚠ Evidence of divergence only — no action implied. Operator judgment required.
-    </div>
-    <div class="dis-controls">
-      <label class="dis-toggle-label">
-        <input type="checkbox" id="dis-show-watch" onchange="_disToggleWatch()" ${_disShowWatch ? "checked" : ""}>
-        Include WATCH
-      </label>
-      <div class="dis-summary-chips">
-        ${hcCount    ? `<span class="dis-chip dis-chip-hc">${hcCount} HIGH CONVICTION</span>` : ""}
-        ${modCount   ? `<span class="dis-chip dis-chip-mod">${modCount} MODERATE</span>` : ""}
-        ${watchCount ? `<span class="dis-chip dis-chip-watch">${watchCount} WATCH</span>` : ""}
-      </div>
-    </div>
-    <div class="dis-table-wrap">
-      <table class="dis-table">
-        <thead><tr>
-          <th>Symbol</th>
-          <th>Tier</th>
-          <th>Class</th>
-          <th>Evidence</th>
-        </tr></thead>
-        <tbody id="dis-table-body"></tbody>
-      </table>
-    </div>
-  </div>`;
-
-  _disRenderRows(all, ovBySymbol);
-}
-
-function _disRenderRows(all, ovBySymbol) {
-  const tbody = document.getElementById("dis-table-body");
-  if (!tbody) return;
-
-  const visible = _disShowWatch
-    ? all
-    : all.filter(d => d.tier === "HIGH_CONVICTION" || d.tier === "MODERATE");
-
-  visible.sort((a, b) => {
-    const order = { HIGH_CONVICTION: 0, MODERATE: 1, WATCH: 2 };
-    return (order[a.tier] ?? 3) - (order[b.tier] ?? 3);
-  });
-
-  if (!visible.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="dis-empty">No ${_disShowWatch ? "" : "HIGH CONVICTION or MODERATE "}dislocation detected in current portfolio.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = visible.map((d, i) => {
-    const exId = `dis-ex-${i}`;
-    const tierLabel = d.tier.replace(/_/g, " ");
-    const classShort = (d.dislocation_class || "").replace("A1_", "").replace(/_/g, " ").toLowerCase();
-    const evCount = (d.evidence || []).length;
-    const evList  = (d.evidence || []).map(e => `<li>${escHtml(e)}</li>`).join("");
-
-    return `<tr class="dis-data-row" onclick="_disToggleExpand('${exId}')">
-      <td><span class="dq-sym">${escHtml(d.symbol)}</span></td>
-      <td><span class="dis-tier dis-tier-${d.tier}">${tierLabel}</span></td>
-      <td><span class="dis-class-badge">${escHtml(classShort)}</span></td>
-      <td><span class="dis-evidence-count">${evCount} signals</span></td>
-    </tr>
-    <tr class="dis-expand-row" id="${exId}">
-      <td colspan="4">
-        <div class="dis-expand-header">${tierLabel} — ${escHtml(d.symbol)}</div>
-        <ul class="dis-evidence-list">${evList}</ul>
-        ${_securityAlphaInsightHtml(d.symbol)}
-      </td>
-    </tr>`;
-  }).join("");
-}
-
-function _disToggleExpand(id) {
-  const row = document.getElementById(id);
-  if (row) row.classList.toggle("open");
-}
-
-function _disToggleWatch() {
-  const cb = document.getElementById("dis-show-watch");
-  _disShowWatch = cb ? cb.checked : false;
-  const data = _lastAnalysisData || _analysisResult;
-  if (!data) return;
-  const disMap = data.dislocation_by_symbol || {};
-  const all = Object.values(disMap).filter(d => d.tier !== "NONE");
-  const overlays = data.security_overlays || [];
-  const ovBySymbol = {};
-  for (const ov of overlays) {
-    const s = (ov.symbol || "").toUpperCase();
-    if (s) ovBySymbol[s] = ov;
-  }
-  _disRenderRows(all, ovBySymbol);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PA-006B — Allocation Drift Intelligence Panel
-// Governance: display-only. No changes to CRA, PAP, ESS, CW-DAS, UCF,
-// Replay, governance rules, or allocation targets.
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _daiData = null;  // cached intelligence payload
-
-async function loadDriftIntelligence() {
-  const section = document.getElementById("driftIntelligenceSection");
-  const content = document.getElementById("driftIntelligenceContent");
-  const badge   = document.getElementById("daiVersionBadge");
-  const btn     = document.getElementById("daiRefreshBtn");
-  if (!section || !content) return;
-
-  if (btn) btn.disabled = true;
-  section.style.display = "block";
-  content.innerHTML = `<div style="color:var(--muted);padding:12px 0;font-size:0.84rem"><span class="spinner"></span> Loading allocation intelligence…</div>`;
-
-  try {
-    const [sumResp, priResp, chrResp, momResp] = await Promise.all([
-      fetch("/api/drift/intelligence-summary"),
-      fetch("/api/drift/priorities"),
-      fetch("/api/drift/chronic"),
-      fetch("/api/drift/momentum"),
-    ]);
-    const summary     = await sumResp.json();
-    const priorities  = await priResp.json();
-    const chronic     = await chrResp.json();
-    const momentum    = await momResp.json();
-    _daiData = { summary, priorities, chronic, momentum };
-
-    if (badge) {
-      const total = summary.total_nodes || 0;
-      badge.textContent = `${total} nodes`;
-    }
-    content.innerHTML = _renderDriftIntelligence(summary, priorities, chronic, momentum);
-  } catch (e) {
-    content.innerHTML = `<div style="color:var(--sev-high);padding:12px 0">Allocation Intelligence unavailable: ${escHtml(String(e))}</div>`;
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-function _daiTrendBadge(trend) {
-  const meta = {
-    IMPROVING:     { label: "↑ IMPROVING",     cls: "dai-trend-IMPROVING" },
-    DETERIORATING: { label: "↓ DETERIORATING", cls: "dai-trend-DETERIORATING" },
-    OSCILLATING:   { label: "~ OSCILLATING",   cls: "dai-trend-OSCILLATING" },
-    STABLE:        { label: "→ STABLE",         cls: "dai-trend-STABLE" },
-  };
-  const m = meta[trend] || { label: trend, cls: "" };
-  return `<span class="dai-trend-badge ${m.cls}">${m.label}</span>`;
-}
-
-function _daiPersBadge(cls) {
-  return `<span class="dai-pers-badge dai-pers-${cls}">${escHtml(cls)}</span>`;
-}
-
-function _daiSevCls(sev) {
-  return `dai-sev-${sev}`;
-}
-
-function _daiMomentumHtml(score) {
-  if (score == null) return "—";
-  const pct = Math.min(100, Math.abs(score));
-  const half = (pct / 2).toFixed(1);
-  const isPos = score >= 0;
-  const valCls = isPos ? "dai-mom-pos" : "dai-mom-neg";
-  const fillHtml = isPos
-    ? `<div class="dai-mom-fill-pos" style="width:${half}%"></div>`
-    : `<div class="dai-mom-fill-neg" style="width:${half}%"></div>`;
-  return `<div class="dai-mom-wrap">
-    <div class="dai-mom-track">${fillHtml}</div>
-    <span class="dai-mom-val ${valCls}">${score >= 0 ? "+" : ""}${score}</span>
-  </div>`;
-}
-
-function _daiDriftHtml(drift) {
-  if (drift == null) return "—";
-  const cls = drift > 0 ? "dai-drift-pos" : drift < 0 ? "dai-drift-neg" : "";
-  return `<span class="${cls}">${drift >= 0 ? "+" : ""}${parseFloat(drift).toFixed(2)}pp</span>`;
-}
-
-function _renderDriftIntelligence(summary, priorities, chronic, momentum) {
-  const tc = summary.trend_counts || {};
-  const govNote = summary.governance_note || "";
-
-  // ── Trend summary strip ───────────────────────────────────────────────────
-  const trendOrder = [
-    { key: "IMPROVING",     label: "Improving" },
-    { key: "STABLE",        label: "Stable" },
-    { key: "DETERIORATING", label: "Deteriorating" },
-    { key: "OSCILLATING",   label: "Oscillating" },
-  ];
-  const trendStrip = `<div class="dai-trend-strip">
-    ${trendOrder.map(t => `<div class="dai-trend-card dai-trend-${t.key}">
-      <div class="dai-trend-val">${tc[t.key] || 0}</div>
-      <div class="dai-trend-lbl">${t.label}</div>
-    </div>`).join("")}
-    <div class="dai-trend-card">
-      <div class="dai-trend-val">${summary.violation_nodes || 0}</div>
-      <div class="dai-trend-lbl">In Violation</div>
-    </div>
-    ${summary.structural_count ? `<div class="dai-trend-card" style="background:#fdecea">
-      <div class="dai-trend-val" style="color:#880e4f">${summary.structural_count}</div>
-      <div class="dai-trend-lbl">Structural</div>
-    </div>` : ""}
-    <div class="dai-gov-note" style="flex:1 1 240px">${escHtml(govNote)}</div>
-  </div>`;
-
-  // ── Top Allocation Risks (Part D) ─────────────────────────────────────────
-  const top10 = priorities.top10 || [];
-  const priRows = top10.map((p, i) => {
-    const rankCls = i === 0 ? " rank1" : "";
-    return `<tr>
-      <td><span class="dai-rank-num${rankCls}">${p.rank}</span></td>
-      <td style="font-weight:600">${escHtml(p.node_label || p.node_key)}</td>
-      <td>${_daiTrendBadge(p.trend)}</td>
-      <td>${_daiPersBadge(p.persistence_class)}</td>
-      <td><span class="${_daiSevCls(p.severity)}">${escHtml(p.severity)}</span></td>
-      <td>${_daiDriftHtml(p.current_drift_pct)}</td>
-      <td>${_daiMomentumHtml(p.momentum_score)}</td>
-      <td style="font-size:0.76rem;color:var(--muted)">${escHtml(p.primary_reason)}</td>
-      <td style="text-align:right;font-size:0.76rem;color:var(--muted)">${parseFloat(p.priority_score || 0).toFixed(0)}</td>
-    </tr>`;
-  }).join("");
-
-  const prioritiesHtml = `<div>
-    <div class="dai-section-header">Top Allocation Risks — Attention Ranking</div>
-    <div style="overflow-x:auto"><table class="dai-table">
-      <thead><tr>
-        <th>Rank</th><th>Node</th><th>Trend</th><th>Persistence</th><th>Severity</th>
-        <th>Drift</th><th>Momentum</th><th>Reason</th><th style="text-align:right">Score</th>
-      </tr></thead>
-      <tbody>${priRows || '<tr><td colspan="9" style="color:var(--muted);text-align:center;padding:12px">No violation data — run analysis first</td></tr>'}</tbody>
-    </table></div>
-  </div>`;
-
-  // ── Chronic Violations (Part C) ───────────────────────────────────────────
-  const chronicNodes = (chronic.chronic || []).slice(0, 10);
-  const chronRows = chronicNodes.map(c => {
-    const fvDate = c.first_violation_date ? escHtml(c.first_violation_date) : "—";
-    return `<tr>
-      <td style="font-weight:600">${escHtml(c.node_label || c.node_key)}</td>
-      <td>${_daiPersBadge(c.persistence_class)}</td>
-      <td style="text-align:right">${c.violation_count}/${c.dates_available}</td>
-      <td style="text-align:right">${c.persistence_pct != null ? c.persistence_pct + "%" : "—"}</td>
-      <td><span class="${_daiSevCls(c.severity)}">${escHtml(c.severity)}</span></td>
-      <td>${_daiDriftHtml(c.current_drift_pct)}</td>
-      <td style="font-size:0.76rem;color:var(--muted)">${fvDate}</td>
-    </tr>`;
-  }).join("");
-
-  const chronicHtml = `<div>
-    <div class="dai-section-header">Chronic &amp; Structural Violations</div>
-    ${chronicNodes.length ? `<div style="overflow-x:auto"><table class="dai-table">
-      <thead><tr>
-        <th>Node</th><th>Persistence</th><th>Violations</th><th>Rate</th>
-        <th>Severity</th><th>Current Drift</th><th>First Violation</th>
-      </tr></thead>
-      <tbody>${chronRows}</tbody>
-    </table></div>` : `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No chronic violations in available history.</div>`}
-  </div>`;
-
-  // ── Drift Momentum Heatmap (Part B/E) ─────────────────────────────────────
-  const momNodes = (momentum.nodes || []).slice(0, 15);
-  const momItems = momNodes.map(n => {
-    const score = parseFloat(n.momentum_score || 0);
-    const trendCls = n.trend === "IMPROVING" ? "dai-trend-IMPROVING"
-                   : n.trend === "DETERIORATING" ? "dai-trend-DETERIORATING"
-                   : "dai-trend-STABLE";
-    const bgColor = score > 20 ? "#e8f5e9" : score < -20 ? "#fdecea" : "#f5f0e8";
-    return `<div style="background:${bgColor};border-radius:6px;padding:8px 10px;display:flex;align-items:center;gap:10px;min-width:180px">
-      <span style="font-weight:700;font-size:0.82rem;font-family:monospace">${escHtml(n.node_label || n.node_key)}</span>
-      <span class="dai-trend-badge ${trendCls}" style="font-size:0.64rem">${n.trend}</span>
-      ${_daiMomentumHtml(n.momentum_score)}
-    </div>`;
-  }).join("");
-
-  const momentumHtml = `<div>
-    <div class="dai-section-header">Drift Momentum Heatmap</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">${momItems || '<span style="color:var(--muted);font-size:0.82rem">No momentum data available.</span>'}</div>
-    <div style="font-size:0.70rem;color:var(--muted)">
-      Momentum score: +100 = rapid improvement · 0 = stable · −100 = rapid deterioration
-    </div>
-  </div>`;
-
-  // ── Executive highlights ──────────────────────────────────────────────────
-  const highlights = [];
-  if (summary.top_priority) {
-    const tp = summary.top_priority;
-    highlights.push({ cls: "dai-drift-pos", text: `Highest-priority concern: <strong>${escHtml(tp.node_label || tp.node_key)}</strong> — ${escHtml(tp.primary_reason)}` });
-  }
-  if (summary.most_deteriorating) {
-    const md = summary.most_deteriorating;
-    highlights.push({ cls: "dai-drift-pos", text: `Most deteriorating: <strong>${escHtml(md.node_label || md.node_key)}</strong> (momentum ${md.momentum_score})` });
-  }
-  if (summary.most_improving) {
-    const mi = summary.most_improving;
-    highlights.push({ cls: "dai-drift-neg", text: `Fastest improving: <strong>${escHtml(mi.node_label || mi.node_key)}</strong> (momentum +${mi.momentum_score})` });
-  }
-  if (summary.structural_count > 0) {
-    highlights.push({ cls: "dai-drift-pos", text: `${summary.structural_count} structural violation(s) persisting across ≥75% of available history` });
-  }
-
-  const highlightsHtml = highlights.length ? `<div class="dai-section-header">Key Observations</div>
-    <div style="margin-bottom:14px">
-      ${highlights.map(h => `<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:0.82rem">
-        <div class="narrative-dot narrative-dot-act" style="flex-shrink:0"></div>
-        <span>${h.text}</span>
-      </div>`).join("")}
-    </div>` : "";
-
-  return [trendStrip, highlightsHtml, prioritiesHtml, chronicHtml, momentumHtml].join("\n");
-}
-// Governance: display-only, learning/explainability only.
-// No changes to ESS, CW-DAS, UCF, CRA, Replay, PAP, or Governance.
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _conflictReviewData = null;  // cached API response
-let _securityAlphaCache = null;  // DISLOCATION-03: {symbol → SecurityConflictAlpha}
-let _calibrationCache   = null;   // DISLOCATION-06: {pattern → calibration}
-let _directionalCache   = null;   // DISLOCATION-07: {pattern → directional accuracy}
-
-// Pattern label display mapping
-const _SCR_PATTERN_LABELS = {
-  ESS_BULLISH_ANALYST_MAJORITY_BEARISH: { short: "ESS Buy / Analyst Sell",     cls: "scr-conflict-major" },
-  ESS_BULLISH_ANALYST_SKEPTICAL:        { short: "ESS Buy / Analysts Skeptical", cls: "scr-conflict-moderate" },
-  ESS_BULLISH_ANALYST_FULL_AGREE:       { short: "ESS Buy / All Agree Buy",     cls: "scr-agree-bullish" },
-  ESS_BULLISH_ANALYST_MIXED:            { short: "ESS Buy / Analysts Mixed",    cls: "scr-conflict-minor" },
-  ESS_BEARISH_ANALYST_MAJORITY_BULLISH: { short: "ESS Sell / Analyst Buy",      cls: "scr-conflict-major" },
-  ESS_BEARISH_ANALYST_FULL_AGREE:       { short: "ESS Sell / All Agree Sell",   cls: "scr-agree-bearish" },
-  ESS_BEARISH_ANALYST_MIXED:            { short: "ESS Sell / Analysts Mixed",   cls: "scr-conflict-minor" },
-  ESS_NEUTRAL_ANALYST_BULLISH:          { short: "ESS Neutral / Analysts Buy",  cls: "scr-conflict-minor" },
-  ESS_NEUTRAL_ANALYST_BEARISH:          { short: "ESS Neutral / Analysts Sell", cls: "scr-conflict-minor" },
-  ESS_NEUTRAL_ANALYST_MIXED:            { short: "ESS Neutral / Analysts Mixed",cls: "scr-conflict-minor" },
-};
-
-async function loadConflictReview() {
-  const section  = document.getElementById("conflictReviewSection");
-  const content  = document.getElementById("conflictReviewContent");
-  const badge    = document.getElementById("scrVersionBadge");
-  const refreshBtn = document.getElementById("scrRefreshBtn");
-  if (!section || !content) return;
-
-  if (refreshBtn) refreshBtn.disabled = true;
-  section.style.display = "block";
-  content.innerHTML = `<div style="color:var(--muted);padding:12px 0;font-size:0.84rem"><span class="spinner"></span> Loading signal conflict review…</div>`;
-
-  try {
-    const [summaryResp, outcomesResp, scorecardResp] = await Promise.all([
-      fetch("/api/conflict-review/summary"),
-      fetch("/api/conflict-review/outcomes"),
-      fetch("/api/conflict-review/scorecard"),
-    ]);
-    const summary  = await summaryResp.json();
-    const outcomes = await outcomesResp.json();
-    const scorecard = await scorecardResp.json();
-
-    _conflictReviewData = { summary, outcomes, scorecard };
-
-    if (badge) {
-      const v = summary.meta?.version || "1.0";
-      const rows = summary.meta?.inventory_rows || 0;
-      badge.textContent = `v${v} · ${rows} observations`;
-    }
-
-    content.innerHTML = _renderConflictReview(summary, outcomes, scorecard);
-    // Auto-load alpha attribution after the main review loads
-    loadConflictAlpha();
-    // DISLOCATION-06: load calibration and render
-    if (!_calibrationCache) {
-      _loadCalibrationCache().then(() => _renderCalibrationPanel());
-    } else {
-      _renderCalibrationPanel();
-    }
-    // DISLOCATION-07: load directional accuracy and render
-    if (!_directionalCache) {
-      _loadDirectionalCache().then(() => _renderDirectionalPanel());
-    } else {
-      _renderDirectionalPanel();
-    }
-  } catch (e) {
-    content.innerHTML = `<div style="color:var(--sev-high);padding:12px 0">Signal Conflict Review unavailable: ${escHtml(String(e))}</div>`;
-  } finally {
-    if (refreshBtn) refreshBtn.disabled = false;
-  }
-}
-
-function _renderConflictReview(summary, outcomes, scorecard) {
-  const learning = summary.learning || {};
-  const meta     = summary.meta     || {};
-  const patterns = (outcomes.patterns || []);
-  const cards    = (scorecard.scorecard || []);
-
-  // ── Overview strip ────────────────────────────────────────────────────────
-  const conflictObs = meta.conflict_rows || 0;
-  const totalObs    = meta.inventory_rows || 0;
-  const essRate     = learning.ess_conflict_correct_rate_pct;
-
-  const overviewHtml = `<div class="scr-overview-strip">
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${totalObs.toLocaleString()}</div>
-      <div class="scr-ov-lbl">Signal Observations</div>
-    </div>
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${conflictObs.toLocaleString()}</div>
-      <div class="scr-ov-lbl">Conflict Cases</div>
-    </div>
-    ${essRate != null ? `<div class="scr-ov-card scr-ov-accent">
-      <div class="scr-ov-val">${essRate}%</div>
-      <div class="scr-ov-lbl">ESS Correct During Conflicts</div>
-    </div>` : ""}
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${(meta.pattern_count || patterns.length)}</div>
-      <div class="scr-ov-lbl">Conflict Patterns</div>
-    </div>
-    <div class="scr-ov-governance">
-      <span class="scr-gov-badge">ℹ Informational</span>
-      ${escHtml(learning.governance_note || "Display-only — no scoring changes.")}
-    </div>
-  </div>`;
-
-  // ── Part E: Learning highlights ───────────────────────────────────────────
-  const topWinners = (learning.strongest_conflict_winners || []).slice(0, 4);
-  const topLosers  = (learning.strongest_conflict_losers  || []).slice(0, 4);
-  const mostRel    = (learning.most_reliable_patterns     || []);
-  const leastRel   = (learning.least_reliable_patterns    || []);
-
-  const learningHtml = `<div class="scr-learning-section">
-    <div class="scr-section-header">Portfolio Learning Summary</div>
-    <div class="scr-learning-grid">
-      <div class="scr-learn-card">
-        <div class="scr-learn-card-title scr-title-win">Strongest Conflict Winners</div>
-        ${topWinners.length ? topWinners.map(w =>
-          `<div class="scr-learn-item"><span class="scr-sym">${escHtml(w.symbol)}</span><span class="scr-count">${w.winner_count}× above median</span></div>`
-        ).join("") : '<div class="scr-learn-empty">Insufficient data</div>'}
-      </div>
-      <div class="scr-learn-card">
-        <div class="scr-learn-card-title scr-title-lose">Strongest Conflict Losers</div>
-        ${topLosers.length ? topLosers.map(l =>
-          `<div class="scr-learn-item"><span class="scr-sym">${escHtml(l.symbol)}</span><span class="scr-count">${l.loser_count}× below median</span></div>`
-        ).join("") : '<div class="scr-learn-empty">Insufficient data</div>'}
-      </div>
-      <div class="scr-learn-card">
-        <div class="scr-learn-card-title scr-title-rel">Most Reliable Conflict Patterns</div>
-        ${mostRel.length ? mostRel.map(p => {
-          const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: p.pattern.replace(/_/g," "), cls: "" };
-          return `<div class="scr-learn-item">
-            <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
-            <span class="scr-count">${p.winner_rate_pct != null ? p.winner_rate_pct + "% win" : "—"}</span>
-          </div>`;
-        }).join("") : '<div class="scr-learn-empty">Insufficient data (need ≥5 cases)</div>'}
-      </div>
-      <div class="scr-learn-card">
-        <div class="scr-learn-card-title scr-title-norel">Least Reliable Conflict Patterns</div>
-        ${leastRel.length ? leastRel.map(p => {
-          const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: p.pattern.replace(/_/g," "), cls: "" };
-          return `<div class="scr-learn-item">
-            <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
-            <span class="scr-count">${p.winner_rate_pct != null ? p.winner_rate_pct + "% win" : "—"}</span>
-          </div>`;
-        }).join("") : '<div class="scr-learn-empty">Insufficient data (need ≥5 cases)</div>'}
-      </div>
-    </div>
-  </div>`;
-
-  // ── Part B: Pattern outcomes table ───────────────────────────────────────
-  const conflictPatterns = patterns.filter(p => !p.signal_pattern.includes("FULL_AGREE"));
-  const baselinePatterns = patterns.filter(p => p.signal_pattern.includes("FULL_AGREE"));
-
-  const patternRowHtml = (p) => {
-    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: p.signal_pattern.replace(/_/g," "), cls: "" };
-    const winCls = (p.winner_rate_pct != null && p.winner_rate_pct >= 60) ? "scr-pct-good"
-                 : (p.winner_rate_pct != null && p.winner_rate_pct <= 40) ? "scr-pct-bad"
-                 : "";
-    const retCls = (p.avg_return_30d_pct != null && p.avg_return_30d_pct > 0) ? "scr-ret-pos" : "scr-ret-neg";
-    const essCorrect = p.ess_correct_rate_pct != null
-      ? `<span class="scr-ess-rate ${p.ess_correct_rate_pct >= 55 ? "scr-pct-good" : "scr-pct-bad"}">${p.ess_correct_rate_pct}%</span>`
-      : "—";
-    const topSyms = (p.top_symbols || []).slice(0, 4).map(s => `<span class="scr-sym-chip">${escHtml(s)}</span>`).join("");
-    return `<tr>
-      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
-      <td style="text-align:right">${p.occurrences}</td>
-      <td style="text-align:right"><span class="${winCls}">${p.winner_rate_pct != null ? p.winner_rate_pct + "%" : "—"}</span></td>
-      <td style="text-align:right">${p.loser_rate_pct != null ? p.loser_rate_pct + "%" : "—"}</td>
-      <td style="text-align:right"><span class="${retCls}">${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</span></td>
-      <td style="text-align:right">${p.median_return_30d_pct != null ? (p.median_return_30d_pct >= 0 ? "+" : "") + p.median_return_30d_pct + "%" : "—"}</td>
-      <td style="text-align:right">${p.best_return_30d_pct != null ? "+" + p.best_return_30d_pct + "%" : "—"}</td>
-      <td style="text-align:right">${p.worst_return_30d_pct != null ? p.worst_return_30d_pct + "%" : "—"}</td>
-      <td>${essCorrect}</td>
-      <td style="font-size:0.72rem">${topSyms}</td>
-    </tr>`;
-  };
-
-  const outcomesHtml = `<div class="scr-outcomes-section">
-    <div class="scr-section-header">
-      Part B — Conflict Pattern Outcomes
-      <span style="font-size:0.74rem;color:var(--muted);font-weight:400;margin-left:8px">30-day forward return vs. snapshot median. WINNER = above median, LOSER = below median.</span>
-    </div>
-    <div style="overflow-x:auto">
-      <table class="scr-table">
-        <thead><tr>
-          <th>Signal Pattern</th>
-          <th style="text-align:right">Cases</th>
-          <th style="text-align:right">Win %</th>
-          <th style="text-align:right">Lose %</th>
-          <th style="text-align:right">Avg Ret</th>
-          <th style="text-align:right">Median Ret</th>
-          <th style="text-align:right">Best</th>
-          <th style="text-align:right">Worst</th>
-          <th style="text-align:right">ESS Correct</th>
-          <th>Top Winners</th>
-        </tr></thead>
-        <tbody>
-          ${conflictPatterns.length ? conflictPatterns.map(patternRowHtml).join("") : '<tr><td colspan="10" style="color:var(--muted);padding:12px;text-align:center">Insufficient data — need price history overlap with ESS archive</td></tr>'}
-          ${baselinePatterns.length ? `<tr><td colspan="10" style="font-size:0.72rem;color:var(--muted);padding:6px 4px;background:#f5f0e8">Baseline (no conflict)</td></tr>` + baselinePatterns.map(patternRowHtml).join("") : ""}
-        </tbody>
-      </table>
-    </div>
-  </div>`;
-
-  // ── Part C: Signal reliability scorecard ─────────────────────────────────
-  const scorecardHtml = `<div class="scr-scorecard-section">
-    <div class="scr-section-header">Part C — Signal Reliability Scorecard</div>
-    <div class="scr-scorecard-grid">
-      ${cards.map(c => {
-        const dirIcon = c.direction === "BULLISH" ? "↑" : "↓";
-        const dirCls  = c.direction === "BULLISH" ? "scr-dir-bull" : "scr-dir-bear";
-        const allWin  = c.winner_rate_pct;
-        const confWin = c.conflict_winner_rate_pct;
-        const allRet  = c.avg_return_pct;
-        return `<div class="scr-scorecard-card">
-          <div class="scr-sc-header">
-            <span class="scr-sc-signal">${escHtml(c.signal_name)}</span>
-            <span class="scr-sc-dir ${dirCls}">${dirIcon} ${c.direction}</span>
-          </div>
-          <div class="scr-sc-metrics">
-            <div class="scr-sc-metric">
-              <div class="scr-sc-val ${allWin != null && allWin >= 55 ? "scr-pct-good" : allWin != null && allWin <= 45 ? "scr-pct-bad" : ""}">${allWin != null ? allWin + "%" : "—"}</div>
-              <div class="scr-sc-lbl">Overall Win Rate</div>
-            </div>
-            <div class="scr-sc-metric">
-              <div class="scr-sc-val ${confWin != null && confWin >= 55 ? "scr-pct-good" : confWin != null && confWin <= 45 ? "scr-pct-bad" : ""}">${confWin != null ? confWin + "%" : "—"}</div>
-              <div class="scr-sc-lbl">Conflict Win Rate</div>
-            </div>
-            <div class="scr-sc-metric">
-              <div class="scr-sc-val ${allRet != null && allRet > 0 ? "scr-ret-pos" : allRet != null ? "scr-ret-neg" : ""}">${allRet != null ? (allRet >= 0 ? "+" : "") + allRet + "%" : "—"}</div>
-              <div class="scr-sc-lbl">Avg 30d Return</div>
-            </div>
-            <div class="scr-sc-metric">
-              <div class="scr-sc-val">${c.conflict_cases || 0}</div>
-              <div class="scr-sc-lbl">Conflict Cases</div>
-            </div>
-          </div>
-          <div class="scr-sc-interp">${escHtml(c.interpretation || "")}</div>
-        </div>`;
-      }).join("")}
-    </div>
-  </div>`;
-
-  // ── DISLOCATION-02: Alpha Attribution section ─────────────────────────────
-  const alphaHtml = `<div class="scr-alpha-section" id="scrAlphaSection">
-    <div class="scr-section-header">
-      DISLOCATION-02 — Conflict Alpha Attribution
-      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
-        Excess return vs. universe median by disagreement pattern · Research only
-      </span>
-      <button class="cra-refresh-btn" onclick="loadConflictAlpha()" style="margin-left:8px;font-size:0.70rem">&#8634;</button>
-    </div>
-    <div id="scrAlphaContent"><div style="color:var(--muted);font-size:0.82rem">Loading alpha analysis…</div></div>
-  </div>`;
-
-  // ── Part D: Symbol deep dive (MSFT default) ───────────────────────────────
-  const deepDiveHtml = `<div class="scr-deepdive-section">
-    <div class="scr-section-header">
-      Part D — Symbol Deep Dive
-      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
-        See historical signal conflicts and outcomes for any position
-      </span>
-    </div>
-    <div class="scr-deepdive-row">
-      <input id="scrSymbolInput" class="pap-se-input" type="text" placeholder="Enter symbol (e.g. MSFT)" maxlength="12"
-        style="width:140px"
-        onkeydown="if(event.key==='Enter')loadConflictDeepDive(document.getElementById('scrSymbolInput').value)">
-      <button class="pap-se-btn" onclick="loadConflictDeepDive(document.getElementById('scrSymbolInput').value)">Deep Dive</button>
-    </div>
-    <div id="scrDeepDiveContent" style="margin-top:12px"></div>
-  </div>`;
-
-  // ── DISLOCATION-06: Calibration panel placeholder ────────────────────────
-  const calibrationHtml = `<div class="scr-alpha-section" id="scrCalibrationSection">
-    <div class="scr-section-header">
-      DISLOCATION-06 — Predictive Confidence Calibration
-      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
-        How well do DISLOCATION-05 estimates match realized returns?
-      </span>
-    </div>
-    <div id="scrCalibrationContent"><div style="color:var(--muted);font-size:0.82rem">Loading calibration…</div></div>
-  </div>`;
-
-  // ── DISLOCATION-07: Directional accuracy panel placeholder ───────────────
-  const directionalHtml = `<div class="scr-alpha-section" id="scrDirectionalSection">
-    <div class="scr-section-header">
-      DISLOCATION-07 — Directional Intelligence
-      <span style="font-size:0.74rem;font-weight:400;color:var(--muted);margin-left:8px">
-        Can conflict patterns predict direction even when magnitude forecasts are unreliable?
-      </span>
-      <button class="cra-refresh-btn" onclick="_refreshDirectional()" style="margin-left:8px;font-size:0.70rem">&#8634;</button>
-    </div>
-    <div id="scrDirectionalContent"><div style="color:var(--muted);font-size:0.82rem">Loading directional analysis…</div></div>
-  </div>`;
-
-  return [overviewHtml, learningHtml, outcomesHtml, scorecardHtml, alphaHtml, calibrationHtml, directionalHtml, deepDiveHtml].join("\n");
-}
-
-// ── DISLOCATION-02 Alpha loader ────────────────────────────────────────────────
-
-async function loadConflictAlpha() {
-  const content = document.getElementById("scrAlphaContent");
-  if (!content) return;
-  content.innerHTML = `<div style="color:var(--muted);font-size:0.82rem"><span class="spinner"></span> Computing alpha attribution…</div>`;
-  try {
-    const resp = await fetch("/api/conflict-review/alpha");
-    const data = await resp.json();
-    if (data.error) {
-      content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">${escHtml(data.error)}</div>`;
-      return;
-    }
-    content.innerHTML = _renderConflictAlpha(data);
-  } catch (e) {
-    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">Alpha unavailable: ${escHtml(String(e))}</div>`;
-  }
-}
-
-function _alphaClassBadge(cls) {
-  const map = {
-    ALPHA_LEADER:  { label: "↑ ALPHA LEADER",  cls: "scr-alpha-leader" },
-    ALPHA_LAGGARD: { label: "↓ ALPHA LAGGARD", cls: "scr-alpha-laggard" },
-    ALPHA_NEUTRAL: { label: "→ NEUTRAL",        cls: "scr-alpha-neutral" },
-  };
-  const m = map[cls] || { label: cls, cls: "" };
-  return `<span class="scr-alpha-badge ${m.cls}">${m.label}</span>`;
-}
-
-function _sigLabel(sig) {
-  const map = {
-    NOTEWORTHY: { label: "NOTEWORTHY", cls: "scr-sig-noteworthy" },
-    SUGGESTIVE: { label: "SUGGESTIVE", cls: "scr-sig-suggestive" },
-    WEAK:       { label: "WEAK",       cls: "scr-sig-weak" },
-    INSUFFICIENT_DATA: { label: "—",  cls: "" },
-  };
-  const m = map[sig] || { label: sig, cls: "" };
-  return `<span class="scr-sig-badge ${m.cls}">${m.label}</span>`;
-}
-
-function _renderConflictAlpha(data) {
-  if (data.status === "NO_DATA" || !data.patterns || data.patterns.length === 0) {
-    return `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No alpha data — run conflict inventory first.</div>`;
-  }
-
-  const univMedian = data.universe_median_return_pct;
-  const conflictAvgExcess = data.conflict_avg_excess_pct;
-  const baselineAvg = data.baseline_avg_return_pct;
-
-  // ── Overview strip ────────────────────────────────────────────────────────
-  const ovHtml = `<div class="scr-alpha-overview">
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${univMedian != null ? (univMedian >= 0 ? "+" : "") + univMedian + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Universe Median Return (30d)</div>
-    </div>
-    <div class="scr-ov-card ${conflictAvgExcess > 0 ? "scr-ov-accent" : ""}">
-      <div class="scr-ov-val ${conflictAvgExcess > 0 ? "scr-pct-good" : conflictAvgExcess < 0 ? "scr-pct-bad" : ""}">${conflictAvgExcess != null ? (conflictAvgExcess >= 0 ? "+" : "") + conflictAvgExcess + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Avg Conflict Pattern Excess</div>
-    </div>
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${baselineAvg != null ? (baselineAvg >= 0 ? "+" : "") + baselineAvg + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Baseline (No Conflict) Return</div>
-    </div>
-    <div class="scr-ov-governance" style="flex:1 1 220px">
-      ${escHtml(data.governance_note || "")}
-    </div>
-  </div>`;
-
-  // ── Leaders / Laggards ────────────────────────────────────────────────────
-  const leaderCard = (p, isLeader) => {
-    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: (p.pattern_label || p.signal_pattern).replace(/_/g," "), cls: "" };
-    const exRet = p.excess_return_pct;
-    const retCls = exRet > 0 ? "scr-ret-pos" : exRet < 0 ? "scr-ret-neg" : "";
-    const topSyms = (p.top_symbols || []).map(s => `<span class="scr-sym-chip">${escHtml(s)}</span>`).join(" ");
-    return `<div class="scr-alpha-card ${isLeader ? "scr-alpha-leader-card" : "scr-alpha-laggard-card"}">
-      <div class="scr-alpha-card-header">
-        <span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span>
-        ${_alphaClassBadge(p.alpha_class)}
-        ${_sigLabel(p.significance)}
-      </div>
-      <div class="scr-alpha-card-metrics">
-        <div><span class="scr-sc-lbl">Excess Return</span> <span class="${retCls}" style="font-weight:800;font-size:1.1rem">${exRet != null ? (exRet >= 0 ? "+" : "") + exRet + "%" : "—"}</span></div>
-        <div><span class="scr-sc-lbl">Avg Return</span> <span>${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</span></div>
-        <div><span class="scr-sc-lbl">Win Rate</span> <span>${p.win_rate_pct != null ? p.win_rate_pct + "%" : "—"}</span></div>
-        <div><span class="scr-sc-lbl">Cases</span> <span>${p.observations}</span></div>
-        <div><span class="scr-sc-lbl">T-Stat</span> <span style="font-size:0.78rem">${p.t_statistic != null ? p.t_statistic : "—"}</span></div>
-      </div>
-      ${topSyms ? `<div style="margin-top:6px;font-size:0.72rem;color:var(--muted)">Top winners: ${topSyms}</div>` : ""}
-      <div class="scr-dd-conclusion" style="margin-top:8px">${escHtml(p.insight || "")}</div>
-    </div>`;
-  };
-
-  const leaders  = data.leaders  || [];
-  const laggards = data.laggards || [];
-
-  const llHtml = `<div class="scr-alpha-ll-grid">
-    <div>
-      <div class="scr-learn-card-title scr-title-win" style="margin-bottom:8px">Alpha Leaders — Conflict Patterns with Positive Excess Return</div>
-      ${leaders.length ? leaders.map(p => leaderCard(p, true)).join("") : '<div class="scr-learn-empty">No alpha leaders identified.</div>'}
-    </div>
-    <div>
-      <div class="scr-learn-card-title scr-title-lose" style="margin-bottom:8px">Alpha Laggards — Conflict Patterns with Negative Excess Return</div>
-      ${laggards.length ? laggards.map(p => leaderCard(p, false)).join("") : '<div class="scr-learn-empty">No alpha laggards identified.</div>'}
-    </div>
-  </div>`;
-
-  // ── Full alpha table ──────────────────────────────────────────────────────
-  const conflictPatterns = (data.patterns || []).filter(p => p.is_conflict_pattern);
-  const tableRows = conflictPatterns.map(p => {
-    const meta2 = _SCR_PATTERN_LABELS[p.signal_pattern] || { short: (p.pattern_label || p.signal_pattern).replace(/_/g," "), cls: "" };
-    const exRet = p.excess_return_pct;
-    const retCls = exRet > 0 ? "scr-ret-pos" : exRet < 0 ? "scr-ret-neg" : "";
-    return `<tr>
-      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
-      <td style="text-align:right">${p.observations}</td>
-      <td style="text-align:right">${p.avg_return_30d_pct != null ? (p.avg_return_30d_pct >= 0 ? "+" : "") + p.avg_return_30d_pct + "%" : "—"}</td>
-      <td style="text-align:right"><span class="${retCls}" style="font-weight:700">${exRet != null ? (exRet >= 0 ? "+" : "") + exRet + "%" : "—"}</span></td>
-      <td style="text-align:right">${p.win_rate_pct != null ? p.win_rate_pct + "%" : "—"}</td>
-      <td style="text-align:right">${p.consistency_score != null ? (p.consistency_score * 100).toFixed(0) + "%" : "—"}</td>
-      <td style="text-align:right;font-size:0.76rem">${p.t_statistic != null ? p.t_statistic : "—"}</td>
-      <td>${_sigLabel(p.significance)}</td>
-      <td>${_alphaClassBadge(p.alpha_class)}</td>
-    </tr>`;
-  }).join("");
-
-  const tableHtml = `<div style="margin-top:14px">
-    <div class="scr-section-header" style="font-size:0.72rem">Full Alpha Table — Conflict Patterns</div>
-    <div style="overflow-x:auto"><table class="scr-table">
-      <thead><tr>
-        <th>Pattern</th><th style="text-align:right">N</th>
-        <th style="text-align:right">Avg Ret</th><th style="text-align:right">Excess Return</th>
-        <th style="text-align:right">Win %</th><th style="text-align:right">Consistency</th>
-        <th style="text-align:right">T-Stat</th><th>Significance</th><th>Classification</th>
-      </tr></thead>
-      <tbody>${tableRows}</tbody>
-    </table></div>
-    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
-      Excess Return = Avg Pattern Return − Universe Median (${univMedian != null ? (univMedian >= 0 ? "+" : "") + univMedian + "%" : "—"}).
-      Consistency = fraction of observations that beat universe median.
-      T-Statistic = one-sample test vs. universe median (|t|≥2.0 = Noteworthy, ≥1.5 = Suggestive).
-      Research only — no scoring changes.
-    </div>
-  </div>`;
-
-  return [ovHtml, llHtml, tableHtml].join("\n");
-}
-
-// ── DISLOCATION-06: Calibration panel renderer ────────────────────────────────
-
-function _renderCalibrationPanel() {
-  const el = document.getElementById("scrCalibrationContent");
-  if (!el || !_calibrationCache) return;
-
-  const cals = Object.values(_calibrationCache);
-  if (!cals.length) {
-    el.innerHTML = `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No calibration data — run refresh to compute.</div>`;
-    return;
-  }
-
-  // Sort by confidence then n
-  const confOrder = { VERY_HIGH: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INSUFFICIENT_DATA: 4 };
-  const sorted = [...cals].sort((a, b) =>
-    (confOrder[a.confidence] ?? 4) - (confOrder[b.confidence] ?? 4) || (b.n || 0) - (a.n || 0)
-  );
-
-  const confCounts = {};
-  for (const c of sorted) { confCounts[c.confidence] = (confCounts[c.confidence] || 0) + 1; }
-
-  // Overview
-  const ovHtml = `<div class="scr-alpha-overview" style="margin-bottom:12px">
-    ${Object.entries(confCounts).map(([conf, n]) => {
-      const cfgMap = { VERY_HIGH: "diso6-very-high", HIGH: "diso6-high", MEDIUM: "diso6-medium", LOW: "diso6-low" };
-      const cls = cfgMap[conf] || "";
-      return `<div class="scr-ov-card">
-        <div class="scr-ov-val" style="font-size:1.2rem">${n}</div>
-        <div class="scr-ov-lbl">${n === 1 ? "" : ""}<span class="diso6-badge ${cls}">${conf}</span></div>
-      </div>`;
-    }).join("")}
-    <div class="scr-ov-governance" style="flex:1 1 220px;font-size:0.74rem;color:#666">
-      Calibration validates whether DISLOCATION-05 forward estimates match realized returns.
-      Confidence level = function of sample size, MAE, and bias direction.
-    </div>
-  </div>`;
-
-  // Pattern accuracy table
-  const rows = sorted.map(c => {
-    const band2 = (c.accuracy_bands || {})["within_2pp"];
-    const band5 = (c.accuracy_bands || {})["within_5pp"];
-    const meta2 = _SCR_PATTERN_LABELS[c.pattern] || { short: (c.pattern || "").replace(/_/g," "), cls: "" };
-    const confBadge = c.confidence ? `<span class="diso6-badge ${
-      c.confidence === "VERY_HIGH" ? "diso6-very-high" :
-      c.confidence === "HIGH" ? "diso6-high" :
-      c.confidence === "MEDIUM" ? "diso6-medium" : "diso6-low"
-    }">${c.confidence}</span>` : "—";
-    const maeCls = c.mae_pp != null && c.mae_pp <= 2 ? "scr-pct-good" : c.mae_pp != null && c.mae_pp <= 5 ? "" : "scr-pct-bad";
-    return `<tr>
-      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
-      <td style="text-align:right">${c.n || 0}</td>
-      <td style="text-align:right"><span class="${maeCls}">${c.mae_pp != null ? "±" + c.mae_pp + "pp" : "—"}</span></td>
-      <td style="text-align:right">${band2 != null ? band2 + "%" : "—"}</td>
-      <td style="text-align:right">${band5 != null ? band5 + "%" : "—"}</td>
-      <td style="font-size:0.74rem">${escHtml(c.bias_direction || "—")}</td>
-      <td>${confBadge}</td>
-    </tr>`;
-  }).join("");
-
-  const tableHtml = `<div style="overflow-x:auto">
-    <table class="scr-table">
-      <thead><tr>
-        <th>Pattern</th><th style="text-align:right">N</th>
-        <th style="text-align:right">MAE</th>
-        <th style="text-align:right">Within ±2pp</th>
-        <th style="text-align:right">Within ±5pp</th>
-        <th>Bias</th><th>Confidence</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
-      MAE = Mean Absolute Error between predicted excess return and realized excess return.
-      Confidence = function of sample size, MAE, and prediction bias.
-      Research only — no scoring changes.
-    </div>
-  </div>`;
-
-  el.innerHTML = ovHtml + tableHtml;
-}
-
-async function loadConflictDeepDive(symbol) {
-  const content = document.getElementById("scrDeepDiveContent");
-  if (!content) return;
-  const sym = (symbol || "").trim().toUpperCase();
-  if (!sym || !/^[A-Z0-9]{1,12}$/.test(sym)) {
-    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">Enter a valid symbol.</div>`;
-    return;
-  }
-  content.innerHTML = `<div style="color:var(--muted);font-size:0.84rem"><span class="spinner"></span> Loading ${escHtml(sym)}…</div>`;
-  try {
-    const resp = await fetch(`/api/conflict-review/symbol/${encodeURIComponent(sym)}`);
-    const data = await resp.json();
-    if (data.error) {
-      content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">${escHtml(data.error)}</div>`;
-      return;
-    }
-    content.innerHTML = _renderDeepDive(data);
-  } catch (e) {
-    content.innerHTML = `<div style="color:var(--sev-high);font-size:0.84rem">Error: ${escHtml(String(e))}</div>`;
-  }
-}
-
-function _renderDeepDive(d) {
-  if (!d || !d.symbol) return `<div style="color:var(--muted)">No data.</div>`;
-
-  const precedents = d.universe_precedents || {};
-  const records = (d.historical_records || []).slice().reverse();  // newest first
-
-  // Pattern frequency chips
-  const freqChips = Object.entries(d.pattern_frequency || {}).slice(0, 5).map(([p, n]) => {
-    const meta2 = _SCR_PATTERN_LABELS[p] || { short: p.replace(/_/g," "), cls: "" };
-    return `<span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)} ×${n}</span>`;
-  }).join(" ");
-
-  // Historical records table
-  const recRows = records.map(r => {
-    const retStr = r.forward_return_30d != null
-      ? `<span class="${r.forward_return_30d >= 0 ? "scr-ret-pos" : "scr-ret-neg"}">${(r.forward_return_30d * 100).toFixed(1)}%</span>`
-      : "—";
-    const wl = r.winner_loser || "NO_DATA";
-    const wlCls = wl === "WINNER" ? "scr-wl-win" : wl === "LOSER" ? "scr-wl-lose" : "scr-wl-neutral";
-    const meta2 = _SCR_PATTERN_LABELS[r.signal_pattern] || { short: (r.signal_pattern || "").replace(/_/g," "), cls: "" };
-    const ess = r.ess_direction || "—";
-    const essCls = ess === "BULLISH" ? "ess-BULLISH" : ess === "BEARISH" ? "ess-BEARISH" : "";
-    return `<tr>
-      <td style="font-family:monospace;font-size:0.78rem">${escHtml(r.snapshot_date || "")}</td>
-      <td><span class="ess-badge ${essCls}" style="font-size:0.72rem">${escHtml(ess)}</span></td>
-      <td style="font-size:0.74rem;color:var(--muted)">${escHtml(r.zacks_direction || "—")}</td>
-      <td><span class="scr-pattern-chip ${meta2.cls}" style="font-size:0.70rem">${escHtml(meta2.short)}</span></td>
-      <td style="text-align:right">${retStr}</td>
-      <td><span class="${wlCls}">${wl.replace(/_/g," ")}</span></td>
-    </tr>`;
-  }).join("");
-
-  const hasCurrent = d.current_pattern && d.current_pattern !== "UNKNOWN";
-  const currentMeta = hasCurrent
-    ? (_SCR_PATTERN_LABELS[d.current_pattern] || { short: d.current_pattern.replace(/_/g," "), cls: "" })
-    : null;
-
-  return `<div class="scr-deepdive-result">
-    <div class="scr-dd-header">
-      <span class="scr-dd-sym">${escHtml(d.symbol)}</span>
-      <span class="scr-dd-stats">${d.total_observations} observations · ${d.conflict_observations} conflict cases</span>
-      ${d.ess_correct_rate_pct != null
-        ? `<span class="scr-dd-ess-rate">ESS historically correct: <strong>${d.ess_correct_rate_pct}%</strong></span>`
-        : ""}
-    </div>
-
-    ${hasCurrent ? `<div class="scr-dd-current">
-      <div class="scr-dd-current-label">Current Signal Pattern</div>
-      <span class="scr-pattern-chip ${currentMeta.cls}">${escHtml(currentMeta.short)}</span>
-      <span style="font-size:0.78rem;color:var(--muted);margin-left:8px">as of ${escHtml(d.current_snapshot_date || "—")}</span>
-    </div>` : ""}
-
-    ${freqChips ? `<div style="margin:8px 0;font-size:0.76rem;color:var(--muted)">Historical pattern frequency:</div>
-    <div style="margin-bottom:10px">${freqChips}</div>` : ""}
-
-    ${precedents.total_occurrences ? `<div class="scr-dd-precedents">
-      <span class="scr-prec-label">Universe precedents for current pattern:</span>
-      <span><strong>${precedents.total_occurrences}</strong> cases</span>
-      <span>Winner rate: <strong>${precedents.winner_rate_pct != null ? precedents.winner_rate_pct + "%" : "—"}</strong></span>
-      <span>Avg return: <strong>${precedents.avg_return_30d_pct != null ? (precedents.avg_return_30d_pct >= 0 ? "+" : "") + precedents.avg_return_30d_pct + "%" : "—"}</strong></span>
-    </div>` : ""}
-
-    ${d.conclusion ? `<div class="scr-dd-conclusion">${escHtml(d.conclusion)}</div>` : ""}
-
-    ${records.length ? `<div class="scr-dd-table-label">Historical Signal States &amp; Outcomes</div>
-    <div style="overflow-x:auto">
-      <table class="scr-table scr-dd-table">
-        <thead><tr>
-          <th>Date</th><th>ESS</th><th>Zacks</th>
-          <th>Pattern</th><th>30d Return</th><th>vs Median</th>
-        </tr></thead>
-        <tbody>${recRows}</tbody>
-      </table>
-    </div>` : `<div style="color:var(--muted);font-size:0.82rem">No historical records for ${escHtml(d.symbol)} in the ESS archive.</div>`}
-
-    <div style="font-size:0.70rem;color:var(--muted);margin-top:10px;border-top:1px solid var(--border);padding-top:6px">
-      Data source: ESS archive (StarMine scores) + independent analyst ratings + price history.
-      Forward returns computed from closing prices. WINNER/LOSER = above/below ±2pp of snapshot median.
-      This is informational only — no scoring influence.
-    </div>
-  </div>`;
-}
-// Governance: display-only. No scoring, CW-DAS, CRA, or ranking influence.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _dqAnalystTargetHtml(ac) {
-  // Only render when we have at least a price target or upside
-  if (!ac || (ac.price_target == null && ac.upside_pct == null)) return "";
-
-  const targetStr  = ac.price_target != null
-    ? `$${parseFloat(ac.price_target).toFixed(2)}`
-    : "—";
-
-  const upsideVal  = ac.upside_pct != null ? parseFloat(ac.upside_pct) : null;
-  const upsideStr  = upsideVal != null
-    ? `<span class="dq-ati-upside ${upsideVal >= 0 ? 'dq-ati-positive' : 'dq-ati-negative'}">${upsideVal >= 0 ? '+' : ''}${upsideVal.toFixed(1)}%</span>`
-    : "—";
-
-  // analyst_count: hide entirely when null (ISSUE-08 dependency — graceful degrade)
-  const countHtml  = (ac.analyst_count != null && ac.analyst_count > 0)
-    ? `<span class="dq-ati-item"><span class="dq-ati-lbl">Coverage</span><span class="dq-ati-val">${ac.analyst_count} analysts</span></span>`
-    : "";
-
-  const dateStr    = ac.refresh_date ? escHtml(ac.refresh_date) : "—";
-
-  return `<div class="dq-analyst-target-block">
-    <div class="dq-ati-header">Analyst Target Intelligence</div>
-    <div class="dq-ati-row">
-      <span class="dq-ati-item">
-        <span class="dq-ati-lbl">Target</span>
-        <span class="dq-ati-val">${targetStr}</span>
-      </span>
-      <span class="dq-ati-item">
-        <span class="dq-ati-lbl">Upside</span>
-        <span class="dq-ati-val">${upsideStr}</span>
-      </span>
-      ${countHtml}
-      <span class="dq-ati-item dq-ati-date">
-        <span class="dq-ati-lbl">Sourced</span>
-        <span class="dq-ati-val">${dateStr}</span>
-      </span>
-    </div>
-    <div class="dq-ati-advisory">⚠ Guidance only — analyst targets are opinions, not price forecasts. Do not use as trade triggers.</div>
-  </div>`;
-}
-
-const _DQ_THESIS_OPTIONS      = new Set(["INTACT","QUESTIONABLE","DETERIORATING"]);
-const _DQ_CONSISTENCY_OPTIONS = new Set(["CONSISTENT","MIXED","CONTRADICTORY","DATA_ANOMALY"]);
-
-function _dqApplyFilters(queue) {
-  const allThesis      = _dqFilterThesis.size === _DQ_THESIS_OPTIONS.size;
-  const allConsistency = _dqFilterConsistency.size === _DQ_CONSISTENCY_OPTIONS.size;
-  const allModifier    = _dqFilterModifier === "ALL";
-  if (allThesis && allConsistency && allModifier) return queue;
-
-  return queue.filter(c => {
-    const bd          = c.score_breakdown || {};
-    const thesis      = bd.thesis_integrity || "";
-    const consistency = bd.fundamental_consistency || "";
-    const mod         = parseFloat(bd.fundamental_modifier) || 0;
-
-    // Only filter on known values — unknown / empty data passes through
-    if (!allThesis && _DQ_THESIS_OPTIONS.has(thesis) && !_dqFilterThesis.has(thesis)) return false;
-    if (!allConsistency && _DQ_CONSISTENCY_OPTIONS.has(consistency) && !_dqFilterConsistency.has(consistency)) return false;
-
-    if (_dqFilterModifier === "POSITIVE" && mod <= 0) return false;
-    if (_dqFilterModifier === "NEUTRAL"  && mod !== 0) return false;
-    if (_dqFilterModifier === "NEGATIVE" && mod >= 0) return false;
-
-    return true;
-  });
-}
-
-function _dqToggleFilterPanel(e, which) {
-  e.stopPropagation();
-  ["thesis","consistency","modifier"].forEach(k => {
-    const p = document.getElementById(`dq-fp-${k}`);
-    if (p) { k === which ? p.classList.toggle("open") : p.classList.remove("open"); }
-  });
-}
-
-function _dqThesisChange(val, checked) {
-  if (checked) _dqFilterThesis.add(val); else _dqFilterThesis.delete(val);
-  _dqUpdateFilterBadge("thesis", _dqFilterThesis.size < _DQ_THESIS_OPTIONS.size);
-  _dqRefreshTable();
-}
-
-function _dqConsistencyChange(val, checked) {
-  if (checked) _dqFilterConsistency.add(val); else _dqFilterConsistency.delete(val);
-  _dqUpdateFilterBadge("consistency", _dqFilterConsistency.size < _DQ_CONSISTENCY_OPTIONS.size);
-  _dqRefreshTable();
-}
-
-function _dqModifierChange(val) {
-  _dqFilterModifier = val;
-  _dqUpdateFilterBadge("modifier", val !== "ALL");
-  _dqRefreshTable();
-}
-
-function _dqUpdateFilterBadge(which, active) {
-  const btn = document.getElementById(`dq-fb-${which}`);
-  if (btn) btn.classList.toggle("dq-filter-active", active);
-}
-
-function _dqRefreshTable() {
-  const dq = _analysisResult && _analysisResult.deployment_queue;
-  if (!dq || !Array.isArray(dq.queue)) return;
-
-  const filtered = _dqApplyFilters(dq.queue);
-  const limit    = _dqShowAll ? filtered.length : DQ_DEFAULT_ROWS;
-  _dqRenderTableRows(filtered, "dq-queue-table-body", limit);
-
-  // Update view-all button
-  const btn = document.getElementById("dq-view-all-btn");
-  if (btn) {
-    if (filtered.length <= DQ_DEFAULT_ROWS) {
-      btn.style.display = "none";
-    } else {
-      btn.style.display = "";
-      btn.textContent = _dqShowAll
-        ? `▲ Show top ${DQ_DEFAULT_ROWS} only`
-        : `▼ View all ${filtered.length} candidates`;
-    }
-  }
-
-  // Update filtered count badge
-  const countEl = document.getElementById("dq-filtered-count");
-  if (countEl) {
-    const total = dq.queue.length;
-    const shown = filtered.length;
-    countEl.textContent = shown < total ? `${shown} of ${total}` : "";
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8650,1412 +3907,6 @@ function emptyState(title, sub) {
   </div>`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 8.0B.X — Company Context Enrichment
-// ─────────────────────────────────────────────────────────────────────────────
-
-let _securityMetadata = {};   // {symbol → {sector, industry, country, quote_type}}
-
-// Called once after analysis loads — non-blocking
-async function _loadSecurityMetadata() {
-  try {
-    const resp = await fetch("/api/security-metadata");
-    if (resp.ok) {
-      _securityMetadata = await resp.json();
-    }
-  } catch (_) {
-    // Fail-open: snapshot degrades to "—" for all fields
-  }
-}
-
-// Clean Fidelity-style security description into a readable company name
-function _cleanCompanyName(desc, symbol) {
-  if (!desc || !desc.trim()) return symbol;
-  return desc
-    .replace(/\s+SPON(?:SORED)?\s+ADS?.*$/i, " (ADR)")
-    .replace(/\s+DEP(?:OSITORY)?\s+REC(?:EIPT)?.*$/i, " (ADR)")
-    .replace(/\s+EACH\s+REP.*$/i, "")
-    .replace(/\s+ORD\s+[A-Z]{2,3}\s*\d*$/i, "")
-    .replace(/\s+COM(?:MON)?\s+(?:STK|STOCK|SH(?:ARES?)?)(?:\s+USD\d+)?$/i, "")
-    .replace(/\s+CL(?:ASS)?\s+[A-Z]$/i, "")
-    .replace(/\s+INC(?:ORPORATED)?\.?\s*$/i, " Inc.")
-    .replace(/\s+CORP(?:ORATION)?\.?\s*$/i, " Corp.")
-    .replace(/\s+HOLDINGS?\s+CO(?:MPANY)?$/i, " Holdings")
-    .replace(/\s+CO(?:MPANY)?\.?\s*$/i, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
-// ── Fundamental Snapshot (FMP Diagnostic Overlay — Phase 8.0B.1B.5) ──────────
-// Display-only: NO scoring, NO ranking, NO recommendation changes.
-
-function _fmpF(meta, key) {
-  // Return float or null from metadata FMP field
-  const v = meta[key];
-  if (v === undefined || v === null || v === "") return null;
-  const n = parseFloat(v);
-  return isNaN(n) ? null : n;
-}
-
-// ── Thesis Integrity ──────────────────────────────────────────────────────────
-// INTACT / QUESTIONABLE / DETERIORATING / INSUFFICIENT_DATA
-function _fmpThesisIntegrity(meta) {
-  const cov = meta.fmp_coverage || "";
-  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
-    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
-  }
-
-  const rev   = _fmpF(meta, "fmp_revenue_growth");
-  const beat  = _fmpF(meta, "fmp_beat_rate");
-  const accel = _fmpF(meta, "fmp_revenue_accel");
-
-  if (rev === null && beat === null) {
-    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
-  }
-
-  const evidence = [];
-  if (rev   !== null) evidence.push("Rev " + (rev >= 0 ? "+" : "") + (rev * 100).toFixed(1) + "%");
-  if (beat  !== null) evidence.push("Beat " + Math.round(beat * 100) + "%");
-  if (accel !== null) evidence.push("Accel " + (accel >= 0 ? "+" : "") + (accel * 100).toFixed(1) + "pp");
-
-  // DETERIORATING: revenue declining AND (beat weak OR strong deceleration)
-  const isDeteriorating =
-    (rev !== null && rev < -0.02 && beat !== null && beat < 0.65) ||
-    (rev !== null && rev < -0.02 && accel !== null && accel < -0.50);
-
-  // INTACT: positive revenue + decent beat + not heavily decelerating
-  const isIntact =
-    (rev === null || rev >= 0) &&
-    (beat === null || beat >= 0.625) &&
-    (accel === null || accel >= -0.20);
-
-  if (isDeteriorating) return { label: "DETERIORATING",    cls: "deteriorating", evidence };
-  if (isIntact)        return { label: "INTACT",           cls: "intact",        evidence };
-  return                      { label: "QUESTIONABLE",     cls: "questionable",  evidence };
-}
-
-// ── Fundamental Consistency ───────────────────────────────────────────────────
-// CONSISTENT / MIXED / CONTRADICTORY / DATA_ANOMALY
-function _fmpFundamentalConsistency(meta, ov, thesis) {
-  const cov = meta.fmp_coverage || "";
-  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
-    return { label: "INSUFFICIENT_DATA", cls: "nodata", evidence: [] };
-  }
-
-  const ess    = ((ov && ov.ess_score_text) || "").toUpperCase();
-  const dan    = ov ? parseFloat(ov.danelfin_score || 0) || 0 : 0;
-  const ev     = _fmpF(meta, "fmp_ev_ebitda");
-  const rev    = _fmpF(meta, "fmp_revenue_growth");
-
-  const signalBullish = ess.includes("BULLISH") && !ess.includes("BEARISH");
-  const signalBearish = ess.includes("BEARISH");
-
-  const evidence = [];
-  if (ess)    evidence.push("ESS " + ess.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase()));
-  if (dan > 0) evidence.push("Danelfin " + dan.toFixed(1));
-
-  // DATA_ANOMALY: extreme valuation with declining revenue
-  if (ev !== null && ev > 80 && rev !== null && rev < -0.02) {
-    return { label: "DATA_ANOMALY", cls: "anomaly",
-      evidence: [...evidence, "EV/EBITDA " + ev.toFixed(1) + "x with declining revenue"] };
-  }
-
-  const thesisLabel = thesis.label;
-
-  // CONSISTENT: signals and fundamentals agree
-  if ((signalBullish && thesisLabel === "INTACT") ||
-      (signalBearish && thesisLabel === "DETERIORATING")) {
-    return { label: "CONSISTENT", cls: "consistent", evidence };
-  }
-
-  // CONTRADICTORY: strongly bullish signals + deteriorating fundamentals + weak beat
-  const beat = _fmpF(meta, "fmp_beat_rate");
-  if (signalBullish && thesisLabel === "DETERIORATING" && (beat === null || beat < 0.60)) {
-    return { label: "CONTRADICTORY", cls: "contradictory",
-      evidence: [...evidence, "Bullish signals vs. deteriorating fundamentals"] };
-  }
-
-  // MIXED: partial alignment
-  return { label: "MIXED", cls: "mixed", evidence };
-}
-
-// ── Dislocation Detection ─────────────────────────────────────────────────────
-// NONE / POTENTIAL / HIGH CONVICTION
-function _fmpDislocationType(meta, ov, thesis, consistency) {
-  const cov = meta.fmp_coverage || "";
-  if (!cov || cov === "NO_DATA" || cov === "ETF_NOT_APPLICABLE") {
-    return { label: "N/A", cls: "nodata", evidence: [] };
-  }
-
-  const thesisLabel = thesis.label;
-  const beat  = _fmpF(meta, "fmp_beat_rate");
-  const dan   = ov ? parseFloat(ov.danelfin_score || 0) || 0 : 0;
-  const ess   = ((ov && ov.ess_score_text) || "").toUpperCase();
-  const signalBearishOrNeutral = ess.includes("BEARISH") || ess === "NEUTRAL" || ess === "";
-
-  // HIGH CONVICTION dislocation: intact thesis + strong beats + signal weakness
-  if (thesisLabel === "INTACT" && beat !== null && beat >= 0.875 &&
-      (signalBearishOrNeutral || dan < 1.5)) {
-    return { label: "HIGH CONVICTION", cls: "high-conviction",
-      evidence: ["Intact thesis with bearish/neutral signals"] };
-  }
-
-  // POTENTIAL dislocation: intact thesis + decent beats but AI signal modest
-  if (thesisLabel === "INTACT" && beat !== null && beat >= 0.75 && dan < 3.0) {
-    return { label: "POTENTIAL", cls: "potential",
-      evidence: ["Intact thesis, Danelfin " + dan.toFixed(1) + " (moderate signal)"] };
-  }
-
-  return { label: "NONE", cls: "none", evidence: [] };
-}
-
-// ISSUE-04C: adapter — converts backend DislocationType dict to the {label, cls, evidence}
-// shape expected by _dqFundamentalSnapshotHtml().
-function _disFromBackend(d) {
-  if (!d || d.tier === "NONE" || d.tier === "none") {
-    return { label: "NONE", cls: "none", evidence: [] };
-  }
-  const tierMap = {
-    HIGH_CONVICTION: { label: "HIGH CONVICTION", cls: "high-conviction" },
-    MODERATE:        { label: "MODERATE",         cls: "potential" },    // reuse "potential" CSS for amber
-    WATCH:           { label: "WATCH",            cls: "watch" },
-  };
-  const mapped = tierMap[d.tier] || { label: d.tier.replace(/_/g," "), cls: "none" };
-  return { label: mapped.label, cls: mapped.cls, evidence: Array.isArray(d.evidence) ? d.evidence : [] };
-}
-
-// ── Fundamental Snapshot HTML ─────────────────────────────────────────────────
-
-function _dqFundamentalSnapshotHtml(sym, metadataMap, ov) {
-  const meta = metadataMap[(sym || "").toUpperCase()] || {};
-  const cov  = meta.fmp_coverage || "";
-
-  // Suppress entirely if no FMP data and not an ETF
-  if (!cov || cov === "NO_DATA") return "";
-
-  const thesis      = _fmpThesisIntegrity(meta);
-  const consistency = _fmpFundamentalConsistency(meta, ov, thesis);
-
-  // ISSUE-04C: use backend-computed dislocation when available; fall back to JS heuristic
-  const _disBackend = (_lastAnalysisData?.dislocation_by_symbol || {})[String(sym || "").toUpperCase()];
-  const dislocation = _disBackend
-    ? _disFromBackend(_disBackend)
-    : _fmpDislocationType(meta, ov, thesis, consistency);
-
-  const rev    = _fmpF(meta, "fmp_revenue_growth");
-  const roic   = _fmpF(meta, "fmp_roic");
-  const fcf    = _fmpF(meta, "fmp_fcf_yield");
-  const beat   = _fmpF(meta, "fmp_beat_rate");
-  const ev     = _fmpF(meta, "fmp_ev_ebitda");
-  const netBuy = _fmpF(meta, "fmp_net_buy_score");
-  const cons   = meta.fmp_consensus || "";
-
-  function fmtPct(v) { if (v === null) return "—"; return (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%"; }
-  function fmtX(v)   { if (v === null) return "—"; return v.toFixed(1) + "x"; }
-  function fmtF(v)   { if (v === null) return "—"; return (v * 100).toFixed(1) + "%"; }
-  function fmtBeat(v){ if (v === null) return "—"; return Math.round(v * 100) + "% (" + (meta.fmp_beats_8q || "?") + "/8q)"; }
-  function cls(v, pos, neg) { if (v === null) return ""; return v > pos ? " pos" : v < neg ? " neg" : ""; }
-
-  // ETF: show brief note
-  if (cov === "ETF_NOT_APPLICABLE") {
-    return `<div class="dq-fundamental-snapshot">
-      <div class="dq-fs-title">Fundamental Snapshot</div>
-      <div style="font-size:0.78rem;color:var(--muted);font-style:italic">ETF — fundamental analysis not applicable.</div>
-    </div>`;
-  }
-
-  const revCls  = cls(rev,  0.05, -0.02);
-  const roicCls = cls(roic, 0.10,  0.04);
-  const fcfCls  = cls(fcf,  0.03,  0);
-
-  return `<div class="dq-fundamental-snapshot">
-    <div class="dq-fs-title">Fundamental Snapshot</div>
-    <div class="dq-fs-grid">
-      <div class="dq-fs-lbl">Revenue Growth</div>
-      <div class="dq-fs-val${revCls}">${fmtPct(rev)}</div>
-      <div class="dq-fs-lbl">ROIC</div>
-      <div class="dq-fs-val${roicCls}">${fmtF(roic)}</div>
-      <div class="dq-fs-lbl">FCF Yield</div>
-      <div class="dq-fs-val${fcfCls}">${fmtF(fcf)}</div>
-      <div class="dq-fs-lbl">EV / EBITDA</div>
-      <div class="dq-fs-val">${fmtX(ev)}</div>
-      <div class="dq-fs-lbl">Beat Rate</div>
-      <div class="dq-fs-val">${fmtBeat(beat)}</div>
-      ${netBuy !== null || cons ? `<div class="dq-fs-lbl">Analyst Consensus</div>
-      <div class="dq-fs-val">${cons ? escHtml(cons) : "—"}${netBuy !== null ? ' <span style="font-size:0.72rem;color:var(--muted)">(net buy ' + (netBuy >= 0 ? "+" : "") + Math.round(netBuy) + ')</span>' : ''}</div>` : ""}
-    </div>
-    <div class="dq-fs-badges">
-      <div class="dq-fs-badge-row">
-        <div class="dq-fs-badge-lbl">Thesis Integrity</div>
-        <span class="dq-fs-badge ${thesis.cls}">${escHtml(thesis.label.replace(/_/g," "))}</span>
-        ${thesis.evidence.length ? '<span style="font-size:0.72rem;color:var(--muted)">' + thesis.evidence.map(escHtml).join(" · ") + '</span>' : ''}
-      </div>
-      <div class="dq-fs-badge-row">
-        <div class="dq-fs-badge-lbl">Fundamental Consistency</div>
-        <span class="dq-fs-badge ${consistency.cls}">${escHtml(consistency.label)}</span>
-        ${consistency.evidence.length > 2 ? '<span style="font-size:0.72rem;color:var(--muted)">' + escHtml(consistency.evidence[2] || "") + '</span>' : ''}
-      </div>
-      <div class="dq-fs-badge-row">
-        <div class="dq-fs-badge-lbl">Dislocation</div>
-        <span class="dq-fs-badge ${dislocation.cls}">${escHtml(dislocation.label)}</span>
-        ${dislocation.evidence.length ? '<span style="font-size:0.72rem;color:var(--muted)">' + dislocation.evidence.map(escHtml).join(" · ") + '</span>' : ''}
-      </div>
-    </div>
-  </div>`;
-}
-
-// ── Why SIH Likes It ─────────────────────────────────────────────────────────
-
-function _dqWhySIHLikesItHtml(c, ucf, ov, bd, dp, trim) {
-  const bullets = [];
-  const rank       = c.rank;
-  const ucfLabel   = (ucf.ucf_label  || "").toUpperCase();
-  const ucfRank    = ucf.ucf_rank  != null ? parseInt(ucf.ucf_rank) : null;
-  const essText    = (ov.ess_score_text  || c.ess_score_text  || "").toUpperCase();
-  const replayOn   = c.replay_supported || ov.replay_supported;
-  const replayPct  = ov.replay_percentile != null ? parseFloat(ov.replay_percentile) : null;
-  const dan        = ov.danelfin_score  != null ? parseFloat(ov.danelfin_score)  : null;
-  const zacks      = ov.zacks_rating    != null ? parseFloat(ov.zacks_rating)    : null;
-  const redPen     = bd.redundancy_pen  != null ? parseFloat(bd.redundancy_pen)  : null;
-  const concPen    = bd.conc_pen        != null ? parseFloat(bd.conc_pen)        : null;
-  const suggestedAdd = dp && dp.suggested_add != null ? parseFloat(dp.suggested_add) : 0;
-  const isOver     = ov.is_overweight_vs_target;
-  const portfolioPct = ov.percent_of_portfolio != null ? parseFloat(ov.percent_of_portfolio) : null;
-
-  // 1. Rank
-  if (rank === 1)      bullets.push("#1 CW-DAS deployment priority");
-  else if (rank <= 3)  bullets.push(`Top-${rank} CW-DAS deployment candidate`);
-
-  // 2. UCF conviction
-  if (ucfLabel.includes("CORE"))        bullets.push("Core Conviction Leader");
-  else if (ucfLabel.includes("HIGH"))   bullets.push("High Conviction Anchor");
-  else if (ucfLabel.includes("STRONG")) bullets.push("Strong signal conviction");
-
-  // 3. UCF universe rank
-  if (ucfRank != null && ucfRank <= 25 && !ucfLabel.includes("CORE") && !ucfLabel.includes("HIGH")) {
-    bullets.push(`Top-25 universe conviction rank (#${ucfRank})`);
-  }
-
-  // 4. ESS signal
-  if (essText.includes("VERY_BULLISH") || essText.includes("STRONG_BULLISH")) {
-    bullets.push("Very Bullish ESS signal");
-  } else if (essText.includes("BULLISH")) {
-    bullets.push("Bullish ESS signal");
-  }
-
-  // 5. Replay
-  if (replayOn) {
-    if (replayPct != null && replayPct >= 80) {
-      bullets.push(`Elite replay backing — ${Math.round(replayPct)}th percentile`);
-    } else if (replayPct != null && replayPct >= 60) {
-      bullets.push(`Replay-backed thesis — ${Math.round(replayPct)}th percentile`);
-    } else {
-      bullets.push("Replay-backed thesis");
-    }
-  }
-
-  // 6. Danelfin AI signal
-  if (dan != null && dan >= 4.5) {
-    bullets.push(`Strong AI signal (Danelfin ${dan.toFixed(1)})`);
-  }
-
-  // 7. Zacks
-  if (zacks != null && zacks <= 1.5)       bullets.push("Zacks Strong Buy rating");
-  else if (zacks != null && zacks <= 2.5)  bullets.push("Zacks Buy rating");
-
-  // 8. No conflicts
-  if (redPen === 0 && concPen === 0) {
-    bullets.push("No concentration conflicts");
-  }
-
-  // 9. Fundamental modifier context (ISSUE-07)
-  const fundMod = bd.fundamental_modifier != null ? parseFloat(bd.fundamental_modifier) : 0;
-  if (fundMod >= 2.0)  bullets.push(`Fundamental bonus +${fundMod.toFixed(1)} (strong business quality)`);
-  else if (fundMod >= 1.0) bullets.push(`Fundamental bonus +${fundMod.toFixed(1)} (solid fundamentals)`);
-  else if (fundMod <= -3.0) bullets.push(`Fundamental penalty ${fundMod.toFixed(1)} (thesis deterioration)`);
-  else if (fundMod <= -1.5) bullets.push(`Fundamental penalty ${fundMod.toFixed(1)} (inconsistent fundamentals)`);
-
-  // 10. Low trim / sizing
-  if (trim <= 20) {
-    bullets.push("Low trim pressure");
-  }
-  if (suggestedAdd > 0) {
-    bullets.push("Actionable — new capital can deploy");
-  } else if (!isOver && portfolioPct != null && portfolioPct < 3) {
-    bullets.push("Underweight vs. target — sizing opportunity");
-  }
-
-  // Suppress if fewer than 2 bullets (edge case: ETFs, funds, sparse data)
-  if (bullets.length < 2) return "";
-
-  const items = bullets.slice(0, 5).map(b => `<li>${escHtml(b)}</li>`).join("");
-  return `<div class="dq-why-sih">
-    <div class="dq-why-sih-title">Why SIH Likes It</div>
-    <ul class="dq-why-sih-bullets">${items}</ul>
-  </div>`;
-}
-
-// ── Company Snapshot helpers ──────────────────────────────────────────────────
-
-// Clean Yahoo investor-language business summary into operator language
-function _cleanBusinessSummary(raw) {
-  if (!raw) return "";
-  let s = raw
-    .replace(/,?\s+together with its subsidiaries,?/gi, "")
-    .replace(/^[A-Z][^.]{8,90}?(?:Inc\.|Corp\.|Corporation|Company|Limited|Ltd\.|Holdings?\s*Co\.?|PLC|N\.V\.|AG|LLC|Co\.?)\s+(?:designs(?:,?\s+develops)?|operates as a[n]?|engages in|provides|builds and deploys|manufactures|develops|sources and engineers),?\s*/i, "")
-    .replace(/,?\s+(?:and internationally|in (?:the United States?|North America|the Americas|Europe|the Middle East|Africa|Asia|Taiwan|China|Japan|Korea|Australia|Germany|the United Kingdom|internationally|Canada)[^.]*)/gi, "")
-    .trim();
-  if (s && s[0] === s[0].toLowerCase() && s[0] !== s[0].toUpperCase()) {
-    s = s[0].toUpperCase() + s.slice(1);
-  }
-  s = s.replace(/[.,…]+$/, "").trim();
-  if (s.length > 10) s += ".";
-  return s.length > 15 ? s : raw;
-}
-
-// Why It Matters: deterministic sector+industry → operator theme string
-const _WHY_IT_MATTERS_MAP = {
-  "Technology|Semiconductors":                      "Critical chipmaker supplying AI, mobile, cloud, and automotive compute.",
-  "Technology|Semiconductor Equipment & Materials": "Sole-source supplier of advanced chip manufacturing equipment.",
-  "Technology|Computer Hardware":                   "Enterprise servers, storage, and compute infrastructure.",
-  "Technology|Electronic Components":               "Technology component distribution enabling global electronics supply chains.",
-  "Technology|Information Technology Services":     "IT services and solutions driving enterprise digital transformation.",
-  "Technology|Software—Application":                "Enterprise software with recurring revenue and platform lock-in.",
-  "Technology|Software—Infrastructure":             "Infrastructure software underpinning cloud and enterprise systems.",
-  "Technology|Communication Equipment":             "Network infrastructure for enterprise, carrier, and data-center connectivity.",
-  "Technology|Scientific & Technical Instruments":  "Precision instruments and measurement technology for industrial and lab markets.",
-  "Industrials|Electrical Equipment & Parts":       "Benefits from AI data-center buildout, electrification, and grid modernization.",
-  "Industrials|Engineering & Construction":         "Infrastructure construction tied to energy, industrial, and utilities investment.",
-  "Industrials|Specialty Industrial Machinery":     "Industrial machinery serving diverse manufacturing end markets.",
-  "Industrials|Aerospace & Defense":               "Defense systems and aerospace with government-contract revenue stability.",
-  "Industrials|Metal Fabrication":                 "Metal fabrication serving construction, manufacturing, and energy markets.",
-  "Healthcare|Medical Distribution":               "Essential pharmaceutical and medical supply distribution to healthcare systems.",
-  "Healthcare|Biotechnology":                      "Drug pipeline exposure to biotech innovation cycles and FDA approvals.",
-  "Healthcare|Drug Manufacturers—General":         "Diversified pharmaceutical manufacturer with branded and generic drug exposure.",
-  "Healthcare|Medical Devices":                    "Medical device supplier serving surgical, diagnostic, and therapeutic markets.",
-  "Healthcare|Medical Care Facilities":            "Healthcare services provider with volume and reimbursement rate exposure.",
-  "Energy|Oil & Gas Integrated":                   "Exposure to crude production, refining margins, and downstream fuel demand.",
-  "Energy|Oil & Gas E&P":                          "Direct commodity price exposure through exploration and production operations.",
-  "Energy|Oil & Gas Refining & Marketing":         "Refining margin and fuel distribution exposure.",
-  "Energy|Solar":                                  "Clean energy exposure through solar manufacturing and project development.",
-  "Financial Services|Asset Management":           "Fee-based revenue tied to assets under management and market performance.",
-  "Financial Services|Banks—Regional":             "Lending and deposit business with local economic and rate-cycle exposure.",
-  "Financial Services|Insurance—Property & Casualty": "P&C underwriter with premium income and catastrophe loss exposure.",
-  "Financial Services|Capital Markets":            "Capital markets revenue tied to deal flow, trading, and market activity.",
-  "Consumer Cyclical|Auto Manufacturers":          "EV manufacturing with exposure to energy policy, autonomy, and consumer demand.",
-  "Consumer Cyclical|Specialty Retail":            "Specialty retailer with consumer spending and brand loyalty exposure.",
-  "Consumer Defensive|Household & Personal Products": "Consumer staples with stable demand and pricing power.",
-  "Basic Materials|Steel":                         "Domestic steel production tied to construction, manufacturing, and trade policy.",
-  "Basic Materials|Gold":                          "Gold mining with direct commodity and safe-haven demand exposure.",
-  "Basic Materials|Copper":                        "Copper mining with exposure to electrification and infrastructure demand.",
-  "Communication Services|Internet Content & Information": "Digital platform monetizing user engagement through advertising and subscriptions.",
-  "Communication Services|Telecom Services":       "Telecom services with subscription revenue and network infrastructure exposure.",
-  "Utilities|Utilities—Regulated Electric":        "Regulated electric utility with stable yield and rate-cycle sensitivity.",
-  "Real Estate|REIT—Industrial":                   "Industrial REIT with rent exposure to e-commerce and logistics demand.",
-};
-const _WHY_SECTOR_FALLBACK = {
-  "Technology":             "Technology business operating in enterprise, cloud, or semiconductor markets.",
-  "Healthcare":             "Healthcare company with pharmaceutical, device, or distribution exposure.",
-  "Energy":                 "Energy company with commodity price and infrastructure exposure.",
-  "Industrials":            "Industrial manufacturer or services provider.",
-  "Financial Services":     "Financial services business with market-sensitive or fee-based revenue.",
-  "Consumer Cyclical":      "Consumer-facing business tied to discretionary spending trends.",
-  "Consumer Defensive":     "Defensive consumer business with stable demand and brand loyalty.",
-  "Basic Materials":        "Materials producer with commodity cycle and supply-demand exposure.",
-  "Communication Services": "Communications or media business with user engagement and ad-revenue exposure.",
-  "Utilities":              "Regulated utility with stable yield and interest rate sensitivity.",
-  "Real Estate":            "Real estate business with asset value and rate-cycle exposure.",
-};
-
-function _getWhyItMatters(sector, industry) {
-  if (!sector) return "";
-  return _WHY_IT_MATTERS_MAP[`${sector}|${industry}`] || _WHY_SECTOR_FALLBACK[sector] || "";
-}
-
-// Business model tags
-const _TAGS_PRIMARY = {
-  "Technology|Semiconductors":                      ["SEMICONDUCTOR"],
-  "Technology|Semiconductor Equipment & Materials": ["SEMICONDUCTOR"],
-  "Technology|Computer Hardware":                   ["ENTERPRISE IT"],
-  "Technology|Electronic Components":               ["TECH DISTRIBUTION"],
-  "Technology|Information Technology Services":     ["ENTERPRISE IT"],
-  "Technology|Software—Application":                ["SOFTWARE"],
-  "Technology|Software—Infrastructure":             ["SOFTWARE"],
-  "Technology|Communication Equipment":             ["NETWORKING"],
-  "Industrials|Electrical Equipment & Parts":       ["INDUSTRIALS"],
-  "Industrials|Engineering & Construction":         ["INDUSTRIALS"],
-  "Industrials|Specialty Industrial Machinery":     ["INDUSTRIALS"],
-  "Industrials|Aerospace & Defense":                ["AEROSPACE", "DEFENSE"],
-  "Industrials|Metal Fabrication":                  ["MATERIALS"],
-  "Healthcare|Medical Distribution":                ["HEALTHCARE"],
-  "Healthcare|Biotechnology":                       ["BIOTECH"],
-  "Healthcare|Drug Manufacturers—General":          ["PHARMA"],
-  "Healthcare|Medical Devices":                     ["HEALTHCARE"],
-  "Healthcare|Medical Care Facilities":             ["HEALTHCARE"],
-  "Energy|Oil & Gas Integrated":                    ["ENERGY"],
-  "Energy|Oil & Gas E&P":                           ["ENERGY"],
-  "Energy|Oil & Gas Refining & Marketing":          ["ENERGY"],
-  "Energy|Solar":                                   ["CLEAN ENERGY"],
-  "Financial Services|Asset Management":            ["FINANCIALS"],
-  "Financial Services|Banks—Regional":              ["BANKING"],
-  "Financial Services|Insurance—Property & Casualty": ["INSURANCE"],
-  "Financial Services|Capital Markets":             ["FINANCIALS"],
-  "Consumer Cyclical|Auto Manufacturers":           ["EV"],
-  "Basic Materials|Steel":                          ["STEEL"],
-  "Basic Materials|Gold":                           ["GOLD"],
-  "Communication Services|Internet Content & Information": ["DIGITAL MEDIA"],
-};
-const _TAG_KEYWORD_BOOSTS = [
-  [/\bAI\b|artificial intelligence/i,    "AI"],
-  [/data.?cent(?:er|re)/i,               "DATA CENTER"],
-  [/nuclear|SMR\b/i,                     "NUCLEAR"],
-  [/\bdefense\b|intelligence community|counterterrorism/i, "DEFENSE"],
-  [/\belectric vehicle|EV\b/i,           "EV"],
-  [/\blithography|chip manufactur/i,     "SEMICONDUCTOR"],
-  [/\bsemiconductor/i,                   "SEMICONDUCTOR"],
-];
-
-function _getBusinessTags(sector, industry, bizDesc) {
-  const base = (_TAGS_PRIMARY[`${sector}|${industry}`] || []).slice();
-  const tagSet = new Set(base);
-  if (bizDesc) {
-    for (const [rx, tag] of _TAG_KEYWORD_BOOSTS) {
-      if (rx.test(bizDesc) && !tagSet.has(tag)) tagSet.add(tag);
-    }
-  }
-  return [...tagSet].slice(0, 3);
-}
-
-// Build Company Snapshot HTML for a single symbol
-function _dqCompanySnapshotHtml(sym, metadataMap) {
-  const meta = metadataMap[(sym || "").toUpperCase()] || {};
-
-  const companyName = meta.long_name    || sym || "Unknown";
-  const hq          = meta.hq           || "Unknown";
-  const sector      = meta.sector       || "";
-  const industry    = meta.industry     || "";
-  const country     = meta.country      || "—";
-  const capTier     = meta.market_cap_bucket || "";
-  const rawBiz      = meta.business_summary || "";
-  const secType     = meta.quote_type || meta.security_type || "";
-
-  const bizDesc    = _cleanBusinessSummary(rawBiz);
-  const whyMatters = _getWhyItMatters(sector, industry);
-  const tags       = _getBusinessTags(sector, industry, rawBiz);
-
-  // ETF / Fund special handling
-  const isEtf = secType === "ETF" || secType === "MUTUALFUND" || secType === "FUND";
-  const sectorDisplay   = (isEtf && !sector) ? "Exchange-Traded Fund" : (sector || "—");
-  const industryDisplay = industry || "—";
-
-  const hasAny = sector || industry || country !== "—" || meta.long_name || isEtf;
-  if (!hasAny) return "";
-
-  const tagHtml = tags.length
-    ? `<div class="dq-cs-tags">${tags.map(t => `<span class="dq-cs-tag">${escHtml(t)}</span>`).join("")}</div>`
-    : "";
-
-  return `<div class="dq-company-snapshot">
-    <div class="dq-cs-title">Company Snapshot</div>
-    ${tagHtml}<div class="dq-cs-grid">
-      <div class="dq-cs-lbl">Company</div>
-      <div class="dq-cs-val">${escHtml(companyName)}</div>
-      <div class="dq-cs-lbl">Headquarters</div>
-      <div class="dq-cs-val">${escHtml(hq)}</div>
-      <div class="dq-cs-lbl">Sector</div>
-      <div class="dq-cs-val">${escHtml(sectorDisplay)}</div>
-      <div class="dq-cs-lbl">Industry</div>
-      <div class="dq-cs-val">${escHtml(industryDisplay)}</div>
-      ${bizDesc ? `<div class="dq-cs-lbl dq-cs-business-lbl">What They Do</div>
-      <div class="dq-cs-val dq-cs-business">${escHtml(bizDesc)}</div>` : ""}
-      ${whyMatters ? `<div class="dq-cs-lbl dq-cs-business-lbl">Why It Matters</div>
-      <div class="dq-cs-val dq-cs-why">${escHtml(whyMatters)}</div>` : ""}
-      <div class="dq-cs-lbl">Country</div>
-      <div class="dq-cs-val">${escHtml(country)}</div>
-      ${capTier ? `<div class="dq-cs-lbl">Cap Tier</div>
-      <div class="dq-cs-val"><span class="dq-cs-badge">${escHtml(capTier)}</span></div>` : ""}
-    </div>
-  </div>`;
-}
-
-// Category metadata
-let _craProposal = null;   // ISSUE-09 fix: restored missing declaration
-const _CRA_CATEGORIES = [
-  { key: "SIGNAL_DETERIORATION",   label: "Signal Deterioration",    num: 1 },
-  { key: "STRATEGIC_EXIT",         label: "Strategic Exit",           num: 2 },
-  { key: "OVERWEIGHT_REDUCTION",   label: "Exposure Reduction",       num: 3 },
-  { key: "TAX_AWARE_EXIT",         label: "Tax-Aware Exit",           num: 4 },
-  { key: "LOW_CONVICTION_REDUCTION", label: "Opportunity Cost Reduction", num: 5 },
-];
-
-async function loadCRAProposal() {
-  const section = document.getElementById("craSection");
-  const content = document.getElementById("craContent");
-  if (!section || !content) return;
-
-  content.innerHTML = `<div class="cra-loading">Loading Capital Rotation Advisor...</div>`;
-  section.style.display = "block";
-
-  const btn = document.getElementById("craRefreshBtn");
-  if (btn) btn.disabled = true;
-
-  try {
-    const resp = await fetch("/api/cra/proposal");
-    let payload = null;
-    const ct = (resp.headers.get("content-type") || "").toLowerCase();
-
-    if (ct.includes("application/json")) {
-      payload = await resp.json();
-    } else {
-      const txt = await resp.text().catch(() => "");
-      payload = {
-        status: "unavailable",
-        reason: "non_json_response",
-        message: `CRA endpoint returned non-JSON response (HTTP ${resp.status}).`,
-        endpoint: "/api/cra/proposal",
-        raw: (txt || "").slice(0, 200),
-      };
-    }
-
-    if (!resp.ok || (payload && payload.status === "unavailable")) {
-      const reason = (payload && payload.reason) ? String(payload.reason) : `http_${resp.status}`;
-      const msg = (payload && payload.message)
-        ? String(payload.message)
-        : `CRA unavailable - backend returned degraded state (HTTP ${resp.status}).`;
-      content.innerHTML = `<div class="cra-error">${escHtml(msg)}<br><small>Reason: ${escHtml(reason)}</small></div>`;
-      renderReductionQueueUnavailable(msg, reason);
-      return;
-    }
-
-    _craProposal = payload;
-    _renderCRAProposal(_craProposal);
-    _craEnableButtons(true);
-
-    // ARCH-02: Render Reduction Queue from CRA capital sources
-    // ARCH-05: Pass signal intelligence data for per-candidate profiles
-    const fviData      = (_lastAnalysisData && _lastAnalysisData.fvi_data) || null;
-    const _ovBySymArch = {};
-    for (const ov of ((_lastAnalysisData && _lastAnalysisData.security_overlays) || [])) {
-      if (ov && ov.symbol) _ovBySymArch[(ov.symbol || "").toUpperCase()] = ov;
-    }
-    const _consBySymArch = (_lastAnalysisData && _lastAnalysisData.analyst_consensus_by_symbol) || {};
-    renderReductionQueue._consBySymbol = _consBySymArch;  // pass via function property (avoids signature change)
-    renderReductionQueue(
-      _craProposal.sources || [],
-      _craProposal.total_capital_pool,
-      fviData,
-      _ovBySymArch,
-      (_lastAnalysisData && _lastAnalysisData.ucf_verdicts_by_symbol) || {},
-      (_lastAnalysisData && _lastAnalysisData.fidelity_signals_by_symbol) || {}
-    );
-
-    // Check for stale draft with matching run_id for Include/Skip restore
-    _craCheckDraft(_craProposal.run_id);
-  } catch (e) {
-    const msg = `CRA unavailable - backend returned degraded state (${String(e)})`;
-    content.innerHTML = `<div class="cra-error">${escHtml(msg)}</div>`;
-    renderReductionQueueUnavailable(msg, "fetch_exception");
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-function _craEnableButtons(on) {
-  for (const id of ["craSaveBtn","craExportCsvBtn","craExportMdBtn","craCopyBtn"]) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = !on;
-  }
-}
-
-async function _craSaveDraft() {
-  if (!_craProposal) return;
-  const saveBtn = document.getElementById("craSaveBtn");
-  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-
-  // Collect current Include/Skip state
-  const operatorIncludeMap = {};
-  const skipCheckboxes = document.querySelectorAll(".cra-check-skip");
-  skipCheckboxes.forEach(cb => {
-    // id is "cra-skp-SYMBOL" — extract symbol
-    const sym = (cb.id || "").replace(/^cra-skp-/, "").toUpperCase();
-    if (sym) operatorIncludeMap[sym] = !cb.checked; // checked = skip → not included
-  });
-
-  const payload = { ..._craProposal, operator_include_map: operatorIncludeMap };
-
-  try {
-    const resp = await fetch("/api/cra/draft", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (resp.ok) {
-      if (saveBtn) {
-        saveBtn.textContent = "✓ Saved";
-        saveBtn.classList.add("cra-btn-saved");
-        setTimeout(() => {
-          saveBtn.textContent = "✎ Save";
-          saveBtn.classList.remove("cra-btn-saved");
-          saveBtn.disabled = false;
-        }, 2500);
-      }
-    } else {
-      const err = await resp.json().catch(() => ({}));
-      alert("Save failed: " + (err.error || resp.status));
-      if (saveBtn) { saveBtn.textContent = "✎ Save"; saveBtn.disabled = false; }
-    }
-  } catch (e) {
-    alert("Save error: " + e);
-    if (saveBtn) { saveBtn.textContent = "✎ Save"; saveBtn.disabled = false; }
-  }
-}
-
-async function _craLoadDraft() {
-  try {
-    const resp = await fetch("/api/cra/draft");
-    if (!resp.ok) {
-      alert("No saved draft found. Generate and save a proposal first.");
-      return;
-    }
-    const draft = await resp.json();
-    if (draft.run_id === (_craProposal && _craProposal.run_id)) {
-      // Same run — restore include/skip and re-render
-      _craProposal = draft;
-      _renderCRAProposal(draft);
-      _craRestoreIncludeMap(draft.operator_include_map || {});
-      _craEnableButtons(true);
-      const banner = document.getElementById("craDraftBanner");
-      if (banner) banner.style.display = "none";
-    } else {
-      // Different run — load as new base proposal
-      _craProposal = draft;
-      _renderCRAProposal(draft);
-      _craRestoreIncludeMap(draft.operator_include_map || {});
-      _craEnableButtons(true);
-      const msg = document.getElementById("craDraftBannerMsg");
-      const banner = document.getElementById("craDraftBanner");
-      if (msg) msg.textContent = `Loaded draft from ${draft.as_of_date || "previous session"} (different run — selections may not match current portfolio).`;
-      if (banner) banner.style.display = "flex";
-    }
-  } catch (e) {
-    alert("Load error: " + e);
-  }
-}
-
-async function _craCheckDraft(currentRunId) {
-  try {
-    const resp = await fetch("/api/cra/draft");
-    if (!resp.ok) return;
-    const draft = await resp.json();
-    if (!draft || !draft.operator_include_map) return;
-    if (draft.run_id === currentRunId) {
-      // Same run — silently restore selections
-      _craRestoreIncludeMap(draft.operator_include_map);
-    } else {
-      // Stale draft — show banner
-      const msg = document.getElementById("craDraftBannerMsg");
-      const banner = document.getElementById("craDraftBanner");
-      if (msg) msg.textContent = `Saved draft from ${draft.as_of_date || "previous session"} available.`;
-      if (banner) banner.style.display = "flex";
-    }
-  } catch (_) { /* best-effort */ }
-}
-
-function _craApplyDraft() {
-  if (!_craProposal) return;
-  fetch("/api/cra/draft")
-    .then(r => r.ok ? r.json() : null)
-    .then(draft => {
-      if (draft && draft.operator_include_map) {
-        _craRestoreIncludeMap(draft.operator_include_map);
-      }
-      const banner = document.getElementById("craDraftBanner");
-      if (banner) banner.style.display = "none";
-    })
-    .catch(() => {});
-}
-
-function _craRestoreIncludeMap(map) {
-  if (!map || typeof map !== "object") return;
-  Object.entries(map).forEach(([sym, included]) => {
-    const cb = document.getElementById(`cra-skp-${sym}`);
-    if (cb) {
-      cb.checked = !included; // included=false → skip checked
-      _craSkipToggle(sym);
-    }
-  });
-}
-
-function _craExportCsv() {
-  window.location.href = "/api/cra/draft/export?format=csv";
-}
-
-function _craExportMd() {
-  window.location.href = "/api/cra/draft/export?format=md";
-}
-
-async function _craCopySummary() {
-  if (!_craProposal) return;
-  const p = _craProposal;
-  const lines = [
-    `CRA Proposal — ${p.as_of_date || ""}`,
-    `Status: ${p.proposal_status || "—"}`,
-    "",
-    `CAPITAL SOURCES ($${_craFmt(p.total_capital_pool)} est. pool)`,
-  ];
-  (p.sources || []).forEach(s => {
-    if (!s.blocked_by_policy) {
-      lines.push(`• ${s.symbol} — ${s.category.replace(/_/g, " ")} — ${s.priority} — Tax ${s.tax_bucket || "—"}`);
-    }
-  });
-  lines.push("", "DEPLOYMENT TARGETS");
-  (p.deployments || []).forEach(t => {
-    const tier = t.narrative_tier.includes("CORE") ? "CCL" : "HCA";
-    const proj = (parseFloat(t.projected_weight_pct || 0) * 100).toFixed(1);
-    lines.push(`• #${t.rank} ${t.symbol} — Add ${_craFmt(t.suggested_amount)} → ${proj}% proj. — ${tier}`);
-  });
-  const imp = p.impact || {};
-  if (imp.impact_narrative) {
-    lines.push("", "ESTIMATED IMPACT", `• ${imp.impact_narrative}`);
-  }
-  lines.push("", "Advisory only — not trade instructions.", "Generated by Security Intelligence Hub");
-
-  const text = lines.join("\n");
-  try {
-    await navigator.clipboard.writeText(text);
-    const btn = document.getElementById("craCopyBtn");
-    if (btn) {
-      const orig = btn.innerHTML;
-      btn.innerHTML = "✓ Copied";
-      setTimeout(() => { btn.innerHTML = orig; }, 2000);
-    }
-  } catch (e) {
-    // Fallback: show in a textarea for manual copy
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.cssText = "position:fixed;top:10%;left:10%;width:80%;height:60%;z-index:9999;font-size:0.85rem;padding:10px;";
-    document.body.appendChild(ta);
-    ta.select();
-    const close = document.createElement("button");
-    close.textContent = "Close";
-    close.style.cssText = "position:fixed;top:calc(10% - 30px);left:10%;z-index:9999;padding:4px 12px;";
-    close.onclick = () => { document.body.removeChild(ta); document.body.removeChild(close); };
-    document.body.appendChild(close);
-  }
-}
-
-function _renderCRAProposal(p) {
-  const content = document.getElementById("craContent");
-  if (!content) return;
-
-  // Status badge
-  const statusBadge = document.getElementById("craStatusBadge");
-  if (statusBadge) {
-    const statusLabel = p.proposal_status === "OPERATOR_REVIEW_REQUIRED"
-      ? "Operator Review Required"
-      : p.proposal_status === "READY" ? "Ready" : "Draft";
-    statusBadge.className = `cra-status-badge cra-status-${p.proposal_status}`;
-    statusBadge.textContent = statusLabel;
-  }
-
-  // Review flags
-  const flagsEl = document.getElementById("craReviewFlags");
-  if (flagsEl) {
-    if (p.review_flags && p.review_flags.length > 0) {
-      flagsEl.style.display = "block";
-      flagsEl.innerHTML = `<strong>⚠ Operator Review Required:</strong>
-        <ul>${p.review_flags.map(f => `<li>${escHtml(f)}</li>`).join("")}</ul>`;
-    } else {
-      flagsEl.style.display = "none";
-    }
-  }
-
-  content.innerHTML = `
-    ${_craBuildRotationObjectiveBanner(p)}
-    ${_craBuildRotationSummaryPanel(p)}
-    <div class="cra-columns">
-      ${_craBuildSourcesCol(p)}
-      ${_craBuildRotationMapCol(p)}
-      ${_craBuildImpactCol(p)}
-    </div>`;
-
-  // Expand first non-empty category automatically
-  const firstGroup = content.querySelector(".cra-cat-group");
-  if (firstGroup) _craCatToggle(firstGroup);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CRA Rotation Objective Banner (UI Clarity Sprint — Problem 3)
-// Presentation-only — auto-classifies based on source category distribution.
-// No changes to CRA logic, scoring, or proposal generation.
-// ─────────────────────────────────────────────────────────────────────────────
-function _craBuildRotationObjectiveBanner(p) {
-  const sources = (p.sources || []).filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
-  if (!sources.length) return "";
-
-  const counts = {};
-  for (const s of sources) {
-    const cat = s.category || "UNKNOWN";
-    counts[cat] = (counts[cat] || 0) + 1;
-  }
-  const total = sources.length;
-
-  const sigDet  = counts["SIGNAL_DETERIORATION"]    || 0;
-  const owRed   = counts["OVERWEIGHT_REDUCTION"]     || 0;
-  const taxExit = counts["TAX_AWARE_EXIT"]           || 0;
-  const lowConv = counts["LOW_CONVICTION_REDUCTION"] || 0;
-  const stratEx = counts["STRATEGIC_EXIT"]           || 0;
-
-  let objective, objectiveCls, objectiveDesc;
-  const majorityThreshold = total * 0.5;
-
-  if (sigDet + stratEx >= majorityThreshold) {
-    objective     = "HIGHER CONVICTION";
-    objectiveCls  = "cra-obj-conviction";
-    objectiveDesc = "Primary driver: rotate out of deteriorating signals into higher-conviction positions.";
-  } else if (owRed >= majorityThreshold) {
-    objective     = "ALLOCATION REPAIR";
-    objectiveCls  = "cra-obj-allocation";
-    objectiveDesc = "Primary driver: reduce overweight nodes to restore mandate-aligned allocation.";
-  } else if (taxExit >= majorityThreshold) {
-    objective     = "TAX HARVESTING";
-    objectiveCls  = "cra-obj-tax";
-    objectiveDesc = "Primary driver: exit tax-inefficient positions to improve after-tax returns.";
-  } else if (lowConv >= majorityThreshold) {
-    objective     = "OPPORTUNITY COST REDUCTION";
-    objectiveCls  = "cra-obj-oppcost";
-    objectiveDesc = "Primary driver: replace passive exposure with higher-conviction equity candidates.";
-  } else {
-    objective     = "MIXED OBJECTIVE";
-    objectiveCls  = "cra-obj-mixed";
-    objectiveDesc = "Multiple drivers: signal deterioration, allocation repair, and/or tax considerations present.";
-  }
-
-  const catChips = [
-    sigDet  ? `<span class="cra-obj-chip">Signal Det. ×${sigDet}</span>`  : "",
-    stratEx ? `<span class="cra-obj-chip">Strategic ×${stratEx}</span>`   : "",
-    owRed   ? `<span class="cra-obj-chip">OW Reduction ×${owRed}</span>`  : "",
-    taxExit ? `<span class="cra-obj-chip">Tax Exit ×${taxExit}</span>`    : "",
-    lowConv ? `<span class="cra-obj-chip">Opp. Cost ×${lowConv}</span>`   : "",
-  ].filter(Boolean).join("");
-
-  return `<div class="cra-rotation-objective-banner ${objectiveCls}">
-    <div class="cra-obj-left">
-      <div class="cra-obj-label">Rotation Objective</div>
-      <div class="cra-obj-value">${escHtml(objective)}</div>
-    </div>
-    <div class="cra-obj-right">
-      <div class="cra-obj-desc">${escHtml(objectiveDesc)}</div>
-      <div class="cra-obj-chips">${catChips}</div>
-    </div>
-  </div>`;
-}
-
-// ── PAP-EXPLAIN-01: Rotation Summary Panel (Source vs Target Clarity) ────────
-// Display-only. No changes to CRA, PAP, UCF, CW-DAS, or ESS algorithms.
-// Addresses operator confusion between rotation sources (SELL) and targets (BUY).
-function _craBuildRotationSummaryPanel(p) {
-  const sources = (p.sources || []).filter(s => !s.blocked_by_policy && s.priority !== "DEFER");
-  const deployments = (p.deployments || []);
-  if (!sources.length && !deployments.length) return "";
-
-  const totalSell = sources.reduce((s, x) => s + (x.estimated_proceeds || 0), 0);
-  const totalBuy  = deployments.reduce((s, x) => s + (x.suggested_amount  || 0), 0);
-
-  const sellItems = sources.slice(0, 6).map(s =>
-    `<div class="cra-rs-item cra-rs-sell">
-      <span class="cra-rs-sym">${escHtml(s.symbol)}</span>
-      <span class="cra-rs-amt">${_craFmt(s.estimated_proceeds)}</span>
-      <span class="cra-rs-cat">${escHtml((s.category || "").replace(/_/g, " "))}</span>
-    </div>`
-  ).join("") + (sources.length > 6 ? `<div class="cra-rs-more">+${sources.length - 6} more</div>` : "");
-
-  const buyItems = deployments.slice(0, 6).map(t =>
-    `<div class="cra-rs-item cra-rs-buy">
-      <span class="cra-rs-sym">${escHtml(t.symbol)}</span>
-      <span class="cra-rs-amt">${_craFmt(t.suggested_amount)}</span>
-      <span class="cra-rs-tier">${escHtml((t.narrative_tier || "").replace(/_/g, " "))}</span>
-    </div>`
-  ).join("") + (deployments.length > 6 ? `<div class="cra-rs-more">+${deployments.length - 6} more</div>` : "");
-
-  const net = totalBuy - totalSell;
-  const netStr = `${net >= 0 ? "+" : ""}${_craFmt(Math.abs(net))} ${net >= 0 ? "net buy" : "net sell"}`;
-
-  return `<div class="cra-rotation-summary-panel">
-    <div class="cra-rs-header">
-      <span class="cra-rs-title">Rotation Summary</span>
-      <span class="cra-rs-hint">Capital flows at a glance — sources are SOLD, targets are BOUGHT</span>
-    </div>
-    <div class="cra-rs-body">
-      <div class="cra-rs-col">
-        <div class="cra-rs-col-header cra-rs-sell-header">
-          SELL <span class="cra-rs-col-total">${_craFmt(totalSell)}</span>
-          <span class="cra-rs-col-count">${sources.length} position${sources.length !== 1 ? "s" : ""}</span>
-        </div>
-        <div class="cra-rs-items">${sellItems || '<span class="cra-rs-empty">No sell candidates</span>'}</div>
-      </div>
-      <div class="cra-rs-arrow-col">
-        <div class="cra-rs-arrow">→</div>
-        <div class="cra-rs-net">${escHtml(netStr)}</div>
-      </div>
-      <div class="cra-rs-col">
-        <div class="cra-rs-col-header cra-rs-buy-header">
-          BUY <span class="cra-rs-col-total">${_craFmt(totalBuy)}</span>
-          <span class="cra-rs-col-count">${deployments.length} position${deployments.length !== 1 ? "s" : ""}</span>
-        </div>
-        <div class="cra-rs-items">${buyItems || '<span class="cra-rs-empty">No buy targets</span>'}</div>
-      </div>
-    </div>
-  </div>`;
-}
-
-// ── Column 1: Capital Sources ────────────────────────────────────────────────
-
-function _craBuildSourcesCol(p) {
-  const sources = p.sources || [];
-  const includedPool = sources
-    .filter(s => !s.blocked_by_policy && s.priority !== "DEFER")
-    .reduce((sum, s) => sum + (s.estimated_proceeds || 0), 0);
-
-  const poolHtml = `<div class="cra-pool-strip">
-    <div>
-      <div class="cra-pool-val">${_craFmt(includedPool)}</div>
-      <div class="cra-pool-lbl">Est. Capital Pool (${sources.filter(s => !s.blocked_by_policy && s.priority !== "DEFER").length} sources)</div>
-    </div>
-    <div>
-      <div class="cra-pool-val" style="color:var(--muted)">${_craFmt(p.portfolio_mv)}</div>
-      <div class="cra-pool-lbl">Portfolio MV</div>
-    </div>
-  </div>`;
-
-  // ── CRA-EXPLAIN-02: Intent-based capital metrics ──────────────────────────
-  const intentSummary = p.source_intent_summary || {};
-  const intentMetricOrder = [
-    ["THESIS_EXIT",           "Thesis Exit Capital"],
-    ["THESIS_TRIM",           "Thesis Trim Capital"],
-    ["TAX_FUNDING_SOURCE",    "Tax Funding Capital"],
-    ["OVERWEIGHT_REPAIR",     "Overweight Repair Capital"],
-    ["PORTFOLIO_REALLOCATION","Reallocation Capital"],
-  ];
-  const intentMetricItems = intentMetricOrder
-    .filter(([k]) => intentSummary[k] && intentSummary[k].count > 0)
-    .map(([k, label]) => {
-      const meta = _RQ_INTENT_META[k] || { badge: k, cls: "" };
-      const b = intentSummary[k];
-      return `<div class="cra-intent-metric">
-        <span class="rq-intent-badge ${meta.cls}">${escHtml(meta.badge)}</span>
-        <span class="cra-intent-metric-val">${_craFmt(b.capital)}</span>
-        <span class="cra-intent-metric-count">${b.count} pos.</span>
-      </div>`;
-    }).join("");
-  const intentMetricsHtml = intentMetricItems
-    ? `<div class="cra-intent-metrics-strip">
-        <div class="cra-intent-metrics-title">Capital by Reduction Intent</div>
-        ${intentMetricItems}
-      </div>`
-    : "";
-
-  const catGroupsHtml = _CRA_CATEGORIES.map(cat => {
-    const catSources = sources.filter(s => s.category === cat.key);
-    const catId = `cra-cat-${cat.key.toLowerCase()}`;
-    const count = catSources.length;
-
-    const cardsHtml = count > 0
-      ? catSources.map(s => _craBuildSourceCard(s)).join("")
-      : `<div class="cra-empty-cat">No ${cat.label.toLowerCase()} candidates identified.</div>`;
-
-    return `<div class="cra-cat-group" id="${catId}">
-      <div class="cra-cat-header" onclick="_craCatToggle(document.getElementById('${catId}'))">
-        <span class="cra-cat-num">${cat.num}</span>
-        <span class="cra-cat-label">${escHtml(cat.label)}</span>
-        <span class="cra-cat-count">${count} position${count !== 1 ? "s" : ""}</span>
-        <span style="font-size:0.7rem;color:var(--muted);margin-left:4px">▾</span>
-      </div>
-      <div class="cra-cat-body">${cardsHtml}</div>
-    </div>`;
-  }).join("");
-
-  return `<div>
-    <div class="cra-col-header">
-      <span class="cra-col-header-role cra-role-source-hdr">SELL</span>
-      Capital Sources — Positions to Reduce
-    </div>
-    <div class="cra-col-sub-hint">These positions are being REDUCED to raise capital. Their signal intelligence appears below for context but does not affect their source classification.</div>
-    <div class="cra-col-body">
-      ${poolHtml}
-      ${intentMetricsHtml}
-      ${catGroupsHtml}
-    </div>
-  </div>`;
-}
-
-function _craBuildSourceCard(s) {
-  const blocked = s.blocked_by_policy;
-  const cardClass = blocked ? "cra-source-card cra-blocked" : "cra-source-card";
-
-  // PAP-EXPLAIN-01: Explicit ROTATION_SOURCE role badge
-  const roleBadge = `<span class="cra-role-badge cra-role-source" title="This position is being REDUCED to fund higher-conviction purchases">SELL ↑ SOURCE</span>`;
-
-  // CRA-EXPLAIN-02: Source intent badge and explanatory note
-  const intentMeta = _RQ_INTENT_META[s.source_intent] || null;
-  const intentBadge = intentMeta
-    ? `<span class="rq-intent-badge ${intentMeta.cls}">${escHtml(intentMeta.badge)}</span>`
-    : "";
-  const intentNote = (intentMeta && intentMeta.explanation)
-    ? `<div class="cra-intent-note">${escHtml(intentMeta.explanation)}</div>`
-    : "";
-
-  // Priority badge
-  const priClass = `cra-pri-${s.priority || "LOW"}`;
-  const priBadge = `<span class="cra-pri ${priClass}">${escHtml(s.priority || "")}</span>`;
-
-  // Tax badge
-  const taxBadge = s.tax_bucket
-    ? `<span class="cra-tax-badge cra-tax-${s.tax_bucket}">Tax ${escHtml(s.tax_bucket)}</span>`
-    : `<span class="cra-tax-badge cra-tax-unknown">Tax ?</span>`;
-
-  // Policy badge
-  let policyBadge = "";
-  if (s.policy_type === "DO_NOT_SELL") {
-    policyBadge = `<span class="cra-policy-badge cra-policy-DNS">🔒 DO NOT SELL</span>`;
-  } else if (s.policy_type === "SELL_LAST") {
-    policyBadge = `<span class="cra-policy-badge cra-policy-SL">⏸ SELL LAST</span>`;
-  } else if (s.policy_type === "CORE_ANCHOR") {
-    policyBadge = `<span class="cra-policy-badge cra-policy-CA">⚓ CORE ANCHOR</span>`;
-  }
-
-  // Monitor-only badge for blocked
-  const monitorBadge = blocked
-    ? `<span class="cra-monitor-badge">MONITOR ONLY</span>`
-    : "";
-
-  // Proceeds row
-  const proceedsHtml = !blocked
-    ? `<span class="cra-proceeds-val">${_craFmt(s.estimated_proceeds)}</span>
-       <span style="color:var(--muted)"> of ${_craFmt(s.current_value_usd)} (${Math.round((s.sizing_pct || 0) * 100)}%)</span>`
-    : `<span style="color:var(--muted);font-style:italic">Blocked — not in capital pool</span>`;
-
-  const reductionMeta = (typeof s.reduction_score === "number" && s.reduction_score > 0)
-    ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:2px">
-         Reduction Score: <strong>${Number(s.reduction_score).toFixed(1)}</strong>
-         ${s.reduction_reason ? ` · ${escHtml(s.reduction_reason)}` : ""}
-       </div>
-       ${s.policy_alignment_reason ? `<div style="font-size:0.71rem;color:#5b4f36;margin-top:2px">Policy: ${escHtml(s.policy_alignment_reason)}</div>` : ""}`
-    : "";
-
-  const _normalizeReason = (value) => String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
-  const evidenceSummary = String(s.evidence_summary || "").trim();
-  const showEvidenceSummary = evidenceSummary && _normalizeReason(evidenceSummary) !== _normalizeReason(s.reduction_reason || "");
-
-  // Tax note
-  const taxNote = s.tax_annotation
-    ? `<div class="cra-tax-note">${escHtml(s.tax_annotation)}</div>`
-    : "";
-
-  // Include / Skip checkbox (disabled for blocked)
-  const checkboxHtml = blocked
-    ? `<label class="cra-check-label" style="opacity:0.5;cursor:not-allowed;">
-        <input type="checkbox" disabled> Include in rotation
-       </label>`
-    : `<label class="cra-check-label">
-        <input type="checkbox" class="cra-check-include"
-               id="cra-inc-${escHtml(s.symbol)}"
-               checked
-               onchange="_craUpdatePool()">
-        Include
-       </label>
-       <label class="cra-check-label">
-        <input type="checkbox" class="cra-check-skip"
-               id="cra-skp-${escHtml(s.symbol)}"
-               onchange="_craSkipToggle('${escHtml(s.symbol)}')">
-        Skip
-       </label>`;
-
-  // Review required indicator
-  const reviewHtml = s.operator_review_required && !blocked
-    ? `<span style="font-size:0.7rem;color:#856404;font-weight:700">⚠ Review required</span>`
-    : "";
-
-  return `<div class="${cardClass}" id="cra-src-${escHtml(s.symbol)}">
-    <div class="cra-source-row1">
-      ${roleBadge}
-      <span class="cra-sym">${escHtml(s.symbol)}</span>
-      ${priBadge}
-      ${taxBadge}
-      ${intentBadge}
-      ${policyBadge}
-      ${monitorBadge}
-      ${reviewHtml}
-    </div>
-    <div class="cra-source-row2">${proceedsHtml}</div>
-    ${reductionMeta}
-    ${intentNote}
-    ${showEvidenceSummary ? `<div class="cra-source-evidence">${escHtml(evidenceSummary)}</div>` : ""}
-    ${taxNote}
-    <div class="cra-source-actions">${checkboxHtml}</div>
-  </div>`;
-}
-
-function _craCatToggle(groupEl) {
-  if (!groupEl) return;
-  groupEl.classList.toggle("cra-cat-expanded");
-}
-
-function _craSkipToggle(symbol) {
-  const skipCb  = document.getElementById(`cra-skp-${symbol}`);
-  const inclCb  = document.getElementById(`cra-inc-${symbol}`);
-  if (!skipCb || !inclCb) return;
-  if (skipCb.checked) inclCb.checked = false;
-  _craUpdatePool();
-}
-
-function _craUpdatePool() {
-  if (!_craProposal) return;
-  const sources = _craProposal.sources || [];
-  let pool = 0;
-  for (const s of sources) {
-    if (s.blocked_by_policy || s.priority === "DEFER") continue;
-    const inclCb = document.getElementById(`cra-inc-${s.symbol}`);
-    if (inclCb && inclCb.checked) pool += (s.estimated_proceeds || 0);
-  }
-  // Update pool display in column 1
-  const poolValEls = document.querySelectorAll(".cra-pool-val");
-  if (poolValEls.length > 0) poolValEls[0].textContent = _craFmt(pool);
-
-  // Update rotation map column pool summary
-  const poolSummaryEl = document.getElementById("cra-rotation-pool-val");
-  if (poolSummaryEl) poolSummaryEl.textContent = _craFmt(pool);
-}
-
-// ── Column 2: Rotation Map ────────────────────────────────────────────────────
-
-function _craBuildRotationMapCol(p) {
-  const pool = p.total_capital_pool || 0;
-  const deployments = p.deployments || [];
-
-  const poolSummaryHtml = `<div class="cra-pool-summary">
-    <div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Capital Pool → Deployment Queue</div>
-    <div class="cra-pool-summary-val" id="cra-rotation-pool-val">${_craFmt(pool)}</div>
-    <div style="font-size:0.7rem;color:var(--muted);margin-top:2px">
-      ${deployments.length} target${deployments.length !== 1 ? "s" : ""} · CW-DAS rank order preserved
-    </div>
-  </div>`;
-
-  const arrowHtml = `<div class="cra-rotation-arrow">↓</div>`;
-
-  let targetsHtml = "";
-  if (deployments.length === 0) {
-    targetsHtml = `<div class="cra-no-targets">No deployment targets allocated. Capital pool may be below minimum lot size, or all queue candidates are at capacity.</div>`;
-  } else {
-    targetsHtml = deployments.map(t => _craBuildTargetCard(t)).join("");
-  }
-
-  // Remaining cash note
-  const totalSuggested = deployments.reduce((s, t) => s + (t.suggested_amount || 0), 0);
-  const remaining = pool - totalSuggested;
-  const remainderHtml = remaining > 1
-    ? `<div style="padding:8px 12px;font-size:0.74rem;color:var(--muted);border-top:1px solid var(--border);background:#fafafa;">
-        Unallocated: ${_craFmt(remaining)}
-       </div>`
-    : "";
-
-  return `<div>
-    <div class="cra-col-header">
-      <span class="cra-col-header-role cra-role-target-hdr">BUY</span>
-      Rotation Map — Proceeds → Targets
-    </div>
-    <div class="cra-col-sub-hint">These positions are being PURCHASED with proceeds from capital sources.</div>
-    <div class="cra-col-body">
-      ${poolSummaryHtml}
-      ${arrowHtml}
-      ${targetsHtml}
-      ${remainderHtml}
-    </div>
-  </div>`;
-}
-
-function _craBuildTargetCard(t) {
-  const tierShort = t.narrative_tier === "CORE_CONVICTION_LEADER" ? "CCL"
-    : t.narrative_tier === "HIGH_CONVICTION_ANCHOR" ? "HCA"
-    : (t.narrative_tier || "—").replace(/_/g, " ");
-  const tierClass = `cra-tier-${tierShort}`;
-  const rankClass = t.rank === 1 ? "cra-target-rank cra-target-rank-1" : "cra-target-rank";
-  const dasScore = t.deployment_score != null
-    ? parseFloat(t.deployment_score).toFixed(1)
-    : "—";
-
-  const curWt  = t.current_weight_pct  != null ? parseFloat(t.current_weight_pct).toFixed(2)  + "%" : "—";
-  const projWt = t.projected_weight_pct != null ? parseFloat(t.projected_weight_pct).toFixed(2) + "%" : "—";
-
-  // PAP-EXPLAIN-01: Explicit ROTATION_TARGET role badge + funding clarity
-  const roleBadge = `<span class="cra-role-badge cra-role-target" title="This position is being PURCHASED using proceeds from capital sources">BUY ↓ TARGET</span>`;
-
-  const fundingHtml = t.funding_source_symbol
-    ? `<div class="cra-target-funding">
-         <span class="cra-target-funding-label">Funded by selling:</span>
-         <strong class="cra-target-funding-sym">${escHtml(t.funding_source_symbol)}</strong>
-         <span class="cra-target-funding-cat">(${escHtml((t.funding_source_category || "").replace(/_/g, " "))})</span>
-         ${Array.isArray(t.funding_source_alternatives) && t.funding_source_alternatives.length
-           ? `<span class="cra-target-funding-alt"> · Alternatives: ${escHtml(t.funding_source_alternatives.slice(0, 3).map(a => a.split(" ")[0]).join(", "))}</span>`
-           : ""}
-       </div>
-       ${t.funding_source_reason ? `<div style="font-size:0.70rem;color:var(--muted);margin-top:2px">${escHtml(t.funding_source_reason)}</div>` : ""}`
-    : "";
-
-  return `<div class="cra-target-card">
-    <div class="cra-target-row1">
-      ${roleBadge}
-      <span class="${rankClass}">#${t.rank}</span>
-      <span class="cra-target-sym">${escHtml(t.symbol)}</span>
-      <span class="${tierClass}">${tierShort}</span>
-      <span class="cra-das-score">DAS ${dasScore}</span>
-    </div>
-    <div class="cra-target-row2">
-      <span class="cra-target-amount">${_craFmt(t.suggested_amount)}</span>
-      &nbsp;·&nbsp;
-      <span>${curWt} <span class="cra-weight-arrow">→</span> ${projWt}</span>
-      &nbsp;·&nbsp;
-      <span style="font-size:0.7rem">${escHtml(t.allocation_node || "")}</span>
-    </div>
-    ${t.allocation_note ? `<div style="font-size:0.71rem;color:var(--muted);margin-top:2px">${escHtml(t.allocation_note)}</div>` : ""}
-    ${fundingHtml}
-  </div>`;
-}
-
-// ── Column 3: Impact Summary ─────────────────────────────────────────────────
-
-function _craBuildImpactCol(p) {
-  const imp = p.impact || {};
-
-  const fmtScore = v => v != null ? parseFloat(v).toFixed(4) : "—";
-  const fmtPct   = v => v != null ? parseFloat(v).toFixed(2) + "%" : "—";
-
-  const alignBefore = fmtScore(imp.alignment_score_before);
-  const alignAfter  = fmtScore(imp.alignment_score_after);
-  const alignDelta  = imp.alignment_delta != null ? parseFloat(imp.alignment_delta) : null;
-  const alignDeltaStr = alignDelta != null
-    ? (alignDelta >= 0 ? "+" : "") + alignDelta.toFixed(4)
-    : "—";
-  const alignDeltaCls = alignDelta == null ? "cra-delta-neutral"
-    : alignDelta > 0 ? "cra-delta-pos" : alignDelta < 0 ? "cra-delta-neg" : "cra-delta-neutral";
-
-  const concBefore = fmtPct(imp.concentration_before);
-  const concAfter  = fmtPct(imp.concentration_after);
-  const concDelta  = imp.concentration_delta != null ? parseFloat(imp.concentration_delta) : null;
-  const concDeltaStr = concDelta != null
-    ? (concDelta >= 0 ? "+" : "") + concDelta.toFixed(2) + "%"
-    : "—";
-  const concDeltaCls = concDelta == null ? "cra-delta-neutral"
-    : concDelta < 0 ? "cra-delta-pos" : concDelta > 0 ? "cra-delta-neg" : "cra-delta-neutral";
-
-  // Overweight nodes
-  const owBefore  = (imp.overweight_nodes_before || []);
-  const owAfter   = (imp.overweight_nodes_after  || []);
-  const resolved  = owBefore.filter(n => !owAfter.includes(n));
-  const remaining = owAfter;
-
-  const owBeforeHtml = owBefore.length > 0
-    ? owBefore.map(n => {
-        const isResolved = !owAfter.includes(n);
-        return `<div class="${isResolved ? "cra-node-resolved" : "cra-node-remaining"}">
-          ${isResolved ? "✓" : "•"} ${escHtml(_craShortNode(n))}
-        </div>`;
-      }).join("")
-    : `<div style="color:var(--muted);font-style:italic;font-size:0.78rem">None</div>`;
-
-  const owAfterHtml = owAfter.length === 0
-    ? `<div class="cra-node-resolved" style="font-weight:700">✓ All overweight nodes resolved</div>`
-    : owAfter.map(n => `<div class="cra-node-remaining">• ${escHtml(_craShortNode(n))}</div>`).join("");
-
-  const narrativeHtml = imp.impact_narrative
-    ? `<div class="cra-narrative">${escHtml(imp.impact_narrative)}</div>`
-    : "";
-
-  return `<div>
-    <div class="cra-col-header">Portfolio Impact — Estimate</div>
-    <div class="cra-col-body">
-      <div class="cra-impact-card">
-        <div class="cra-estimate-banner">⚠ Estimate Only — Full Re-Analysis Required for Precision</div>
-        <span class="cra-impact-section-lbl">Alignment Score</span>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">Before</span>
-          <span class="cra-impact-vals">${alignBefore}</span>
-        </div>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">After (est.)</span>
-          <span class="cra-impact-vals">${alignAfter}</span>
-        </div>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">Delta</span>
-          <span class="cra-impact-vals ${alignDeltaCls}">${alignDeltaStr}</span>
-        </div>
-      </div>
-      <div class="cra-impact-card">
-        <span class="cra-impact-section-lbl">Concentration (top-5 weight)</span>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">Before</span>
-          <span class="cra-impact-vals">${concBefore}</span>
-        </div>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">After (est.)</span>
-          <span class="cra-impact-vals">${concAfter}</span>
-        </div>
-        <div class="cra-impact-row">
-          <span class="cra-impact-lbl">Delta</span>
-          <span class="cra-impact-vals ${concDeltaCls}">${concDeltaStr}</span>
-        </div>
-      </div>
-      <div class="cra-impact-card">
-        <span class="cra-impact-section-lbl">Overweight Nodes — Before</span>
-        <div class="cra-nodes-list">${owBeforeHtml}</div>
-      </div>
-      <div class="cra-impact-card">
-        <span class="cra-impact-section-lbl">Overweight Nodes — After Rotation</span>
-        <div class="cra-nodes-list">${owAfterHtml}</div>
-      </div>
-    </div>
-    ${narrativeHtml}
-  </div>`;
-}
-
-// ── Utilities ─────────────────────────────────────────────────────────────────
-
-function _craFmt(v) {
-  const n = parseFloat(v || 0);
-  if (isNaN(n)) return "—";
-  if (Math.abs(n) >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
-  if (Math.abs(n) >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
-  return "$" + n.toFixed(0);
-}
-
-function _craShortNode(node) {
-  // EQUITIES.US.LARGE → US·LARGE
-  return (node || "").replace(/^EQUITIES\./, "").replace(/\./g, "·");
-}
-
-// ── CII Methodology Panel ─────────────────────────────────────────────────────
-function _openCIIModal() {
-  const overlay = document.getElementById("ciiModalOverlay");
-  if (overlay) {
-    overlay.classList.add("open");
-    document.body.style.overflow = "hidden";
-  }
-}
-
-function _closeCIIModal(evt) {
-  // Close on overlay click (backdrop) or explicit call; don't close on modal content click
-  if (evt && evt.target !== document.getElementById("ciiModalOverlay")) return;
-  const overlay = document.getElementById("ciiModalOverlay");
-  if (overlay) {
-    overlay.classList.remove("open");
-    document.body.style.overflow = "";
-  }
-}
-
-// Keyboard close (Escape key)
-document.addEventListener("keydown", function(e) {
-  if (e.key === "Escape") _closeCIIModal();
-});
-
 function escHtml(s) {
   return String(s || "")
     .replace(/&/g, "&amp;")
@@ -10064,217 +3915,16 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function _parseDisplayNumber(v) {
-  if (v == null) return { state: "missing", value: null };
-  if (typeof v === "string" && !v.trim()) return { state: "missing", value: null };
-  const n = Number(v);
-  if (!Number.isFinite(n)) return { state: "invalid", value: null };
-  return { state: "value", value: n };
-}
-
-function _fmtPctDisplay(v, opts = {}) {
-  const digits = Number.isInteger(opts.digits) ? opts.digits : 1;
-  const tinyThreshold = (opts.tinyThreshold != null) ? Number(opts.tinyThreshold) : Math.pow(10, -digits);
-  const parsed = _parseDisplayNumber(v);
-  if (parsed.state === "missing") return "—";
-  if (parsed.state === "invalid") return "N/A";
-  const n = parsed.value;
-  const absN = Math.abs(n);
-  if (absN > 0 && absN < tinyThreshold) {
-    const tiny = tinyThreshold.toFixed(digits);
-    return n < 0 ? `>-${tiny}%` : `<${tiny}%`;
-  }
-  return `${n.toFixed(digits)}%`;
-}
-
 function pct(v) {
-  return _fmtPctDisplay(v, { digits: 1, tinyThreshold: 0.1 });
+  const n = parseFloat(v || 0);
+  if (isNaN(n)) return "—";
+  return n.toFixed(1) + "%";
 }
 
 function formatMV(v) {
-  const parsed = _parseDisplayNumber(v);
-  if (parsed.state === "missing") return "—";
-  if (parsed.state === "invalid") return "N/A";
-  const n = parsed.value;
-  if (Math.abs(n) > 0 && Math.abs(n) < 1) return n < 0 ? ">-$1" : "<$1";
-  if (Math.abs(n) >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
-  if (Math.abs(n) >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
+  const n = parseFloat(v || 0);
+  if (isNaN(n)) return "—";
+  if (n >= 1_000_000) return "$" + (n / 1_000_000).toFixed(2) + "M";
+  if (n >= 1_000)     return "$" + (n / 1_000).toFixed(1) + "K";
   return "$" + n.toFixed(0);
-}
-
-// ══ DISLOCATION-07: Directional Accuracy ══════════════════════════════════════
-
-async function _loadDirectionalCache() {
-  try {
-    const resp = await fetch("/api/predictive/directional-accuracy");
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (data && data.patterns) {
-      _directionalCache = { _meta: data };
-      for (const p of data.patterns) {
-        if (p.pattern) _directionalCache[p.pattern] = p;
-      }
-    }
-  } catch (_) { /* non-blocking */ }
-}
-
-async function _refreshDirectional() {
-  const content = document.getElementById("scrDirectionalContent");
-  if (content) content.innerHTML = `<div style="color:var(--muted);font-size:0.82rem"><span class="spinner"></span> Refreshing directional analysis…</div>`;
-  try {
-    await fetch("/api/predictive/directional-refresh", { method: "POST" });
-    _directionalCache = null;
-    await _loadDirectionalCache();
-    _renderDirectionalPanel();
-  } catch (e) {
-    if (content) content.innerHTML = `<div style="color:var(--sev-high);font-size:0.82rem">Refresh failed: ${escHtml(String(e))}</div>`;
-  }
-}
-
-function _reliabilityBadge(cls) {
-  const map = {
-    VERY_STRONG:       "diso7-very-strong",
-    STRONG:            "diso7-strong",
-    MODERATE:          "diso7-moderate",
-    WEAK:              "diso7-weak",
-    INSUFFICIENT_DATA: "diso7-insufficient",
-  };
-  return `<span class="diso7-badge ${map[cls] || ""}">${cls.replace(/_/g, " ")}</span>`;
-}
-
-function _renderDirectionalPanel() {
-  const el = document.getElementById("scrDirectionalContent");
-  if (!el || !_directionalCache) return;
-
-  const meta    = _directionalCache._meta || {};
-  const overall = meta.overall || {};
-  const comp    = meta.comparative || {};
-  const patterns = (meta.patterns || []).filter(p => p.n > 0);
-
-  if (!patterns.length) {
-    el.innerHTML = `<div style="color:var(--muted);font-size:0.82rem;padding:8px 0">No directional data — run refresh to compute.</div>`;
-    return;
-  }
-
-  // ── Overview strip ─────────────────────────────────────────────────────────
-  const hitRate = overall.hit_rate;
-  const bal     = overall.balanced_accuracy;
-  const verdict = comp.verdict || "";
-  const verdictCls = verdict === "DIRECTIONAL" ? "diso7-verdict-strong"
-                   : verdict === "DIRECTIONAL_MARGINAL" ? "diso7-verdict-moderate"
-                   : "diso7-verdict-weak";
-
-  const ovHtml = `<div class="scr-alpha-overview" style="flex-wrap:wrap;gap:8px;margin-bottom:14px">
-    <div class="scr-ov-card ${hitRate != null && hitRate >= 60 ? "scr-ov-accent" : ""}">
-      <div class="scr-ov-val" style="font-size:1.4rem">${hitRate != null ? hitRate + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Overall Hit Rate</div>
-    </div>
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${bal != null ? bal + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Balanced Accuracy</div>
-    </div>
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${overall.precision != null ? overall.precision + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Precision</div>
-    </div>
-    <div class="scr-ov-card">
-      <div class="scr-ov-val">${overall.recall != null ? overall.recall + "%" : "—"}</div>
-      <div class="scr-ov-lbl">Recall</div>
-    </div>
-    <div class="scr-ov-card" style="flex:1 1 260px">
-      <div class="diso7-verdict-box ${verdictCls}">
-        <div class="diso7-verdict-label">Verdict: ${escHtml(verdict.replace(/_/g, " "))}</div>
-        <div class="diso7-verdict-text">${escHtml(comp.verdict_label || "")}</div>
-      </div>
-    </div>
-  </div>`;
-
-  // ── Rel distribution ───────────────────────────────────────────────────────
-  const relDist = meta.reliability_distribution || {};
-  const relOrder = ["VERY_STRONG", "STRONG", "MODERATE", "WEAK", "INSUFFICIENT_DATA"];
-  const relStripHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-    ${relOrder.filter(r => relDist[r]).map(r =>
-      `<div style="display:flex;align-items:center;gap:4px">
-        ${_reliabilityBadge(r)}
-        <span style="font-size:0.76rem;color:var(--muted)">${relDist[r]} pattern${relDist[r] > 1 ? "s" : ""}</span>
-      </div>`
-    ).join("")}
-  </div>`;
-
-  // ── Pattern table ──────────────────────────────────────────────────────────
-  const tableRows = patterns.map(p => {
-    const meta2 = _SCR_PATTERN_LABELS[p.pattern] || { short: (p.pattern || "").replace(/_/g, " "), cls: "" };
-    const hrCls = p.hit_rate != null && p.hit_rate >= 60 ? "scr-pct-good"
-                : p.hit_rate != null && p.hit_rate < 50  ? "scr-pct-bad" : "";
-    const cm = p.confusion_matrix || {};
-    // Directional rows are pattern-level aggregates; optional symbol panels are unavailable here.
-    const profileHtml = "";
-    const rqAlphaHtml = "";
-    const actionLatencyPanelHtml = "";
-    const dilPanelHtml = "";
-    const rqThesisPanelHtml = "";
-    const dirBadge = p.predicted_direction === "POSITIVE"
-      ? `<span style="color:#1a7f37;font-weight:700">▲ POS</span>`
-      : p.predicted_direction === "NEGATIVE"
-      ? `<span style="color:#d1242f;font-weight:700">▼ NEG</span>`
-      : `<span style="color:#636c76">→ NEU</span>`;
-    return `<tr>
-      <td><span class="scr-pattern-chip ${meta2.cls}">${escHtml(meta2.short)}</span></td>
-      <td style="text-align:right">${p.n || 0}</td>
-      <td style="text-align:center">${dirBadge}</td>
-      <td style="text-align:right"><span class="${hrCls}" style="font-weight:700">${p.hit_rate != null ? p.hit_rate + "%" : "—"}</span></td>
-      <td style="text-align:right">${p.precision != null ? p.precision + "%" : "—"}</td>
-      <td style="text-align:right">${p.recall != null ? p.recall + "%" : "—"}</td>
-      <td style="text-align:right">${p.balanced_accuracy != null ? p.balanced_accuracy + "%" : "—"}</td>
-      <td style="text-align:right;font-size:0.72rem">${p.false_positive_rate != null ? p.false_positive_rate + "%" : "—"}</td>
-      <td style="text-align:right;font-size:0.72rem">${p.false_negative_rate != null ? p.false_negative_rate + "%" : "—"}</td>
-      <td style="text-align:right;font-size:0.72rem">${cm.tp || 0}/${cm.fp || 0}/${cm.tn || 0}/${cm.fn || 0}</td>
-      <td>${_reliabilityBadge(p.reliability || "INSUFFICIENT_DATA")}</td>
-      <td class="rq-profile-cell" colspan="4">${profileHtml}${rqAlphaHtml}${actionLatencyPanelHtml}${dilPanelHtml}${rqThesisPanelHtml}</td>
-    </tr>`;
-  }).join("");
-
-  const tableHtml = `<div style="overflow-x:auto">
-    <table class="scr-table">
-      <thead><tr>
-        <th>Pattern</th><th style="text-align:right">N</th>
-        <th style="text-align:center">Pred Dir</th>
-        <th style="text-align:right">Hit Rate</th>
-        <th style="text-align:right">Precision</th>
-        <th style="text-align:right">Recall</th>
-        <th style="text-align:right">Bal Acc</th>
-        <th style="text-align:right">FPR</th>
-        <th style="text-align:right">FNR</th>
-        <th style="text-align:right">TP/FP/TN/FN</th>
-        <th>Reliability</th>
-      </tr></thead>
-      <tbody>${tableRows}</tbody>
-    </table>
-    <div style="font-size:0.68rem;color:var(--muted);margin-top:6px">
-      Hit Rate = predicted direction matches actual direction.
-      Positive class = excess return &gt; +0.5pp vs universe median.
-      Balanced Accuracy = (TPR + TNR) / 2. Research only.
-    </div>
-  </div>`;
-
-  // ── Part G: Comparative box ────────────────────────────────────────────────
-  const avgHR  = comp.avg_directional_hit_rate;
-  const avgMAE = comp.avg_magnitude_mae_pp;
-  const compHtml = `<div class="diso7-compare-box" style="margin-top:14px">
-    <div class="scr-section-header" style="font-size:0.76rem;margin-bottom:8px">Part G — Magnitude vs Directional Accuracy</div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap">
-      <div class="diso7-compare-card">
-        <div class="diso7-compare-label">Magnitude Forecasting</div>
-        <div class="diso7-compare-val diso7-compare-bad">MAE ${avgMAE != null ? avgMAE + "pp" : "—"}</div>
-        <div class="diso7-compare-note">Return magnitude predictions are unreliable (DISLOCATION-06)</div>
-      </div>
-      <div class="diso7-compare-card ${avgHR != null && avgHR >= 60 ? "diso7-compare-good-box" : ""}">
-        <div class="diso7-compare-label">Directional Forecasting</div>
-        <div class="diso7-compare-val ${avgHR != null && avgHR >= 60 ? "diso7-compare-good" : avgHR != null && avgHR >= 55 ? "" : "diso7-compare-bad"}">${avgHR != null ? avgHR + "% hit rate" : "—"}</div>
-        <div class="diso7-compare-note">${escHtml(comp.verdict_label || "")}</div>
-      </div>
-    </div>
-  </div>`;
-
-  el.innerHTML = ovHtml + relStripHtml + tableHtml + compHtml;
 }

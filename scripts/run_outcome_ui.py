@@ -7,6 +7,7 @@ API endpoints:
   GET  /api/signal-status          → JSON: last sourced_date and staleness per provider
   POST /api/signal-refresh         → launch scripts/refresh_signals.py as background process
   GET  /api/signal-refresh/status  → JSON: {"running": true/false}
+    GET  /api/market-regime-guardrail/latest → display-only market regime posture
   POST /api/portfolio/analyze      → ingest + enrich + align portfolio CSV; returns full analysis
   GET  /api/portfolio/runs         → list all completed portfolio analysis runs
   GET  /api/portfolio/runs/{id}    → load a specific analysis run by run_id
@@ -46,12 +47,171 @@ _REFRESH_REPORT_PATH = _REPO_ROOT / "data" / "current" / "last_signal_refresh_re
 _refresh_proc: subprocess.Popen | None = None
 _refresh_last_report: dict | None = None
 _refresh_last_exit_code: int | None = None
+_refresh_requested_intent: str | None = None
+_refresh_resolved_intent: str | None = None
+_refresh_scope_summary: dict | None = None
+_refresh_scope_samples: dict | None = None
+_refresh_provider_planned_totals: dict[str, int | None] = {}
+_refresh_started_at_utc: str | None = None
+_refresh_completed_at_utc: str | None = None
 
 # On-demand score fetch jobs keyed by symbol (uppercase)
 _fetch_jobs: dict[str, dict] = {}
 _fetch_lock = threading.Lock()
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
+
+
+def _resolve_refresh_intent(intent: str | None) -> str:
+    raw = str(intent or "portfolio_signals").strip().lower()
+    aliases = {
+        "portfolio_signals": "portfolio_signals",
+        "current_holdings": "portfolio_signals",
+        "stale_only": "stale_only",
+        "holdings_plus_buy_candidates": "holdings_plus_buy_candidates",
+        "portfolio_plus_candidates": "holdings_plus_buy_candidates",
+        "rebuild_research_universe": "rebuild_research_universe",
+        "prepare_portfolio_review": "prepare_portfolio_review",
+    }
+    return aliases.get(raw, "")
+
+
+def _allowed_refresh_intents() -> list[str]:
+    return [
+        "stale_only",
+        "portfolio_signals",
+        "holdings_plus_buy_candidates",
+        "rebuild_research_universe",
+        "prepare_portfolio_review",
+    ]
+
+
+def _refresh_scope_plan(intent: str) -> dict:
+    if intent == "prepare_portfolio_review":
+        return {
+            "refresh_intent": intent,
+            "scope_summary": {
+                "portfolio_holdings_count": 0,
+                "buy_candidate_count": 0,
+                "mandatory_dependency_count": 0,
+                "deduped_symbol_count": 0,
+                "full_universe_count": int(_count_research_universe_rows() or 0),
+            },
+            "planned_symbol_samples": {
+                "portfolio_holdings": [],
+                "buy_candidates": [],
+                "mandatory_dependencies": [],
+            },
+            "planned_symbols": {"provider_symbols": {"zacks": [], "danelfin": [], "yahoo": []}},
+        }
+    try:
+        import sys as _sys
+
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.refresh_signals import _build_refresh_scope
+
+        return _build_refresh_scope(refresh_mode=intent)
+    except Exception:
+        return {
+            "refresh_intent": intent,
+            "scope_summary": {
+                "portfolio_holdings_count": 0,
+                "buy_candidate_count": 0,
+                "mandatory_dependency_count": 0,
+                "deduped_symbol_count": 0,
+                "full_universe_count": int(_count_research_universe_rows() or 0),
+            },
+            "planned_symbol_samples": {
+                "portfolio_holdings": [],
+                "buy_candidates": [],
+                "mandatory_dependencies": [],
+            },
+            "planned_symbols": {"provider_symbols": {"zacks": [], "danelfin": [], "yahoo": []}},
+        }
+
+
+def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> str:
+    summary = scope_summary or {}
+    holdings = int(summary.get("portfolio_holdings_count") or 0)
+    buy = int(summary.get("buy_candidate_count") or 0)
+    deps = int(summary.get("mandatory_dependency_count") or 0)
+    deduped = int(summary.get("deduped_symbol_count") or 0)
+    full_count = int(summary.get("full_universe_count") or 0)
+
+    if intent == "rebuild_research_universe":
+        if full_count > 0:
+            return f"Planned refresh scope: ~{full_count:,} research universe symbols"
+        return "Planned refresh scope: full research universe"
+    if intent == "holdings_plus_buy_candidates":
+        return (
+            f"Planned refresh scope: {holdings} holdings + {buy} buy candidates + "
+            f"{deps} required dependencies = {deduped} symbols"
+        )
+    if intent == "portfolio_signals":
+        return (
+            f"Planned refresh scope: {holdings} holdings + "
+            f"{deps} required dependencies = {deduped} symbols"
+        )
+    return "Planned refresh scope: based on selected refresh intent"
+
+
+def _refresh_status_payload(running: bool) -> dict:
+    global _refresh_last_report, _refresh_last_exit_code, _refresh_completed_at_utc
+
+    if not running and _refresh_proc is not None:
+        exit_code = _refresh_proc.poll()
+        if exit_code is not None:
+            _refresh_last_exit_code = int(exit_code)
+            _refresh_completed_at_utc = datetime.now(timezone.utc).isoformat()
+            if _REFRESH_REPORT_PATH.exists():
+                try:
+                    _refresh_last_report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
+                except Exception:
+                    _refresh_last_report = None
+
+    signal_data = _signal_status()
+    provider_progress: dict[str, dict] = {}
+    for provider in ("zacks", "danelfin", "yahoo"):
+        info = signal_data.get(provider)
+        if not isinstance(info, dict):
+            continue
+        completed = int(info.get("completed_count") or info.get("with_data_count") or 0)
+        planned = _refresh_provider_planned_totals.get(provider)
+        if planned is None and isinstance(info.get("planned_total_count"), int):
+            planned = int(info.get("planned_total_count"))
+
+        progress_pct = None
+        progress_label = f"{completed} rows processed"
+        is_complete = False
+        if planned is not None:
+            display_completed = min(completed, planned)
+            progress_pct = round((display_completed / planned * 100.0), 1) if planned > 0 else 100.0
+            progress_label = f"{display_completed}/{planned}"
+            is_complete = completed >= planned
+
+        provider_progress[provider] = {
+            "completed_count": completed,
+            "planned_total_count": planned,
+            "progress_pct": progress_pct,
+            "progress_label": progress_label,
+            "is_complete": is_complete,
+        }
+
+    scope_formula = _refresh_scope_formula(_refresh_scope_summary if isinstance(_refresh_scope_summary, dict) else {}, _refresh_resolved_intent)
+    return {
+        "running": running,
+        "last_report": _refresh_last_report,
+        "last_exit_code": _refresh_last_exit_code,
+        "requested_intent": _refresh_requested_intent,
+        "resolved_intent": _refresh_resolved_intent,
+        "scope_summary": _refresh_scope_summary or {},
+        "planned_symbol_samples": _refresh_scope_samples or {},
+        "scope_formula": scope_formula,
+        "provider_progress": provider_progress,
+        "started_at_utc": _refresh_started_at_utc,
+        "completed_at_utc": _refresh_completed_at_utc,
+    }
 
 
 def _sourced_date(csv_path: Path) -> str | None:
@@ -269,6 +429,51 @@ def _statement_gain_loss_latest_payload() -> tuple[dict, int]:
             )
 
     return _build_available(payload_from_pointer)
+
+
+def _market_regime_guardrail_payload(run_id: str | None = None) -> tuple[dict, int]:
+    """Return display-only market regime guardrail payload with safe fallback."""
+    try:
+        import sys as _sys
+
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from src.portfolio.regime.market_regime_guardrail import market_regime_guardrail_latest
+
+        payload = market_regime_guardrail_latest(_REPO_ROOT, run_id=run_id or "")
+        if not isinstance(payload, dict):
+            raise ValueError("invalid market regime payload")
+        payload["scoring_impact"] = "none"
+        return payload, 200
+    except Exception as exc:
+        return {
+            "regime": "UNKNOWN",
+            "severity": "LOW",
+            "deployment_posture": "CAUTION_DEPLOY",
+            "trim_posture": "REVIEW_OVERWEIGHTS",
+            "cash_posture": "HOLD_EXCESS",
+            "operator_summary": "Market regime guardrail unavailable. Use conservative display-only posture.",
+            "evidence": [f"guardrail_endpoint_error: {exc}"],
+            "affected_symbols": [],
+            "stressed_sectors": [],
+            "safe_to_deploy": False,
+            "confidence": "LOW",
+            "data_freshness": {
+                "market_proxies_ts": None,
+                "portfolio_snapshot_ts": None,
+                "freshness_status": "UNKNOWN",
+                "market_proxy_age_days": None,
+                "proxy_lag_days": None,
+                "freshness_threshold_days": 2,
+                "operator_action": "VERIFY_TIMESTAMP_FORMATS",
+            },
+            "guardrail_version": "MRG-1.0",
+            "recommended_operator_checks": [
+                "Confirm proxy freshness before changing posture.",
+                "Use conservative deployment discipline until data recovers.",
+            ],
+            "scoring_impact": "none",
+        }, 200
 
 
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
@@ -501,6 +706,31 @@ def _signal_status() -> dict:
                 result[provider_name]["holdings_missing"] = summary.get("missing")
                 result[provider_name]["holdings_failed"] = summary.get("failed")
 
+                completed_count = int(result[provider_name].get("with_data_count") or 0)
+                applicable_holdings = summary.get("applicable_holdings")
+                planned_total_count = (
+                    int(applicable_holdings)
+                    if applicable_holdings is not None and int(applicable_holdings) >= 0
+                    else None
+                )
+                progress_pct = None
+                progress_label = f"{completed_count} rows processed"
+                is_complete = False
+                if planned_total_count is not None:
+                    progress_completed = min(completed_count, planned_total_count)
+                    if planned_total_count > 0:
+                        progress_pct = round(progress_completed / planned_total_count * 100.0, 1)
+                    else:
+                        progress_pct = 100.0
+                    progress_label = f"{progress_completed}/{planned_total_count}"
+                    is_complete = completed_count >= planned_total_count
+
+                result[provider_name]["completed_count"] = completed_count
+                result[provider_name]["planned_total_count"] = planned_total_count
+                result[provider_name]["progress_pct"] = progress_pct
+                result[provider_name]["progress_label"] = progress_label
+                result[provider_name]["is_complete"] = is_complete
+
         result["portfolio_holdings_coverage"] = {
             "run_id": holdings_run_id,
             "active_holdings_baseline": holdings_baseline,
@@ -514,6 +744,19 @@ def _signal_status() -> dict:
             "threshold_days": 2,
             "providers": {},
         }
+
+    for provider_name in ("zacks", "danelfin", "yahoo"):
+        provider_entry = result.get(provider_name)
+        if not isinstance(provider_entry, dict):
+            continue
+        if "completed_count" in provider_entry:
+            continue
+        completed_count = int(provider_entry.get("with_data_count") or 0)
+        provider_entry["completed_count"] = completed_count
+        provider_entry["planned_total_count"] = None
+        provider_entry["progress_pct"] = None
+        provider_entry["progress_label"] = f"{completed_count} rows processed"
+        provider_entry["is_complete"] = False
 
     ess_sd = _latest_snapshot_date(_ESS_SIGNAL_SNAPSHOT)
     ess_gap = _load_ess_coverage_warning()
@@ -937,7 +1180,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self._json_response(_refresh_transparency_payload())
         elif path == "/api/signal-refresh/status":
             running = _refresh_proc is not None and _refresh_proc.poll() is None
-            self._json_response({"running": running})
+            self._json_response(_refresh_status_payload(running=running))
         elif path == "/api/score-fetch/status":
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             params = {k: v for k, v in (p.split("=", 1) for p in qs.split("&") if "=" in p)}
@@ -1003,6 +1246,11 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self._json_response({"strategic_exit_symbols": syms})
         elif path == "/api/statement-gain-loss/latest":
             payload, status = _statement_gain_loss_latest_payload()
+            self._json_response(payload, status)
+        elif path == "/api/market-regime-guardrail/latest":
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            run_id = (parse_qs(query).get("run_id", [""])[0] or "").strip()
+            payload, status = _market_regime_guardrail_payload(run_id=run_id or None)
             self._json_response(payload, status)
         elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
             # GET /api/operator/policies         → all active policies
@@ -1373,15 +1621,91 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/signal-refresh":
             global _refresh_proc
+            global _refresh_last_report
+            global _refresh_last_exit_code
+            global _refresh_requested_intent
+            global _refresh_resolved_intent
+            global _refresh_scope_summary
+            global _refresh_scope_samples
+            global _refresh_provider_planned_totals
+            global _refresh_started_at_utc
+            global _refresh_completed_at_utc
             if _refresh_proc is not None and _refresh_proc.poll() is None:
-                self._json_response({"started": False, "reason": "already running"})
+                self._json_response({"started": False, "reason": "already running", **_refresh_status_payload(running=True)})
                 return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                payload = {}
+
+            requested_intent = str(payload.get("intent") or "portfolio_signals").strip().lower()
+            resolved_intent = _resolve_refresh_intent(requested_intent)
+            if not resolved_intent:
+                self._json_response(
+                    {
+                        "accepted": False,
+                        "started": False,
+                        "error": "unknown refresh intent",
+                        "requested_intent": requested_intent,
+                        "allowed_intents": _allowed_refresh_intents(),
+                    },
+                    400,
+                )
+                return
+
+            scope_plan = _refresh_scope_plan(resolved_intent)
+            scope_summary = scope_plan.get("scope_summary") if isinstance(scope_plan, dict) else {}
+            scope_samples = scope_plan.get("planned_symbol_samples") if isinstance(scope_plan, dict) else {}
+            provider_symbols = ((scope_plan.get("planned_symbols") or {}).get("provider_symbols") or {}) if isinstance(scope_plan, dict) else {}
+
+            _refresh_requested_intent = requested_intent
+            _refresh_resolved_intent = resolved_intent
+            _refresh_scope_summary = scope_summary if isinstance(scope_summary, dict) else {}
+            _refresh_scope_samples = scope_samples if isinstance(scope_samples, dict) else {}
+            _refresh_provider_planned_totals = {
+                provider: (len(symbols) if isinstance(symbols, list) else None)
+                for provider, symbols in (provider_symbols.items() if isinstance(provider_symbols, dict) else [])
+            }
+            _refresh_last_report = None
+            _refresh_last_exit_code = None
+            _refresh_started_at_utc = datetime.now(timezone.utc).isoformat()
+            _refresh_completed_at_utc = None
+
+            if resolved_intent == "prepare_portfolio_review":
+                cmd = [sys.executable, str(_REPO_ROOT / "scripts/prepare_portfolio_review.py")]
+            else:
+                cmd = [
+                    sys.executable,
+                    str(_REPO_ROOT / "scripts/refresh_signals.py"),
+                    "--refresh-mode",
+                    resolved_intent,
+                    "--report-path",
+                    str(_REFRESH_REPORT_PATH),
+                ]
+                if resolved_intent == "stale_only":
+                    cmd.append("--smart")
+
             _refresh_proc = subprocess.Popen(
-                [sys.executable, str(_REPO_ROOT / "scripts/refresh_signals.py"), "--smart"],
+                cmd,
                 cwd=str(_REPO_ROOT),
                 env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
             )
-            self._json_response({"started": True})
+
+            self._json_response(
+                {
+                    "accepted": True,
+                    "started": True,
+                    "requested_intent": requested_intent,
+                    "resolved_intent": resolved_intent,
+                    "mode": resolved_intent,
+                    "scope_summary": _refresh_scope_summary,
+                    "planned_symbol_samples": _refresh_scope_samples,
+                    "scope_formula": _refresh_scope_formula(_refresh_scope_summary, resolved_intent),
+                    "provider_planned_totals": _refresh_provider_planned_totals,
+                }
+            )
         elif path == "/api/score-fetch":
             try:
                 length = int(self.headers.get("Content-Length", 0))
