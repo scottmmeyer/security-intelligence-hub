@@ -1843,13 +1843,13 @@ function _selectedRefreshMode() {
 
 function _refreshModeGuidance(mode) {
   if (mode === "stale_only") {
-    return "Refreshes stale/missing coverage targets only for lightweight maintenance.";
+    return "Refreshes stale/missing provider coverage plus stale market-regime proxy symbols for lightweight maintenance.";
   }
   if (mode === "portfolio_signals") {
-    return "Refreshes portfolio holdings plus any mandatory provider dependencies required for coverage checks.";
+    return "Refreshes portfolio holdings plus mandatory provider dependencies and market-regime proxy symbols required for coverage and guardrail freshness.";
   }
   if (mode === "holdings_plus_buy_candidates") {
-    return "Refreshes current portfolio holdings and top deployment/buy candidates, plus any mandatory provider dependencies. Use this before making portfolio decisions without running the full universe refresh.";
+    return "Refreshes current portfolio holdings and top deployment/buy candidates, plus mandatory dependencies and market-regime proxies. Use this before making portfolio decisions without running the full universe refresh.";
   }
   if (mode === "rebuild_research_universe") {
     return "Refreshes the full research universe. Intended weekly or when rebuilding the candidate universe.";
@@ -1878,6 +1878,7 @@ function _scopeFormulaFromSummary(summary, intent) {
   const holdings = Number(s.portfolio_holdings_count || 0);
   const buy = Number(s.buy_candidate_count || 0);
   const deps = Number(s.mandatory_dependency_count || 0);
+  const proxies = Number(s.market_proxy_count || 0);
   const deduped = Number(s.deduped_symbol_count || 0);
   const full = Number(s.full_universe_count || 0);
 
@@ -1887,10 +1888,13 @@ function _scopeFormulaFromSummary(summary, intent) {
       : "Planned refresh scope: full research universe";
   }
   if (intent === "holdings_plus_buy_candidates") {
-    return `Planned refresh scope: ${holdings} holdings + ${buy} buy candidates + ${deps} required dependencies = ${deduped} symbols`;
+    return `Planned refresh scope: ${holdings} holdings + ${buy} buy candidates + ${deps} required dependencies + ${proxies} market proxies = ${deduped} symbols`;
   }
   if (intent === "portfolio_signals") {
-    return `Planned refresh scope: ${holdings} holdings + ${deps} required dependencies = ${deduped} symbols`;
+    return `Planned refresh scope: ${holdings} holdings + ${deps} required dependencies + ${proxies} market proxies = ${deduped} symbols`;
+  }
+  if (intent === "stale_only") {
+    return `Planned refresh scope: stale provider rows + ${proxies} stale market proxies`;
   }
   return "Planned refresh scope: based on selected refresh intent";
 }

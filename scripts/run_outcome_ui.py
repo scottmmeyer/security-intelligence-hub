@@ -94,6 +94,7 @@ def _refresh_scope_plan(intent: str) -> dict:
                 "portfolio_holdings_count": 0,
                 "buy_candidate_count": 0,
                 "mandatory_dependency_count": 0,
+                "market_proxy_count": 0,
                 "deduped_symbol_count": 0,
                 "full_universe_count": int(_count_research_universe_rows() or 0),
             },
@@ -101,8 +102,12 @@ def _refresh_scope_plan(intent: str) -> dict:
                 "portfolio_holdings": [],
                 "buy_candidates": [],
                 "mandatory_dependencies": [],
+                "market_proxies": [],
             },
-            "planned_symbols": {"provider_symbols": {"zacks": [], "danelfin": [], "yahoo": []}},
+            "planned_symbols": {
+                "market_proxies": [],
+                "provider_symbols": {"zacks": [], "danelfin": [], "yahoo": []},
+            },
         }
     try:
         import sys as _sys
@@ -136,6 +141,7 @@ def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> st
     holdings = int(summary.get("portfolio_holdings_count") or 0)
     buy = int(summary.get("buy_candidate_count") or 0)
     deps = int(summary.get("mandatory_dependency_count") or 0)
+    proxies = int(summary.get("market_proxy_count") or 0)
     deduped = int(summary.get("deduped_symbol_count") or 0)
     full_count = int(summary.get("full_universe_count") or 0)
 
@@ -146,13 +152,15 @@ def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> st
     if intent == "holdings_plus_buy_candidates":
         return (
             f"Planned refresh scope: {holdings} holdings + {buy} buy candidates + "
-            f"{deps} required dependencies = {deduped} symbols"
+            f"{deps} required dependencies + {proxies} market proxies = {deduped} symbols"
         )
     if intent == "portfolio_signals":
         return (
             f"Planned refresh scope: {holdings} holdings + "
-            f"{deps} required dependencies = {deduped} symbols"
+            f"{deps} required dependencies + {proxies} market proxies = {deduped} symbols"
         )
+    if intent == "stale_only":
+        return f"Planned refresh scope: stale provider rows + {proxies} stale market proxies"
     return "Planned refresh scope: based on selected refresh intent"
 
 

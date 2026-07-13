@@ -104,6 +104,7 @@ def test_refresh_intent_holdings_plus_buy_candidates_supported() -> None:
             "portfolio_holdings_count": 79,
             "buy_candidate_count": 47,
             "mandatory_dependency_count": 12,
+            "market_proxy_count": 7,
             "deduped_symbol_count": 138,
             "full_universe_count": 2473,
         },
@@ -111,6 +112,7 @@ def test_refresh_intent_holdings_plus_buy_candidates_supported() -> None:
             "portfolio_holdings": ["MU", "VRT", "DELL"],
             "buy_candidates": ["ARW", "LRCX", "CAH"],
             "mandatory_dependencies": ["SPY", "QQQ"],
+            "market_proxies": ["SPY", "QQQ", "XLK", "SOXX"],
         },
         "planned_symbols": {
             "provider_symbols": {
@@ -130,7 +132,7 @@ def test_refresh_intent_holdings_plus_buy_candidates_supported() -> None:
     assert body["accepted"] is True
     assert body["resolved_intent"] == "holdings_plus_buy_candidates"
     assert body["scope_summary"]["deduped_symbol_count"] == 138
-    assert "79 holdings + 47 buy candidates + 12 required dependencies = 138 symbols" in body["scope_formula"]
+    assert "79 holdings + 47 buy candidates + 12 required dependencies + 7 market proxies = 138 symbols" in body["scope_formula"]
     assert "refresh_signals.py" in " ".join(cmd)
     assert "--refresh-mode" in cmd
     assert "holdings_plus_buy_candidates" in cmd
@@ -142,6 +144,7 @@ def test_holdings_plus_buy_candidates_scope_dedupes_symbols() -> None:
             "portfolio_holdings_count": 3,
             "buy_candidate_count": 3,
             "mandatory_dependency_count": 1,
+            "market_proxy_count": 7,
             "deduped_symbol_count": 4,
             "full_universe_count": 2473,
         },
@@ -149,6 +152,7 @@ def test_holdings_plus_buy_candidates_scope_dedupes_symbols() -> None:
             "portfolio_holdings": ["MU", "VRT", "DELL"],
             "buy_candidates": ["VRT", "ARW", "MU"],
             "mandatory_dependencies": ["SPY"],
+            "market_proxies": ["SPY", "QQQ", "XLK", "SOXX"],
         },
         "planned_symbols": {"provider_symbols": {"zacks": ["MU", "VRT", "DELL", "SPY"], "danelfin": [], "yahoo": []}},
     }
@@ -168,10 +172,16 @@ def test_holdings_plus_buy_candidates_does_not_use_full_universe() -> None:
             "portfolio_holdings_count": 79,
             "buy_candidate_count": 47,
             "mandatory_dependency_count": 12,
+            "market_proxy_count": 7,
             "deduped_symbol_count": 138,
             "full_universe_count": 2473,
         },
-        "planned_symbol_samples": {"portfolio_holdings": [], "buy_candidates": [], "mandatory_dependencies": []},
+        "planned_symbol_samples": {
+            "portfolio_holdings": [],
+            "buy_candidates": [],
+            "mandatory_dependencies": [],
+            "market_proxies": [],
+        },
         "planned_symbols": {"provider_symbols": {"zacks": ["AAPL"], "danelfin": ["AAPL"], "yahoo": ["AAPL"]}},
     }
 

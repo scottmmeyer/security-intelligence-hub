@@ -81,6 +81,8 @@ def test_market_regime_guardrail_ui_hooks_are_present() -> None:
     assert "Freshness Status:" in app_js
     assert "Lag: ${lagDays} day(s)" in app_js
     assert "Operator Action:" in app_js
+    assert "Action Guidance:" in app_js
+    assert "Run Refresh Current Holdings + Buy Candidates" in app_js
     assert "REFRESH_MARKET_PROXIES" in app_js or "operator_action" in app_js
 
 

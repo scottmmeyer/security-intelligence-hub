@@ -63,13 +63,18 @@ REFRESH_MODE_STALE_ONLY = "stale_only"
 REFRESH_MODE_PORTFOLIO_SIGNALS = "portfolio_signals"
 REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES = "holdings_plus_buy_candidates"
 REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE = "rebuild_research_universe"
+REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW = "prepare_portfolio_review"
 
 _REFRESH_MODES = {
     REFRESH_MODE_STALE_ONLY,
     REFRESH_MODE_PORTFOLIO_SIGNALS,
     REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
     REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE,
+    REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
 }
+
+_MARKET_PROXY_BASE = ("SPY", "QQQ", "XLK", "XLF", "XLI", "XLV")
+_SEMI_PROXY_CANDIDATES = ("SOXX", "SMH")
 
 _PROVIDER_PRIMARY_FIELDS: dict[str, tuple[str, ...]] = {
     "zacks": ("zacks_rank", "zacks_score"),
@@ -229,7 +234,66 @@ def _refresh_mode_label(refresh_mode: str) -> str:
         REFRESH_MODE_PORTFOLIO_SIGNALS: "portfolio_signals",
         REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES: "holdings_plus_buy_candidates",
         REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "rebuild_research_universe",
+        REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW: "prepare_portfolio_review",
     }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
+
+
+def _symbols_in_latest_cache(csv_path: Path) -> set[str]:
+    if not csv_path.exists():
+        return set()
+    out: set[str] = set()
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                sym = str(row.get("symbol") or "").strip().upper()
+                if sym:
+                    out.add(sym)
+    except Exception:
+        return set()
+    return out
+
+
+def _select_semiconductor_proxy() -> str:
+    # Prefer whichever semiconductor proxy already has local provider coverage.
+    covered = set()
+    covered |= _symbols_in_latest_cache(_YAHOO_DIR / "latest_yahoo_supplemental.csv")
+    covered |= _symbols_in_latest_cache(_ZACKS_DIR / "latest_zacks.csv")
+    covered |= _symbols_in_latest_cache(_DANELFIN_DIR / "latest_danelfin.csv")
+    for candidate in _SEMI_PROXY_CANDIDATES:
+        if candidate in covered:
+            return candidate
+
+    # Fall back to whichever exists in the configured base universe.
+    universe = set(_all_universe_symbols(_BASE_UNIVERSE))
+    for candidate in _SEMI_PROXY_CANDIDATES:
+        if candidate in universe:
+            return candidate
+    return "SOXX"
+
+
+def _market_proxy_symbols() -> list[str]:
+    semi = _select_semiconductor_proxy()
+    return [*_MARKET_PROXY_BASE, semi]
+
+
+def _market_proxy_refresh_needed(threshold_days: int = 2) -> bool:
+    try:
+        from src.sih.rotation_risk_monitor import rotation_risk_summary
+        from src.portfolio.regime.market_regime_inputs import evaluate_market_proxy_freshness
+
+        summary = rotation_risk_summary(repo_root=_REPO_ROOT)
+        proxy_ts = ((summary.get("proxy_returns") or {}).get("latest_proxy_date") if isinstance(summary, dict) else "")
+        as_of = str((summary.get("as_of_date") if isinstance(summary, dict) else "") or date.today().isoformat())
+        freshness = evaluate_market_proxy_freshness(
+            market_proxies_ts=proxy_ts,
+            portfolio_snapshot_ts=as_of,
+            threshold_days=threshold_days,
+        )
+        status = str(freshness.get("freshness_status") or "UNKNOWN").upper()
+        return status != "FRESH"
+    except Exception:
+        # Fail closed: if freshness cannot be determined, include proxy refresh targets.
+        return True
 
 
 def _load_buy_candidate_symbols(*, cap: int = 50) -> list[str]:
@@ -304,6 +368,14 @@ def _build_refresh_scope(
     buy_candidates = _load_buy_candidate_symbols(cap=buy_candidate_cap) if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES else []
     buy_set = set(buy_candidates)
 
+    include_market_proxies = mode in {
+        REFRESH_MODE_PORTFOLIO_SIGNALS,
+        REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
+        REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
+    } or (mode == REFRESH_MODE_STALE_ONLY and _market_proxy_refresh_needed())
+    market_proxies = _market_proxy_symbols() if include_market_proxies else []
+    market_proxy_set = set(market_proxies)
+
     provider_holdings: dict[str, set[str]] = {
         "zacks": _load_portfolio_provider_holdings("zacks"),
         "danelfin": _load_portfolio_provider_holdings("danelfin"),
@@ -315,11 +387,12 @@ def _build_refresh_scope(
         mandatory_dependencies |= set(symbols)
     mandatory_dependencies -= holdings_set
     mandatory_dependencies -= buy_set
+    mandatory_dependencies -= market_proxy_set
 
     if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         deduped_all = _all_universe_symbols(_BASE_UNIVERSE)
     else:
-        deduped_all = sorted(holdings_set | buy_set | mandatory_dependencies)
+        deduped_all = sorted(holdings_set | buy_set | mandatory_dependencies | market_proxy_set)
 
     provider_symbols: dict[str, list[str]] = {}
     for provider in ("zacks", "danelfin", "yahoo"):
@@ -327,17 +400,37 @@ def _build_refresh_scope(
             provider_symbols[provider] = list(deduped_all)
             continue
         if mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
-            provider_symbols[provider] = sorted(provider_holdings.get(provider, set()))
-            continue
-        if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
             merged: list[str] = []
             seen: set[str] = set()
-            for sym in sorted(provider_holdings.get(provider, set())) + buy_candidates + sorted(mandatory_dependencies):
+            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + market_proxies:
                 s = str(sym or "").strip().upper()
                 if s and s not in seen:
                     seen.add(s)
                     merged.append(s)
             provider_symbols[provider] = merged
+            continue
+        if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
+            merged: list[str] = []
+            seen: set[str] = set()
+            for sym in sorted(provider_holdings.get(provider, set())) + buy_candidates + sorted(mandatory_dependencies) + market_proxies:
+                s = str(sym or "").strip().upper()
+                if s and s not in seen:
+                    seen.add(s)
+                    merged.append(s)
+            provider_symbols[provider] = merged
+            continue
+        if mode == REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW:
+            merged: list[str] = []
+            seen: set[str] = set()
+            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + market_proxies:
+                s = str(sym or "").strip().upper()
+                if s and s not in seen:
+                    seen.add(s)
+                    merged.append(s)
+            provider_symbols[provider] = merged
+            continue
+        if mode == REFRESH_MODE_STALE_ONLY and market_proxies:
+            provider_symbols[provider] = list(market_proxies)
             continue
         provider_symbols[provider] = []
 
@@ -346,6 +439,7 @@ def _build_refresh_scope(
         "portfolio_holdings": holdings[:10],
         "buy_candidates": buy_candidates[:10],
         "mandatory_dependencies": sorted(mandatory_dependencies)[:10],
+        "market_proxies": market_proxies[:10],
     }
 
     return {
@@ -354,6 +448,7 @@ def _build_refresh_scope(
             "portfolio_holdings_count": len(holdings),
             "buy_candidate_count": len(buy_candidates),
             "mandatory_dependency_count": len(mandatory_dependencies),
+            "market_proxy_count": len(market_proxies),
             "deduped_symbol_count": len(deduped_all),
             "full_universe_count": full_universe_count,
         },
@@ -361,6 +456,7 @@ def _build_refresh_scope(
             "portfolio_holdings": holdings,
             "buy_candidates": buy_candidates,
             "mandatory_dependencies": sorted(mandatory_dependencies),
+            "market_proxies": market_proxies,
             "deduped_all": deduped_all,
             "provider_symbols": provider_symbols,
         },
@@ -591,7 +687,9 @@ def _refresh_zacks(
     repair_targets = _coverage_refresh_targets(coverage_before)
     research_stale = _is_stale(latest)
     refresh_mode = _normalize_refresh_mode(refresh_mode)
-    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets:
+    scope = _build_refresh_scope(refresh_mode=refresh_mode)
+    proxy_targets = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("zacks") or []))
+    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets and not proxy_targets:
         if verbose:
             print(f"[refresh_signals] Zacks: up-to-date ({_latest_sourced_date(latest)}) and holdings compliant, skipping.")
         if collect_report:
@@ -615,24 +713,27 @@ def _refresh_zacks(
     forced = _load_portfolio_provider_holdings("zacks")
     mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
-        symbols = sorted(forced)
+        symbols = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("zacks") or []))
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
-        scope = _build_refresh_scope(refresh_mode=refresh_mode)
         symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("zacks") or [])
         mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
+    elif refresh_mode == REFRESH_MODE_STALE_ONLY and proxy_targets and not research_stale and not repair_targets:
+        symbols = proxy_targets
+        mode = "market_proxy_refresh"
     elif research_stale:
         symbols = build_smart_refresh_list(
             universe_csv=_BASE_UNIVERSE,
             zacks_cache_csv=latest,
             forced_symbols=forced or None,
         )
+        symbols = _merge_forced_symbols(symbols, set(proxy_targets) if proxy_targets else None)
     else:
         mode = "coverage_repair"
-        symbols = repair_targets
+        symbols = sorted({*repair_targets, *proxy_targets})
     if not symbols:
         if verbose:
             print("[refresh_signals] Zacks: no repair targets after eligibility evaluation, skipping.")
@@ -670,6 +771,10 @@ def _refresh_zacks(
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
                 f"[refresh_signals] Zacks: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} universe symbols."
+            )
+        elif mode == "market_proxy_refresh":
+            print(
+                f"[refresh_signals] Zacks: stale_only — refreshing {len(symbols)} market-regime proxy symbols."
             )
         elif forced:
             print(f"[refresh_signals] Zacks: stale — fetching {len(symbols)} symbols "
@@ -722,7 +827,9 @@ def _refresh_danelfin(
     repair_targets = _coverage_refresh_targets(coverage_before)
     research_stale = _is_stale(latest)
     refresh_mode = _normalize_refresh_mode(refresh_mode)
-    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets:
+    scope = _build_refresh_scope(refresh_mode=refresh_mode)
+    proxy_targets = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or []))
+    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets and not proxy_targets:
         if verbose:
             print(f"[refresh_signals] Danelfin: up-to-date ({_latest_sourced_date(latest)}) and holdings compliant, skipping.")
         if collect_report:
@@ -746,21 +853,24 @@ def _refresh_danelfin(
     forced = forced_symbols if forced_symbols is not None else _load_portfolio_provider_holdings("danelfin")
     mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
-        symbols = sorted(forced)
+        symbols = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or []))
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
-        scope = _build_refresh_scope(refresh_mode=refresh_mode)
         symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or [])
         mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
+    elif refresh_mode == REFRESH_MODE_STALE_ONLY and proxy_targets and not research_stale and not repair_targets:
+        symbols = proxy_targets
+        mode = "market_proxy_refresh"
     elif research_stale:
         base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
         symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
+        symbols = _merge_forced_symbols(symbols, set(proxy_targets) if proxy_targets else None)
     else:
         mode = "coverage_repair"
-        symbols = repair_targets
+        symbols = sorted({*repair_targets, *proxy_targets})
     if not symbols:
         if verbose:
             print("[refresh_signals] Danelfin: no repair targets after eligibility evaluation, skipping.")
@@ -799,6 +909,10 @@ def _refresh_danelfin(
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
                 f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols ({mode_label})."
+            )
+        elif mode == "market_proxy_refresh":
+            print(
+                f"[refresh_signals] Danelfin: stale_only — refreshing {len(symbols)} market-regime proxy symbols."
             )
         elif smart and forced:
             print(
@@ -853,7 +967,9 @@ def _refresh_yahoo(
     repair_targets = _coverage_refresh_targets(coverage_before)
     research_stale = _is_stale(latest)
     refresh_mode = _normalize_refresh_mode(refresh_mode)
-    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets:
+    scope = _build_refresh_scope(refresh_mode=refresh_mode)
+    proxy_targets = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("yahoo") or []))
+    if refresh_mode == REFRESH_MODE_STALE_ONLY and not research_stale and not repair_targets and not proxy_targets:
         if verbose:
             print(f"[refresh_signals] Yahoo: up-to-date ({_latest_sourced_date(latest)}) and holdings compliant, skipping.")
         if collect_report:
@@ -877,21 +993,24 @@ def _refresh_yahoo(
     forced = forced_symbols if forced_symbols is not None else _load_portfolio_provider_holdings("yahoo")
     mode = "research_refresh"
     if refresh_mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
-        symbols = sorted(forced)
+        symbols = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("yahoo") or []))
         mode = REFRESH_MODE_PORTFOLIO_SIGNALS
     elif refresh_mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
-        scope = _build_refresh_scope(refresh_mode=refresh_mode)
         symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("yahoo") or [])
         mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         symbols = _all_universe_symbols(_BASE_UNIVERSE)
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
+    elif refresh_mode == REFRESH_MODE_STALE_ONLY and proxy_targets and not research_stale and not repair_targets:
+        symbols = proxy_targets
+        mode = "market_proxy_refresh"
     elif research_stale:
         base_symbols = _smart_universe_symbols(_BASE_UNIVERSE) if smart else _all_universe_symbols(_BASE_UNIVERSE)
         symbols = _merge_forced_symbols(base_symbols, forced if smart else None)
+        symbols = _merge_forced_symbols(symbols, set(proxy_targets) if proxy_targets else None)
     else:
         mode = "coverage_repair"
-        symbols = repair_targets
+        symbols = sorted({*repair_targets, *proxy_targets})
     if not symbols:
         if verbose:
             print("[refresh_signals] Yahoo: no repair targets after eligibility evaluation, skipping.")
@@ -930,6 +1049,10 @@ def _refresh_yahoo(
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             print(
                 f"[refresh_signals] Yahoo: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols ({mode_label})."
+            )
+        elif mode == "market_proxy_refresh":
+            print(
+                f"[refresh_signals] Yahoo: stale_only — refreshing {len(symbols)} market-regime proxy symbols."
             )
         elif smart and forced:
             print(

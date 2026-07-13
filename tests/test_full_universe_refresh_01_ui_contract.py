@@ -22,6 +22,7 @@ def test_outcome_visualization_refresh_labels_and_payload_contract() -> None:
     assert "rows processed" in app_js
     assert "Today written rows:" in app_js
     assert "holdings_plus_buy_candidates" in app_js
-    assert "Refreshes current portfolio holdings and top deployment/buy candidates" in app_js
-    assert "Refreshes portfolio holdings plus any mandatory provider dependencies" in app_js
+    assert "plus mandatory dependencies and market-regime proxies" in app_js
+    assert "plus mandatory provider dependencies and market-regime proxy symbols" in app_js
+    assert "stale provider rows +" in app_js
     assert "Planned refresh scope:" in app_js

@@ -1089,6 +1089,11 @@ function renderMarketRegimeGuardrailCard(g) {
     ? escHtml(String(freshness.freshness_threshold_days))
     : "2";
   const operatorAction = escHtml(freshness.operator_action || "VERIFY_TIMESTAMP_FORMATS");
+  const actionRaw = String(freshness.operator_action || "").toUpperCase();
+  const freshnessRaw = String(freshness.freshness_status || "").toUpperCase();
+  const operatorGuidance = (actionRaw === "REFRESH_MARKET_PROXIES" || freshnessRaw === "STALE")
+    ? "Run Refresh Current Holdings + Buy Candidates to refresh market-regime proxy inputs before reviewing posture changes."
+    : "";
   const safeText = g.safe_to_deploy ? "Yes" : "No";
 
   return `
@@ -1112,6 +1117,7 @@ function renderMarketRegimeGuardrailCard(g) {
       <div class="mrg-freshness">Proxy TS: ${marketTs} · Portfolio TS: ${snapTs}</div>
       <div class="mrg-freshness">Freshness Status: ${freshnessStatus} · Lag: ${lagDays} day(s) · Threshold: ${lagThreshold}</div>
       <div class="mrg-freshness">Operator Action: ${operatorAction}</div>
+      ${operatorGuidance ? `<div class="mrg-freshness">Action Guidance: ${escHtml(operatorGuidance)}</div>` : ""}
       ${evidence.length ? `<ul class="mrg-list">${evidence.slice(0, 4).map(e => `<li>${escHtml(String(e))}</li>`).join("")}</ul>` : ""}
       ${checks.length ? `<ul class="mrg-checks">${checks.slice(0, 4).map(c => `<li>${escHtml(String(c))}</li>`).join("")}</ul>` : ""}
     </div>

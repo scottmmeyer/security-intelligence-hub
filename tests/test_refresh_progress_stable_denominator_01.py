@@ -157,6 +157,7 @@ def test_signal_refresh_status_exposes_provider_progress_contract() -> None:
                 "portfolio_holdings_count": 79,
                 "buy_candidate_count": 47,
                 "mandatory_dependency_count": 12,
+                "market_proxy_count": 7,
                 "deduped_symbol_count": 138,
                 "full_universe_count": 2473,
             },
@@ -170,7 +171,7 @@ def test_signal_refresh_status_exposes_provider_progress_contract() -> None:
         assert body["provider_progress"]["zacks"]["planned_total_count"] == 54
         assert body["provider_progress"]["danelfin"]["progress_label"] == "34/54"
         assert body["provider_progress"]["yahoo"]["is_complete"] is True
-        assert "79 holdings + 47 buy candidates + 12 required dependencies = 138 symbols" in body["scope_formula"]
+        assert "79 holdings + 47 buy candidates + 12 required dependencies + 7 market proxies = 138 symbols" in body["scope_formula"]
     finally:
         server.shutdown()
         server.server_close()
