@@ -22,9 +22,9 @@ import csv
 import json
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -75,6 +75,7 @@ _REFRESH_MODES = {
 
 _MARKET_PROXY_BASE = ("SPY", "QQQ", "XLK", "XLF", "XLI", "XLV")
 _SEMI_PROXY_CANDIDATES = ("SOXX", "SMH")
+_MARKET_PROXY_REPLAY_INDUSTRIES = ("TECHNOLOGY", "ENERGY", "BASIC MATERIALS", "INDUSTRIALS")
 
 _PROVIDER_PRIMARY_FIELDS: dict[str, tuple[str, ...]] = {
     "zacks": ("zacks_rank", "zacks_score"),
@@ -353,6 +354,129 @@ def _load_buy_candidate_symbols(*, cap: int = 50) -> list[str]:
         return ordered
     except Exception:
         return []
+
+
+def _latest_completed_portfolio_context() -> dict[str, str]:
+    manifest_path = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        portfolios = manifest.get("portfolios") or []
+        completed = [
+            p
+            for p in portfolios
+            if isinstance(p, dict) and p.get("status") == "COMPLETE" and p.get("run_id")
+        ]
+        if not completed:
+            return {}
+        latest = completed[-1]
+        run_id = str(latest.get("run_id") or "").strip()
+        snapshot_date = str(latest.get("snapshot_date") or latest.get("as_of_date") or "").strip()
+        return {
+            "run_id": run_id,
+            "snapshot_date": snapshot_date,
+        }
+    except Exception:
+        return {}
+
+
+def _publish_market_proxy_replay_artifacts(*, verbose: bool) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "attempted": True,
+        "status": "skipped",
+        "artifacts": ["replay_inputs.csv", "replay_performance_series.csv"],
+        "latest_proxy_date": None,
+        "industries": list(_MARKET_PROXY_REPLAY_INDUSTRIES),
+        "warnings": [],
+        "details": [],
+    }
+
+    context = _latest_completed_portfolio_context()
+    run_id = str(context.get("run_id") or "").strip()
+    snapshot_date = str(context.get("snapshot_date") or date.today().isoformat()).strip()
+    if not run_id:
+        status["status"] = "skipped_missing_context"
+        status["warnings"].append(
+            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+        )
+        status["warnings"].append("Latest completed portfolio run_id was not found.")
+        return status
+
+    try:
+        end_date = date.fromisoformat(snapshot_date)
+    except ValueError:
+        end_date = date.today()
+        snapshot_date = end_date.isoformat()
+    start_date = (end_date - timedelta(days=365)).isoformat()
+    end_date_iso = end_date.isoformat()
+
+    try:
+        from src.replay.foundation_service import build_wp05b_replay_matrix
+    except Exception as exc:
+        status["status"] = "failed"
+        status["warnings"].append(
+            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+        )
+        status["warnings"].append(f"Replay publish path unavailable: {exc}")
+        return status
+
+    failures: list[str] = []
+    for industry in _MARKET_PROXY_REPLAY_INDUSTRIES:
+        try:
+            result = build_wp05b_replay_matrix(
+                run_id=run_id,
+                snapshot_date=snapshot_date,
+                start_date=start_date,
+                end_date=end_date_iso,
+                filter_industry=industry,
+                current_root=_REPO_ROOT / "data" / "current",
+                analytical_history_root=_REPO_ROOT / "data" / "history" / "analytical_universe",
+                replay_history_root=_REPO_ROOT / "data" / "history" / "replays",
+                snapshot_registry_root=_REPO_ROOT / "data" / "history",
+            )
+            status["details"].append(
+                {
+                    "industry": industry,
+                    "status": "completed",
+                    "matrix_row_count": int(result.get("matrix_row_count") or 0),
+                    "availability_row_count": int(result.get("availability_row_count") or 0),
+                }
+            )
+        except Exception as exc:
+            failures.append(f"{industry}: {exc}")
+            status["details"].append({"industry": industry, "status": "failed", "error": str(exc)})
+
+    try:
+        from src.sih.rotation_risk_monitor import rotation_risk_summary
+
+        summary = rotation_risk_summary(repo_root=_REPO_ROOT)
+        status["latest_proxy_date"] = str(((summary.get("proxy_returns") or {}).get("latest_proxy_date") or "")).strip() or None
+    except Exception as exc:
+        failures.append(f"latest_proxy_date: {exc}")
+
+    if failures:
+        status["status"] = "warning"
+        status["warnings"].append(
+            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+        )
+        status["warnings"].extend(failures)
+    else:
+        status["status"] = "completed"
+
+    if verbose:
+        if status["status"] == "completed":
+            print(
+                "[refresh_signals] market-proxy replay publish: completed "
+                f"(latest_proxy_date={status.get('latest_proxy_date') or 'unknown'})"
+            )
+        else:
+            print("[refresh_signals] market-proxy replay publish: warning")
+            for warning in status["warnings"]:
+                print(f"[refresh_signals]   {warning}")
+
+    return status
 
 
 def _build_refresh_scope(
@@ -1215,6 +1339,7 @@ def ensure_signals_fresh_with_report(
     provider_report: dict[str, dict[str, object]] = {}
     t0 = time.perf_counter()
     provider_set = {p.lower() for p in providers}
+    scope_summary = scope_plan.get("scope_summary") or {}
 
     if "zacks" in provider_set:
         z = _refresh_zacks(
@@ -1266,12 +1391,23 @@ def ensure_signals_fresh_with_report(
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
         }
 
+    replay_publish_status: dict[str, Any] = {
+        "attempted": False,
+        "status": "skipped",
+        "artifacts": ["replay_inputs.csv", "replay_performance_series.csv"],
+        "latest_proxy_date": None,
+        "warnings": [],
+    }
+    if not dry_run and int(scope_summary.get("market_proxy_count") or 0) > 0:
+        replay_publish_status = _publish_market_proxy_replay_artifacts(verbose=verbose)
+
     return {
         "triggered": triggered,
         "providers": provider_report,
         "refresh_intent": _normalize_refresh_mode(refresh_mode),
-        "scope_summary": scope_plan.get("scope_summary") or {},
+        "scope_summary": scope_summary,
         "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
+        "market_proxy_replay_publish": replay_publish_status,
         "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
         "smart": bool(smart),
         "dry_run": bool(dry_run),
