@@ -72,6 +72,8 @@ def _resolve_refresh_intent(intent: str | None) -> str:
         "portfolio_plus_candidates": "holdings_plus_buy_candidates",
         "rebuild_research_universe": "rebuild_research_universe",
         "prepare_portfolio_review": "prepare_portfolio_review",
+        "market_regime_proxy_only": "market_regime_proxy_only",
+        "market_regime_proxy": "market_regime_proxy_only",
     }
     return aliases.get(raw, "")
 
@@ -83,6 +85,7 @@ def _allowed_refresh_intents() -> list[str]:
         "holdings_plus_buy_candidates",
         "rebuild_research_universe",
         "prepare_portfolio_review",
+        "market_regime_proxy_only",
     ]
 
 
@@ -161,6 +164,8 @@ def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> st
         )
     if intent == "stale_only":
         return f"Planned refresh scope: stale provider rows + {proxies} stale market proxies"
+    if intent == "market_regime_proxy_only":
+        return f"Planned refresh scope: {proxies} market-regime proxy symbols only"
     return "Planned refresh scope: based on selected refresh intent"
 
 
@@ -207,9 +212,19 @@ def _refresh_status_payload(running: bool) -> dict:
         }
 
     scope_formula = _refresh_scope_formula(_refresh_scope_summary if isinstance(_refresh_scope_summary, dict) else {}, _refresh_resolved_intent)
+    replay_publish = None
+    dedicated_proxy_history = None
+    dedicated_proxy_build = None
+    if isinstance(_refresh_last_report, dict):
+        replay_publish = _refresh_last_report.get("market_proxy_replay_publish")
+        dedicated_proxy_history = _refresh_last_report.get("market_regime_proxy_history_fetch")
+        dedicated_proxy_build = _refresh_last_report.get("market_regime_proxy_artifact_build")
     return {
         "running": running,
         "last_report": _refresh_last_report,
+        "market_proxy_replay_publish": replay_publish,
+        "market_regime_proxy_history_fetch": dedicated_proxy_history,
+        "market_regime_proxy_artifact_build": dedicated_proxy_build,
         "last_exit_code": _refresh_last_exit_code,
         "requested_intent": _refresh_requested_intent,
         "resolved_intent": _refresh_resolved_intent,

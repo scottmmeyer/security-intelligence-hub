@@ -11,7 +11,10 @@ def normalized_rotation_context(rotation_summary: dict[str, Any] | None) -> dict
     proxy_returns = data.get("proxy_returns") or {}
     spread = proxy_returns.get("rotation_spread_pct") or {}
     tech_returns = proxy_returns.get("tech_returns") or {}
-    latest_proxy_date = proxy_returns.get("latest_proxy_date")
+    latest_proxy_date_raw = proxy_returns.get("latest_proxy_date")
+    latest_proxy_date = str(latest_proxy_date_raw).strip() if latest_proxy_date_raw is not None else None
+    if latest_proxy_date == "":
+        latest_proxy_date = None
 
     data_quality = data.get("data_quality") or {}
 
@@ -32,7 +35,7 @@ def normalized_rotation_context(rotation_summary: dict[str, Any] | None) -> dict
         "tech_20d": _as_float(tech_returns.get("20d")),
         "tech_60d": _as_float(tech_returns.get("60d")),
         "tech_pct": _as_float((data.get("portfolio_exposure") or {}).get("tech_pct")),
-        "market_proxies_ts": latest_proxy_date or data_quality.get("signal_snapshot_date"),
+        "market_proxies_ts": latest_proxy_date,
         "portfolio_snapshot_ts": data.get("as_of_date"),
         "freshness": freshness,
         "missing_inputs": list(data_quality.get("missing_inputs") or []),

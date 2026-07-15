@@ -20,9 +20,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import sys
+import tempfile
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -64,6 +66,7 @@ REFRESH_MODE_PORTFOLIO_SIGNALS = "portfolio_signals"
 REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES = "holdings_plus_buy_candidates"
 REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE = "rebuild_research_universe"
 REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW = "prepare_portfolio_review"
+REFRESH_MODE_MARKET_REGIME_PROXY_ONLY = "market_regime_proxy_only"
 
 _REFRESH_MODES = {
     REFRESH_MODE_STALE_ONLY,
@@ -71,11 +74,45 @@ _REFRESH_MODES = {
     REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
     REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE,
     REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
+    REFRESH_MODE_MARKET_REGIME_PROXY_ONLY,
 }
 
 _MARKET_PROXY_BASE = ("SPY", "QQQ", "XLK", "XLF", "XLI", "XLV")
 _SEMI_PROXY_CANDIDATES = ("SOXX", "SMH")
+_MARKET_PROXY_REQUIRED_SYMBOLS = ("XLK", "XLE", "XLB", "XLI")
 _MARKET_PROXY_REPLAY_INDUSTRIES = ("TECHNOLOGY", "ENERGY", "BASIC MATERIALS", "INDUSTRIALS")
+_MARKET_PROXY_REPLAY_ARTIFACTS = [
+    "data/current/replay_inputs.csv",
+    "data/current/replay_performance_series.csv",
+]
+_MARKET_PROXY_REPLAY_OUTPUT_FILES = (
+    "replay_availability.csv",
+    "replay_matrix.csv",
+    "replay_inputs.csv",
+    "replay_performance_series.csv",
+    "current_snapshot_metadata.json",
+)
+_MARKET_PROXY_REQUIRED_OUTPUT_FILES = (
+    "replay_inputs.csv",
+    "replay_performance_series.csv",
+)
+_MARKET_PROXY_REPLAY_INPUTS_REQUIRED_COLUMNS = {
+    "replay_id",
+    "filter_geography",
+    "filter_market_cap_bucket",
+    "filter_industry",
+    "selected_symbols",
+}
+_MARKET_PROXY_REPLAY_PERF_REQUIRED_COLUMNS = {
+    "replay_id",
+    "series_type",
+    "date",
+    "value",
+}
+_MARKET_PROXY_REQUIRED_MISSING_INPUTS = {
+    "TECHNOLOGY benchmark proxy",
+    "hard-asset benchmark proxies",
+}
 
 _PROVIDER_PRIMARY_FIELDS: dict[str, tuple[str, ...]] = {
     "zacks": ("zacks_rank", "zacks_score"),
@@ -236,6 +273,7 @@ def _refresh_mode_label(refresh_mode: str) -> str:
         REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES: "holdings_plus_buy_candidates",
         REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "rebuild_research_universe",
         REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW: "prepare_portfolio_review",
+        REFRESH_MODE_MARKET_REGIME_PROXY_ONLY: "market_regime_proxy_only",
     }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
 
 
@@ -274,7 +312,14 @@ def _select_semiconductor_proxy() -> str:
 
 def _market_proxy_symbols() -> list[str]:
     semi = _select_semiconductor_proxy()
-    return [*_MARKET_PROXY_BASE, semi]
+    merged: list[str] = []
+    seen: set[str] = set()
+    for sym in [*_MARKET_PROXY_BASE, *_MARKET_PROXY_REQUIRED_SYMBOLS, semi]:
+        s = str(sym or "").strip().upper()
+        if s and s not in seen:
+            seen.add(s)
+            merged.append(s)
+    return merged
 
 
 def _market_proxy_refresh_needed(threshold_days: int = 2) -> bool:
@@ -382,24 +427,301 @@ def _latest_completed_portfolio_context() -> dict[str, str]:
         return {}
 
 
-def _publish_market_proxy_replay_artifacts(*, verbose: bool) -> dict[str, Any]:
+def _evaluate_market_proxy_replay_freshness(*, threshold_days: int = 2) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "freshness_status": "UNKNOWN",
+        "latest_proxy_date": None,
+        "portfolio_snapshot_date": None,
+        "should_publish": True,
+        "reason": "market_regime_replay_artifacts_unknown",
+        "warnings": [],
+    }
+    try:
+        from src.sih.rotation_risk_monitor import rotation_risk_summary
+        from src.portfolio.regime.market_regime_inputs import evaluate_market_proxy_freshness
+
+        summary = rotation_risk_summary(repo_root=_REPO_ROOT)
+        proxy_ts = ((summary.get("proxy_returns") or {}).get("latest_proxy_date") if isinstance(summary, dict) else "")
+        context = _latest_completed_portfolio_context()
+        snapshot_ts = str(
+            context.get("snapshot_date")
+            or (summary.get("as_of_date") if isinstance(summary, dict) else "")
+            or date.today().isoformat()
+        )
+        freshness = evaluate_market_proxy_freshness(
+            market_proxies_ts=proxy_ts,
+            portfolio_snapshot_ts=snapshot_ts,
+            threshold_days=threshold_days,
+        )
+        freshness_status = str((freshness or {}).get("freshness_status") or "UNKNOWN").upper()
+        status["freshness_status"] = freshness_status
+        status["latest_proxy_date"] = str(proxy_ts or "").strip() or None
+        status["portfolio_snapshot_date"] = snapshot_ts
+        status["should_publish"] = freshness_status != "FRESH"
+        status["reason"] = (
+            "market_regime_replay_artifacts_fresh"
+            if freshness_status == "FRESH"
+            else "market_regime_replay_artifacts_stale"
+        )
+    except Exception as exc:
+        status["warnings"].append(f"Unable to evaluate market proxy replay freshness: {exc}")
+    return status
+
+
+def _market_proxy_bridge_run_id(snapshot_date: str) -> str:
+    date_token = str(snapshot_date or date.today().isoformat()).replace("-", "")
+    time_token = datetime.now(timezone.utc).strftime("%H%M%S")
+    return f"MRG-PROXY-BRIDGE-{date_token}-{time_token}"
+
+
+def _seed_market_proxy_replay_staging_root(staged_repo_root: Path) -> Path:
+    staged_current_root = staged_repo_root / "data" / "current"
+    source_current_root = _REPO_ROOT / "data" / "current"
+    staged_current_root.mkdir(parents=True, exist_ok=True)
+    if source_current_root.exists():
+        for entry in source_current_root.iterdir():
+            if not entry.is_file():
+                continue
+            shutil.copy2(entry, staged_current_root / entry.name)
+    return staged_current_root
+
+
+def _publish_market_proxy_replay_staging_outputs(staged_repo_root: Path) -> None:
+    staged_current_root = staged_repo_root / "data" / "current"
+    target_current_root = _REPO_ROOT / "data" / "current"
+    target_current_root.mkdir(parents=True, exist_ok=True)
+    for name in _MARKET_PROXY_REPLAY_OUTPUT_FILES:
+        source = staged_current_root / name
+        if source.exists():
+            shutil.copy2(source, target_current_root / name)
+
+
+def _csv_header_set(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            reader = csv.reader(fh)
+            header = next(reader, [])
+        return {str(item).strip() for item in header if str(item).strip()}
+    except Exception:
+        return set()
+
+
+def _industry_membership_in_replay_inputs(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    out: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                industry = str(row.get("filter_industry") or "").strip().upper()
+                if industry:
+                    out.add(industry)
+    except Exception:
+        return set()
+    return out
+
+
+def _validate_market_proxy_replay_publish_candidate(
+    *,
+    staged_current_root: Path,
+    industry_results: list[dict[str, Any]],
+    latest_proxy_date_after: str | None,
+    missing_inputs: list[str],
+) -> dict[str, Any]:
+    target_industries = sorted(list(_MARKET_PROXY_REPLAY_INDUSTRIES))
+    present_industries = {
+        str(item.get("industry") or "").strip().upper()
+        for item in industry_results
+        if str(item.get("industry") or "").strip()
+    }
+    missing_target_industries = sorted(
+        list(set(target_industries).difference(present_industries))
+    )
+    failed_industries = sorted(
+        {
+            str(item.get("industry") or "")
+            for item in industry_results
+            if str(item.get("status") or "").strip().lower() in {"failed", "error"}
+            or bool(item.get("error"))
+        }
+    )
+    invalid_status_industries = sorted(
+        {
+            str(item.get("industry") or "")
+            for item in industry_results
+            if int(((item.get("status_counts") or {}).get("FAILED") or 0)) > 0
+            or int(((item.get("status_counts") or {}).get("ERROR") or 0)) > 0
+        }
+    )
+    blocked_industries = sorted(
+        {
+            str(item.get("industry") or "")
+            for item in industry_results
+            if int(((item.get("status_counts") or {}).get("BLOCKED") or 0)) > 0
+        }
+    )
+    zero_row_industries = sorted(
+        {
+            str(item.get("industry") or "")
+            for item in industry_results
+            if int(item.get("matrix_row_count") or 0) == 0
+        }
+    )
+    missing_required_cohorts = [
+        item for item in missing_inputs if item in _MARKET_PROXY_REQUIRED_MISSING_INPUTS
+    ]
+
+    missing_output_files = sorted(
+        [
+            name
+            for name in _MARKET_PROXY_REQUIRED_OUTPUT_FILES
+            if not (staged_current_root / name).exists()
+        ]
+    )
+
+    schema_missing: list[dict[str, Any]] = []
+    replay_inputs_headers = _csv_header_set(staged_current_root / "replay_inputs.csv")
+    missing_replay_inputs_cols = sorted(
+        list(_MARKET_PROXY_REPLAY_INPUTS_REQUIRED_COLUMNS.difference(replay_inputs_headers))
+    )
+    if missing_replay_inputs_cols:
+        schema_missing.append(
+            {
+                "file": "replay_inputs.csv",
+                "missing_columns": missing_replay_inputs_cols,
+            }
+        )
+
+    replay_perf_headers = _csv_header_set(staged_current_root / "replay_performance_series.csv")
+    missing_replay_perf_cols = sorted(
+        list(_MARKET_PROXY_REPLAY_PERF_REQUIRED_COLUMNS.difference(replay_perf_headers))
+    )
+    if missing_replay_perf_cols:
+        schema_missing.append(
+            {
+                "file": "replay_performance_series.csv",
+                "missing_columns": missing_replay_perf_cols,
+            }
+        )
+
+    replay_inputs_industries = _industry_membership_in_replay_inputs(
+        staged_current_root / "replay_inputs.csv"
+    )
+    missing_target_cohorts = sorted(
+        list(set(target_industries).difference(replay_inputs_industries))
+    )
+
+    warnings: list[str] = []
+    reason = ""
+    if missing_output_files:
+        reason = "required_output_file_missing"
+    elif schema_missing:
+        reason = "required_schema_missing"
+    elif failed_industries or invalid_status_industries:
+        reason = "industry_generation_failed"
+    elif blocked_industries or zero_row_industries:
+        reason = "blocked_or_zero_row_generation"
+    elif missing_target_industries or missing_target_cohorts or missing_required_cohorts:
+        reason = "required_cohorts_missing_after_generation"
+    elif not latest_proxy_date_after:
+        reason = "latest_proxy_date_missing_after_generation"
+
+    for name in missing_output_files:
+        warnings.append(
+            f"Replay bridge did not publish because required staged output file is missing: {name}."
+        )
+    for item in schema_missing:
+        missing_cols = ", ".join([str(col) for col in item.get("missing_columns") or []])
+        warnings.append(
+            "Replay bridge did not publish because required schema columns are missing from "
+            f"{item.get('file')}: {missing_cols}."
+        )
+    for industry in missing_target_industries:
+        warnings.append(
+            f"Replay bridge did not publish because target industry result is missing: {industry}."
+        )
+    for industry in sorted(set(failed_industries) | set(invalid_status_industries)):
+        warnings.append(
+            f"Replay bridge did not publish because {industry} generation failed or reported error status."
+        )
+
+    for industry in zero_row_industries:
+        warnings.append(
+            f"Replay bridge did not publish because {industry} generation returned zero rows."
+        )
+    for item in industry_results:
+        industry = str(item.get("industry") or "")
+        blocked_count = int(((item.get("status_counts") or {}).get("BLOCKED") or 0))
+        if blocked_count > 0:
+            warnings.append(
+                f"Replay bridge did not publish because {industry} replay generation was BLOCKED by immutable partition protection."
+            )
+    if missing_target_cohorts:
+        warnings.append(
+            "Replay bridge did not publish because required target industry cohorts are absent "
+            f"from replay_inputs.csv: {', '.join(missing_target_cohorts)}."
+        )
+    if missing_required_cohorts:
+        warnings.append(
+            "Replay bridge did not publish because required market-regime cohorts are still missing after staged generation."
+        )
+    if not latest_proxy_date_after:
+        warnings.append(
+            "Replay bridge did not publish because staged replay artifacts still produced an empty latest_proxy_date."
+        )
+
+    return {
+        "published": not warnings,
+        "reason": reason,
+        "warnings": warnings,
+        "target_industries": target_industries,
+        "blocked_industries": blocked_industries,
+        "zero_row_industries": zero_row_industries,
+        "failed_industries": sorted(set(failed_industries) | set(invalid_status_industries)),
+        "missing_required_cohorts": sorted(
+            set(missing_required_cohorts) | set(missing_target_cohorts) | set(missing_target_industries)
+        ),
+        "missing_output_files": missing_output_files,
+        "schema_missing": schema_missing,
+    }
+
+
+def _publish_market_proxy_replay_artifacts(
+    *,
+    verbose: bool,
+    reason: str = "market_regime_replay_artifacts_stale",
+    latest_proxy_date_before: str | None = None,
+) -> dict[str, Any]:
     status: dict[str, Any] = {
         "attempted": True,
-        "status": "skipped",
-        "artifacts": ["replay_inputs.csv", "replay_performance_series.csv"],
+        "status": "warning",
+        "reason": reason,
+        "published": False,
+        "artifacts": list(_MARKET_PROXY_REPLAY_ARTIFACTS),
+        "latest_proxy_date_before": latest_proxy_date_before,
+        "latest_proxy_date_after": None,
         "latest_proxy_date": None,
         "industries": list(_MARKET_PROXY_REPLAY_INDUSTRIES),
         "warnings": [],
-        "details": [],
+        "details": {
+            "industry_results": [],
+            "blocked_industries": [],
+            "zero_row_industries": [],
+            "failed_industries": [],
+            "missing_required_cohorts": [],
+            "target_industries": list(_MARKET_PROXY_REPLAY_INDUSTRIES),
+            "history_side_effects_possible": True,
+        },
     }
 
     context = _latest_completed_portfolio_context()
     run_id = str(context.get("run_id") or "").strip()
     snapshot_date = str(context.get("snapshot_date") or date.today().isoformat()).strip()
     if not run_id:
-        status["status"] = "skipped_missing_context"
         status["warnings"].append(
-            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+            "Market proxy replay publish could not resolve latest completed portfolio context; Market Regime Guardrail may remain stale."
         )
         status["warnings"].append("Latest completed portfolio run_id was not found.")
         return status
@@ -411,57 +733,106 @@ def _publish_market_proxy_replay_artifacts(*, verbose: bool) -> dict[str, Any]:
         snapshot_date = end_date.isoformat()
     start_date = (end_date - timedelta(days=365)).isoformat()
     end_date_iso = end_date.isoformat()
+    bridge_run_id = _market_proxy_bridge_run_id(snapshot_date)
 
     try:
         from src.replay.foundation_service import build_wp05b_replay_matrix
+        from src.sih.rotation_risk_monitor import rotation_risk_summary
     except Exception as exc:
         status["status"] = "failed"
         status["warnings"].append(
-            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+            "Market proxy replay publish failed; Market Regime Guardrail may remain stale."
         )
         status["warnings"].append(f"Replay publish path unavailable: {exc}")
         return status
 
     failures: list[str] = []
-    for industry in _MARKET_PROXY_REPLAY_INDUSTRIES:
+    with tempfile.TemporaryDirectory(prefix="market-proxy-bridge-") as tmp_dir:
+        staged_repo_root = Path(tmp_dir) / "repo"
+        staged_current_root = _seed_market_proxy_replay_staging_root(staged_repo_root)
+
+        for industry in _MARKET_PROXY_REPLAY_INDUSTRIES:
+            try:
+                result = build_wp05b_replay_matrix(
+                    run_id=bridge_run_id,
+                    snapshot_date=snapshot_date,
+                    start_date=start_date,
+                    end_date=end_date_iso,
+                    filter_industry=industry,
+                    current_root=staged_current_root,
+                    analytical_history_root=_REPO_ROOT / "data" / "history" / "analytical_universe",
+                    replay_history_root=_REPO_ROOT / "data" / "history" / "replays",
+                    snapshot_registry_root=_REPO_ROOT / "data" / "history",
+                )
+                status["details"]["industry_results"].append(
+                    {
+                        "industry": industry,
+                        "status": "completed",
+                        "run_id": str(result.get("run_id") or bridge_run_id),
+                        "matrix_row_count": int(result.get("matrix_row_count") or 0),
+                        "availability_row_count": int(result.get("availability_row_count") or 0),
+                        "status_counts": dict(result.get("status_counts") or {}),
+                    }
+                )
+            except Exception as exc:
+                failures.append(f"{industry}: {exc}")
+                status["details"]["industry_results"].append(
+                    {"industry": industry, "status": "failed", "run_id": bridge_run_id, "error": str(exc)}
+                )
+
+        latest_proxy_date_after: str | None = None
+        missing_inputs_after: list[str] = []
         try:
-            result = build_wp05b_replay_matrix(
-                run_id=run_id,
-                snapshot_date=snapshot_date,
-                start_date=start_date,
-                end_date=end_date_iso,
-                filter_industry=industry,
-                current_root=_REPO_ROOT / "data" / "current",
-                analytical_history_root=_REPO_ROOT / "data" / "history" / "analytical_universe",
-                replay_history_root=_REPO_ROOT / "data" / "history" / "replays",
-                snapshot_registry_root=_REPO_ROOT / "data" / "history",
-            )
-            status["details"].append(
-                {
-                    "industry": industry,
-                    "status": "completed",
-                    "matrix_row_count": int(result.get("matrix_row_count") or 0),
-                    "availability_row_count": int(result.get("availability_row_count") or 0),
-                }
-            )
+            summary = rotation_risk_summary(repo_root=staged_repo_root)
+            latest_proxy_date_after = str(((summary.get("proxy_returns") or {}).get("latest_proxy_date") or "")).strip() or None
+            status["latest_proxy_date_after"] = latest_proxy_date_after
+            status["latest_proxy_date"] = latest_proxy_date_after
+            missing_inputs_after = [str(item) for item in list((summary.get("data_quality") or {}).get("missing_inputs") or [])]
+            status["details"]["missing_inputs_after"] = missing_inputs_after
         except Exception as exc:
-            failures.append(f"{industry}: {exc}")
-            status["details"].append({"industry": industry, "status": "failed", "error": str(exc)})
+            failures.append(f"latest_proxy_date: {exc}")
 
-    try:
-        from src.sih.rotation_risk_monitor import rotation_risk_summary
+        validation = _validate_market_proxy_replay_publish_candidate(
+            staged_current_root=staged_current_root,
+            industry_results=list(status["details"]["industry_results"]),
+            latest_proxy_date_after=latest_proxy_date_after,
+            missing_inputs=missing_inputs_after,
+        )
+        status["details"]["target_industries"] = validation["target_industries"]
+        status["details"]["blocked_industries"] = validation["blocked_industries"]
+        status["details"]["zero_row_industries"] = validation["zero_row_industries"]
+        status["details"]["failed_industries"] = validation["failed_industries"]
+        status["details"]["missing_required_cohorts"] = validation["missing_required_cohorts"]
+        status["details"]["missing_output_files"] = validation["missing_output_files"]
+        status["details"]["schema_missing"] = validation["schema_missing"]
 
-        summary = rotation_risk_summary(repo_root=_REPO_ROOT)
-        status["latest_proxy_date"] = str(((summary.get("proxy_returns") or {}).get("latest_proxy_date") or "")).strip() or None
-    except Exception as exc:
-        failures.append(f"latest_proxy_date: {exc}")
+        if not failures and validation["published"]:
+            try:
+                _publish_market_proxy_replay_staging_outputs(staged_repo_root)
+                status["published"] = True
+            except Exception as exc:
+                failures.append(f"publish: {exc}")
+                status["warnings"].append(
+                    "Replay bridge failed while publishing validated staged artifacts; current replay artifacts were preserved."
+                )
 
     if failures:
         status["status"] = "warning"
+        status["reason"] = "industry_generation_failed"
         status["warnings"].append(
-            "Market proxy provider refresh completed, but replay/rotation artifacts were not regenerated; Market Regime Guardrail may remain stale."
+            "Market proxy replay publish completed with warnings; Market Regime Guardrail may remain stale."
         )
         status["warnings"].extend(failures)
+    elif not status["published"]:
+        status["status"] = "warning"
+        status["reason"] = str(validation.get("reason") or reason)
+        status["warnings"].extend(list(validation.get("warnings") or []))
+        status["warnings"].append(
+            "Replay artifacts were preserved; current replay artifacts need safe regeneration or restoration before the Market Regime Guardrail can become decision-ready."
+        )
+        status["warnings"].append(
+            "Bridge validation blocked current replay publication, but replay history partitions and snapshot registries may have been written during staged generation."
+        )
     else:
         status["status"] = "completed"
 
@@ -472,7 +843,10 @@ def _publish_market_proxy_replay_artifacts(*, verbose: bool) -> dict[str, Any]:
                 f"(latest_proxy_date={status.get('latest_proxy_date') or 'unknown'})"
             )
         else:
-            print("[refresh_signals] market-proxy replay publish: warning")
+            print(
+                "[refresh_signals] market-proxy replay publish: "
+                f"{status.get('status')} ({status.get('reason') or 'warning'})"
+            )
             for warning in status["warnings"]:
                 print(f"[refresh_signals]   {warning}")
 
@@ -492,10 +866,17 @@ def _build_refresh_scope(
     buy_candidates = _load_buy_candidate_symbols(cap=buy_candidate_cap) if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES else []
     buy_set = set(buy_candidates)
 
+    if mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
+        holdings = []
+        holdings_set = set()
+        buy_candidates = []
+        buy_set = set()
+
     include_market_proxies = mode in {
         REFRESH_MODE_PORTFOLIO_SIGNALS,
         REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
         REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
+        REFRESH_MODE_MARKET_REGIME_PROXY_ONLY,
     } or (mode == REFRESH_MODE_STALE_ONLY and _market_proxy_refresh_needed())
     market_proxies = _market_proxy_symbols() if include_market_proxies else []
     market_proxy_set = set(market_proxies)
@@ -513,8 +894,13 @@ def _build_refresh_scope(
     mandatory_dependencies -= buy_set
     mandatory_dependencies -= market_proxy_set
 
+    if mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
+        mandatory_dependencies = set()
+
     if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
         deduped_all = _all_universe_symbols(_BASE_UNIVERSE)
+    elif mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
+        deduped_all = sorted(market_proxy_set)
     else:
         deduped_all = sorted(holdings_set | buy_set | mandatory_dependencies | market_proxy_set)
 
@@ -522,6 +908,9 @@ def _build_refresh_scope(
     for provider in ("zacks", "danelfin", "yahoo"):
         if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
             provider_symbols[provider] = list(deduped_all)
+            continue
+        if mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
+            provider_symbols[provider] = list(market_proxies)
             continue
         if mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             merged: list[str] = []
@@ -1334,12 +1723,95 @@ def ensure_signals_fresh_with_report(
     smart: bool = False,
 ) -> dict[str, object]:
     """Check freshness and fetch stale/coverage-degraded providers with report."""
-    scope_plan = _build_refresh_scope(refresh_mode=refresh_mode)
+    resolved_mode = _normalize_refresh_mode(refresh_mode)
+    scope_plan = _build_refresh_scope(refresh_mode=resolved_mode)
     triggered: dict[str, bool] = {}
     provider_report: dict[str, dict[str, object]] = {}
     t0 = time.perf_counter()
     provider_set = {p.lower() for p in providers}
     scope_summary = scope_plan.get("scope_summary") or {}
+
+    replay_publish_status: dict[str, Any] = {
+        "attempted": False,
+        "status": "disabled",
+        "reason": "dedicated_proxy_artifact_architecture",
+        "artifacts": [
+            "data/current/replay_inputs.csv",
+            "data/current/replay_performance_series.csv",
+        ],
+        "latest_proxy_date_before": None,
+        "latest_proxy_date_after": None,
+        "latest_proxy_date": None,
+        "warnings": [
+            "Replay bridge publication is disabled for market regime proxy freshness; dedicated artifacts are used instead."
+        ],
+        "details": {},
+    }
+    dedicated_history_status: dict[str, Any] = {
+        "attempted": False,
+        "status": "skipped_not_in_scope",
+        "reason": "market_proxies_not_in_scope",
+        "published": False,
+        "symbols": [],
+        "observations_by_symbol": {},
+        "earliest_date": None,
+        "latest_common_date": None,
+        "missing_symbols": [],
+        "insufficient_symbols": [],
+        "warnings": [],
+        "transaction_id": None,
+    }
+    dedicated_proxy_build_status: dict[str, Any] = {
+        "attempted": False,
+        "status": "skipped_not_in_scope",
+        "reason": "market_proxies_not_in_scope",
+        "published": False,
+        "input_source": None,
+        "latest_proxy_date_before": None,
+        "latest_proxy_date_after": None,
+        "missing_inputs": [],
+        "warnings": [],
+        "transaction_id": None,
+    }
+
+    if resolved_mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
+        # Targeted path only: fetch four proxy symbols + build dedicated artifacts.
+        if dry_run:
+            dedicated_history_status["status"] = "skipped_dry_run"
+            dedicated_history_status["reason"] = "dry_run"
+            dedicated_proxy_build_status["status"] = "skipped_dry_run"
+            dedicated_proxy_build_status["reason"] = "dry_run"
+        else:
+            from src.portfolio.regime.market_regime_proxy_artifacts import (
+                build_market_regime_proxy_artifacts,
+                fetch_market_regime_proxy_history,
+            )
+
+            dedicated_history_status = fetch_market_regime_proxy_history(repo_root=_REPO_ROOT)
+            if bool(dedicated_history_status.get("published")):
+                dedicated_proxy_build_status = build_market_regime_proxy_artifacts(repo_root=_REPO_ROOT)
+            else:
+                dedicated_proxy_build_status["attempted"] = True
+                dedicated_proxy_build_status["status"] = "failed"
+                dedicated_proxy_build_status["reason"] = "history_fetch_failed"
+                dedicated_proxy_build_status["warnings"] = [
+                    "Dedicated proxy artifact build skipped because dedicated history fetch failed validation."
+                ]
+
+        return {
+            "triggered": triggered,
+            "providers": provider_report,
+            "refresh_intent": resolved_mode,
+            "scope_summary": scope_summary,
+            "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
+            "market_proxy_replay_publish": replay_publish_status,
+            "market_regime_proxy_history_fetch": dedicated_history_status,
+            "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
+            "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
+            "smart": bool(smart),
+            "dry_run": bool(dry_run),
+            "runtime_sec": round(time.perf_counter() - t0, 4),
+        }
 
     if "zacks" in provider_set:
         z = _refresh_zacks(
@@ -1391,23 +1863,29 @@ def ensure_signals_fresh_with_report(
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
         }
 
-    replay_publish_status: dict[str, Any] = {
-        "attempted": False,
-        "status": "skipped",
-        "artifacts": ["replay_inputs.csv", "replay_performance_series.csv"],
-        "latest_proxy_date": None,
-        "warnings": [],
-    }
-    if not dry_run and int(scope_summary.get("market_proxy_count") or 0) > 0:
-        replay_publish_status = _publish_market_proxy_replay_artifacts(verbose=verbose)
+    market_proxy_count = int(scope_summary.get("market_proxy_count") or 0)
+    if market_proxy_count > 0:
+        should_publish = True
+        if dry_run:
+            dedicated_proxy_build_status["status"] = "skipped_dry_run"
+            dedicated_proxy_build_status["reason"] = "dry_run"
+        elif should_publish:
+            from src.portfolio.regime.market_regime_proxy_artifacts import build_market_regime_proxy_artifacts
+
+            dedicated_proxy_build_status = build_market_regime_proxy_artifacts(repo_root=_REPO_ROOT)
+        else:
+            dedicated_proxy_build_status["status"] = "skipped_fresh"
+            dedicated_proxy_build_status["reason"] = "market_regime_proxy_artifacts_fresh"
 
     return {
         "triggered": triggered,
         "providers": provider_report,
-        "refresh_intent": _normalize_refresh_mode(refresh_mode),
+        "refresh_intent": resolved_mode,
         "scope_summary": scope_summary,
         "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
         "market_proxy_replay_publish": replay_publish_status,
+        "market_regime_proxy_history_fetch": dedicated_history_status,
+        "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
         "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
         "smart": bool(smart),
         "dry_run": bool(dry_run),

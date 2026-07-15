@@ -1,13 +1,50 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from src.portfolio.regime.market_regime_contract import validate_guardrail_payload
 from src.portfolio.regime.market_regime_guardrail import (
     build_market_regime_guardrail_from_rotation_summary,
     market_regime_guardrail_latest,
 )
+
+
+_REAL_REPO_ROOT = Path("/Users/scottmmeyer/Projects/security-intelligence-hub").resolve()
+_REAL_CURRENT_ROOT = (_REAL_REPO_ROOT / "data" / "current").resolve()
+_DEDICATED_FILES = (
+    "market_regime_proxy_summary.json",
+    "market_regime_proxy_inputs.csv",
+    "market_regime_proxy_price_history.csv",
+)
+_REPLAY_FILES = ("replay_inputs.csv", "replay_performance_series.csv")
+
+
+def _optional_sha256(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _current_hashes() -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for name in (*_DEDICATED_FILES, *_REPLAY_FILES):
+        out[name] = _optional_sha256(_REAL_CURRENT_ROOT / name)
+    return out
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _protect_real_current_artifacts() -> None:
+    before = _current_hashes()
+    yield
+    after = _current_hashes()
+    assert after == before, (
+        "Guardrail test isolation violation: live data/current artifacts changed. "
+        f"before={before} after={after}"
+    )
 
 
 def _base_rotation_summary() -> dict:
@@ -103,10 +140,22 @@ def test_market_regime_guardrail_unknown_when_proxy_timestamp_missing() -> None:
     assert validate_guardrail_payload(payload) == []
 
 
-def test_market_regime_guardrail_latest_is_fail_closed_unknown() -> None:
-    with patch("src.portfolio.regime.market_regime_guardrail.rotation_risk_summary", side_effect=RuntimeError("boom")):
-        payload = market_regime_guardrail_latest(Path("."))
+def test_market_regime_guardrail_latest_is_fail_closed_unknown(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    resolved = repo_root.resolve()
+    assert resolved != _REAL_CURRENT_ROOT
+    assert _REAL_CURRENT_ROOT not in resolved.parents
+
+    with (
+        patch(
+            "src.portfolio.regime.market_regime_guardrail.load_market_regime_rotation_summary",
+            return_value=(None, "legacy_replay_fallback", []),
+        ),
+        patch("src.portfolio.regime.market_regime_guardrail.rotation_risk_summary", side_effect=RuntimeError("boom")),
+    ):
+        payload = market_regime_guardrail_latest(repo_root)
 
     assert payload["regime"] == "UNKNOWN"
     assert payload["confidence"] == "LOW"
     assert payload["scoring_impact"] == "none"
+    assert payload["input_source"] == "legacy_replay_fallback"

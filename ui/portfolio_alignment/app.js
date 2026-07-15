@@ -1076,7 +1076,13 @@ function renderMarketRegimeGuardrailCard(g) {
   const evidence = Array.isArray(g.evidence) ? g.evidence : [];
   const checks = Array.isArray(g.recommended_operator_checks) ? g.recommended_operator_checks : [];
   const freshness = g.data_freshness || {};
-  const marketTs = escHtml(freshness.market_proxies_ts || "unknown");
+  const inputSourceRaw = String(g.input_source || "unknown");
+  const inputSourceLabel = inputSourceRaw === "dedicated_market_regime_price_history"
+    ? "Dedicated Market Regime Proxy"
+    : (inputSourceRaw === "legacy_yahoo_snapshot_fallback"
+      ? "Legacy Yahoo Snapshot Fallback"
+      : (inputSourceRaw === "legacy_replay_fallback" ? "Legacy Replay Fallback" : inputSourceRaw));
+  const marketTs = escHtml(freshness.market_proxies_ts || "unavailable");
   const snapTs = escHtml(freshness.portfolio_snapshot_ts || "unknown");
   const freshnessStatus = escHtml(freshness.freshness_status || "UNKNOWN");
   const lagRaw = (freshness.market_proxy_age_days === 0 || freshness.market_proxy_age_days)
@@ -1113,6 +1119,7 @@ function renderMarketRegimeGuardrailCard(g) {
         <div><span class="mrg-k">Trim</span><span class="mrg-v">${trim}</span></div>
         <div><span class="mrg-k">Cash</span><span class="mrg-v">${cash}</span></div>
         <div><span class="mrg-k">Scoring Impact</span><span class="mrg-v">${escHtml(g.scoring_impact || "none")}</span></div>
+        <div><span class="mrg-k">Input Source</span><span class="mrg-v">${escHtml(inputSourceLabel)}</span></div>
       </div>
       <div class="mrg-freshness">Proxy TS: ${marketTs} · Portfolio TS: ${snapTs}</div>
       <div class="mrg-freshness">Freshness Status: ${freshnessStatus} · Lag: ${lagDays} day(s) · Threshold: ${lagThreshold}</div>

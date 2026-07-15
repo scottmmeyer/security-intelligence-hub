@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from src.portfolio.regime.market_regime_guardrail import build_market_regime_guardrail_from_rotation_summary
-from src.portfolio.regime.market_regime_inputs import evaluate_market_proxy_freshness
+from src.portfolio.regime.market_regime_inputs import evaluate_market_proxy_freshness, normalized_rotation_context
 
 
 def test_market_regime_parses_date_only_proxy_timestamp() -> None:
@@ -83,3 +83,25 @@ def test_market_regime_scoring_impact_always_none() -> None:
     )
 
     assert payload["scoring_impact"] == "none"
+
+
+def test_market_proxy_timestamp_does_not_fallback_to_signal_snapshot_date() -> None:
+    context = normalized_rotation_context(
+        {
+            "status": "DATA_UNAVAILABLE",
+            "signal": "DATA_UNAVAILABLE",
+            "as_of_date": "2026-07-15",
+            "proxy_returns": {
+                "latest_proxy_date": "",
+                "tech_returns": {},
+                "rotation_spread_pct": {},
+            },
+            "data_quality": {
+                "signal_snapshot_date": "2026-07-15",
+                "missing_inputs": ["TECHNOLOGY benchmark proxy"],
+            },
+        }
+    )
+
+    assert context["market_proxies_ts"] is None
+    assert context["freshness"]["freshness_status"] == "MISSING"

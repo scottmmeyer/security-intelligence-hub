@@ -5,6 +5,10 @@ from typing import Any
 
 from src.portfolio.regime.market_regime_contract import MarketRegimeGuardrail, unknown_guardrail
 from src.portfolio.regime.market_regime_inputs import normalized_rotation_context
+from src.portfolio.regime.market_regime_proxy_artifacts import (
+    LEGACY_REPLAY_FALLBACK_SOURCE,
+    load_market_regime_rotation_summary,
+)
 from src.sih.rotation_risk_monitor import rotation_risk_summary
 
 
@@ -255,12 +259,28 @@ def build_market_regime_guardrail_from_rotation_summary(
 
 
 def market_regime_guardrail_latest(repo_root: Path, run_id: str = "") -> dict[str, Any]:
+    input_source = LEGACY_REPLAY_FALLBACK_SOURCE
     try:
-        rotation = rotation_risk_summary(repo_root=repo_root, run_id=run_id)
+        dedicated_rotation, source_label, warnings = load_market_regime_rotation_summary(repo_root=repo_root)
+        if dedicated_rotation is not None:
+            rotation = dedicated_rotation
+            input_source = source_label
+        elif source_label == LEGACY_REPLAY_FALLBACK_SOURCE:
+            rotation = rotation_risk_summary(repo_root=repo_root, run_id=run_id)
+            input_source = LEGACY_REPLAY_FALLBACK_SOURCE
+        else:
+            reason = "Dedicated market regime proxy artifact is invalid; replay fallback is disabled when dedicated artifact is present."
+            if warnings:
+                reason = reason + " " + " ".join(str(x) for x in warnings)
+            payload = unknown_guardrail(reason=reason).to_dict()
+            payload["scoring_impact"] = "none"
+            payload["input_source"] = source_label
+            return payload
     except Exception:
         rotation = None
     payload = build_market_regime_guardrail_from_rotation_summary(rotation)
     payload["scoring_impact"] = "none"
+    payload["input_source"] = input_source
     return payload
 
 
