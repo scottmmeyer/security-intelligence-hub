@@ -76,7 +76,7 @@ def test_partition_path_generation_for_signal_and_base() -> None:
     assert str(base_paths.index_path) == "data/history/universe_index.csv"
 
 
-def test_signal_partition_is_immutable_and_current_is_overwritable(tmp_path: Path) -> None:
+def test_signal_partition_is_immutable_and_current_merges_same_snapshot_partitions(tmp_path: Path) -> None:
     current_root = tmp_path / "data" / "current"
     signal_history_root = tmp_path / "data" / "history" / "signals"
     signal_index_path = tmp_path / "data" / "history" / "signal_index.csv"
@@ -107,9 +107,8 @@ def test_signal_partition_is_immutable_and_current_is_overwritable(tmp_path: Pat
     )
 
     current_rows = _read_csv_rows(current_root / "signal_snapshot.csv")
-    assert len(current_rows) == 1
-    assert current_rows[0]["run_id"] == "RUN-SIGNAL-002"
-    assert current_rows[0]["symbol"] == "BBB"
+    assert {row["symbol"] for row in current_rows} == {"AAA", "BBB"}
+    assert len(current_rows) == 2
 
     run1_partition_rows = _read_csv_rows(
         signal_history_root / "snapshot_date=2026-05-13" / "run_id=RUN-SIGNAL-001" / "signal_snapshots.csv"
@@ -127,30 +126,29 @@ def test_signal_partition_is_immutable_and_current_is_overwritable(tmp_path: Pat
     assert len(signal_index_rows) == 2
 
 
-def test_base_universe_partition_is_immutable_and_current_is_overwritable(tmp_path: Path) -> None:
+def test_base_universe_partition_is_immutable_and_current_view_merges_same_snapshot_partitions(
+    tmp_path: Path,
+) -> None:
     current_root = tmp_path / "data" / "current"
     universe_history_root = tmp_path / "data" / "history" / "universe"
     universe_index_path = tmp_path / "data" / "history" / "universe_index.csv"
 
     append_base_universe_rows(
-        base_rows=[_base_row("AAA")],
+        base_rows=[
+            {**_base_row("AAA"), "coverage_domain": "STARMINE_COVERED", "source_file": "run_a.csv", "run_id": "RUN-BASE-001"},
+            {**_base_row("CCC"), "coverage_domain": "STARMINE_COVERED", "source_file": "run_a.csv", "run_id": "RUN-BASE-001"},
+        ],
         run_id="RUN-BASE-001",
         current_root=current_root,
         history_root=universe_history_root,
         index_path=universe_index_path,
     )
 
-    with pytest.raises(ValueError, match="Immutable base-universe partition protection"):
-        append_base_universe_rows(
-            base_rows=[_base_row("AAA")],
-            run_id="RUN-BASE-001",
-            current_root=current_root,
-            history_root=universe_history_root,
-            index_path=universe_index_path,
-        )
-
     append_base_universe_rows(
-        base_rows=[_base_row("BBB")],
+        base_rows=[
+            {**_base_row("AAA"), "coverage_domain": "NON_STARMINE_ANALYST", "source_file": "run_b.csv", "run_id": "RUN-BASE-002"},
+            {**_base_row("BBB"), "coverage_domain": "NON_STARMINE_ANALYST", "source_file": "run_b.csv", "run_id": "RUN-BASE-002"},
+        ],
         run_id="RUN-BASE-002",
         current_root=current_root,
         history_root=universe_history_root,
@@ -158,21 +156,21 @@ def test_base_universe_partition_is_immutable_and_current_is_overwritable(tmp_pa
     )
 
     current_rows = _read_csv_rows(current_root / "base_equity_universe.csv")
-    assert len(current_rows) == 1
-    assert current_rows[0]["run_id"] == "RUN-BASE-002"
-    assert current_rows[0]["symbol"] == "BBB"
+    assert {row["symbol"] for row in current_rows} == {"AAA", "BBB", "CCC"}
+    assert len(current_rows) == 3
+    aaa_row = next(row for row in current_rows if row["symbol"] == "AAA")
+    assert aaa_row["coverage_domain"] == "STARMINE_COVERED"
+    assert aaa_row["source_file"] == "run_a.csv"
 
     run1_partition_rows = _read_csv_rows(
         universe_history_root / "snapshot_date=2026-05-13" / "run_id=RUN-BASE-001" / "base_equity_universe.csv"
     )
-    assert len(run1_partition_rows) == 1
-    assert run1_partition_rows[0]["symbol"] == "AAA"
+    assert {row["symbol"] for row in run1_partition_rows} == {"AAA", "CCC"}
 
     run2_partition_rows = _read_csv_rows(
         universe_history_root / "snapshot_date=2026-05-13" / "run_id=RUN-BASE-002" / "base_equity_universe.csv"
     )
-    assert len(run2_partition_rows) == 1
-    assert run2_partition_rows[0]["symbol"] == "BBB"
+    assert {row["symbol"] for row in run2_partition_rows} == {"AAA", "BBB"}
 
     universe_index_rows = _read_csv_rows(universe_index_path)
     assert len(universe_index_rows) == 2

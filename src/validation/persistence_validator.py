@@ -237,6 +237,7 @@ def validate_ess_stage_persistence(
             artifact_path=universe_paths.current_base_universe_path,
             expected_manifest_count=expected_base_universe_rows,
             require_partition_run_isolation=False,
+            enforce_manifest_count_match=False,
         ),
         _ArtifactSpec(
             artifact_name="partition/signal_snapshots.csv",

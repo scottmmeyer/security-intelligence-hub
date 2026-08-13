@@ -158,6 +158,90 @@ def _count_unique(rows: List[Dict[str, object]], key: str) -> int:
     return len(values)
 
 
+def _coverage_rank(row: Dict[str, object]) -> int:
+    """Higher number = preferred.  STARMINE_COVERED beats NON_STARMINE_ANALYST."""
+    domain = str(row.get("coverage_domain") or "").strip()
+    if domain == "STARMINE_COVERED":
+        return 2
+    if domain == "NON_STARMINE_ANALYST":
+        return 1
+    return 0
+
+
+def _build_merged_base_universe(
+    *,
+    snapshot_date: str,
+    history_root: Path,
+    extra_rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Return a merged current base-universe view for a snapshot date.
+
+    Collects all valid same-date partition rows plus the current batch, then keeps
+    the highest-precedence row per symbol. This mirrors signal_snapshot_manager's
+    current-view semantics and prevents later intake lanes from silently
+    dropping earlier valid coverage.
+    """
+    all_rows: List[Dict[str, object]] = list(extra_rows)
+
+    date_dir = history_root / f"snapshot_date={snapshot_date}"
+    if date_dir.exists():
+        for run_dir in sorted(date_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            universe_file = run_dir / "base_equity_universe.csv"
+            if universe_file.exists():
+                all_rows.extend(_read_csv_rows(universe_file))
+
+    best: Dict[str, Dict[str, object]] = {}
+    for row in all_rows:
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        existing = best.get(sym)
+        if existing is None:
+            best[sym] = row
+        else:
+            r_rank = _coverage_rank(row)
+            e_rank = _coverage_rank(existing)
+            if r_rank > e_rank:
+                best[sym] = row
+            elif r_rank == e_rank:
+                if str(row.get("created_at_utc") or "") > str(existing.get("created_at_utc") or ""):
+                    best[sym] = row
+
+    return sorted(best.values(), key=lambda r: str(r.get("symbol") or ""))
+
+
+def rebuild_current_base_universe(
+    *,
+    snapshot_date: str,
+    current_root: str | Path = "data/current",
+    history_root: str | Path = "data/history/universe",
+) -> List[Dict[str, object]]:
+    """Rebuild the canonical current base-universe view from all valid same-date partitions."""
+    current_root_path = Path(current_root)
+    history_root_path = Path(history_root)
+    date_dir = history_root_path / f"snapshot_date={snapshot_date}"
+    if not date_dir.exists():
+        return []
+
+    merged_rows: List[Dict[str, object]] = []
+    for run_dir in sorted(date_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        partition_file = run_dir / "base_equity_universe.csv"
+        if partition_file.exists():
+            merged_rows.extend(_read_csv_rows(partition_file))
+
+    rebuilt = _build_merged_base_universe(
+        snapshot_date=snapshot_date,
+        history_root=history_root_path,
+        extra_rows=merged_rows,
+    )
+    _write_csv_rows(current_root_path / "base_equity_universe.csv", BASE_UNIVERSE_HEADERS, rebuilt)
+    return rebuilt
+
+
 def append_base_universe_rows(
     *,
     base_rows: Iterable[Dict[str, object]],
@@ -276,7 +360,13 @@ def append_base_universe_rows(
     storage_paths.partition_dir.mkdir(parents=True, exist_ok=False)
     _write_csv_rows(storage_paths.partition_base_universe_path, BASE_UNIVERSE_HEADERS, universe_rows)
     _write_csv_rows(storage_paths.partition_lineage_registry_path, UNIVERSE_LINEAGE_HEADERS, lineage_rows)
-    _write_csv_rows(storage_paths.current_base_universe_path, BASE_UNIVERSE_HEADERS, universe_rows)
+
+    merged = _build_merged_base_universe(
+        snapshot_date=snapshot_date,
+        history_root=Path(history_root),
+        extra_rows=universe_rows,
+    )
+    _write_csv_rows(storage_paths.current_base_universe_path, BASE_UNIVERSE_HEADERS, merged)
 
     index_entry = {
         "snapshot_date": snapshot_date,
