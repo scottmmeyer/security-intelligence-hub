@@ -210,6 +210,32 @@ def _derive_default_end_date(start_date: str) -> str:
     return min(start + timedelta(days=365), date.today()).isoformat()
 
 
+def _derive_default_history_start(snapshot_date: str) -> str:
+    snapshot = date.fromisoformat(snapshot_date)
+    return (snapshot - timedelta(days=365)).isoformat()
+
+
+def _resolve_history_window(
+    *,
+    snapshot_date: str,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[str, str]:
+    """Resolve replay history window while preserving explicit caller overrides.
+
+    Default behavior is a trailing 365-day window ending at snapshot_date.
+    Explicit start/end overrides keep their historical behavior for backward
+    compatibility with existing callers.
+    """
+    if start_date is None and end_date is None:
+        return _derive_default_history_start(snapshot_date), snapshot_date
+    if start_date is not None and end_date is None:
+        return start_date, _derive_default_end_date(start_date)
+    if start_date is None and end_date is not None:
+        return snapshot_date, end_date
+    return str(start_date), str(end_date)
+
+
 def _atomic_publish_current_outputs(
     tmp_root: Path,
     current_root: Path,
@@ -321,8 +347,11 @@ def build_wp04_foundation(
         history_root=analytical_history_root,
     )
 
-    replay_start = start_date or snapshot_date
-    replay_end = end_date or _derive_default_end_date(replay_start)
+    replay_start, replay_end = _resolve_history_window(
+        snapshot_date=snapshot_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
     window_errors = validate_historical_replay_window(start_date=replay_start, end_date=replay_end)
     if window_errors:
         raise ValueError("Replay window invalid: " + "; ".join(window_errors))
@@ -331,6 +360,7 @@ def build_wp04_foundation(
         analytical_rows=rows,
         start_date=replay_start,
         end_date=replay_end,
+        analytical_snapshot_date=snapshot_date,
         market_cap_bucket=filter_market_cap_bucket,
         geography=filter_geography,
         industry=filter_industry,

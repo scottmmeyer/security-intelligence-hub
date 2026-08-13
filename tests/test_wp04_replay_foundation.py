@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict
+from datetime import date, timedelta
 from pathlib import Path
 
 from src.history.analytical_universe_manager import (
@@ -12,6 +13,8 @@ from src.history.analytical_universe_manager import (
 from src.history.base_universe_manager import BASE_UNIVERSE_HEADERS
 from src.history.signal_snapshot_manager import SNAPSHOT_HEADERS
 from src.models.analytical_models import AnalyticalUniverseRow
+from src.models.market_data_models import BenchmarkReturnRow, InvestableVehicleReturnRow
+from src.replay.foundation_service import build_wp04_foundation
 from src.replay.history_providers import PricePoint
 from src.replay.registry_loader import (
     load_benchmark_category_registry,
@@ -39,6 +42,86 @@ def _write_csv(path: Path, headers: list[str], rows: list[dict[str, str]]) -> No
         writer = csv.DictWriter(handle, fieldnames=headers)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _seed_current_inputs(current_root: Path, *, snapshot_date: str) -> None:
+    _write_csv(
+        current_root / "base_equity_universe.csv",
+        BASE_UNIVERSE_HEADERS,
+        [
+            {
+                "symbol": "AAA",
+                "company_name": "AAA Corp",
+                "security_type": "Common Stock",
+                "geography": "US",
+                "market_cap_raw_usd": "12000000000",
+                "market_cap_bucket": "LARGE",
+                "coverage_domain": "STARMINE_COVERED",
+                "starmine_ess_text": "BULLISH",
+                "provider": "FIDELITY",
+                "source_file": "fixture.csv",
+                "snapshot_date": snapshot_date,
+                "created_at_utc": f"{snapshot_date}T00:00:00+00:00",
+                "run_id": "RUN-TEST",
+            }
+        ],
+    )
+    _write_csv(
+        current_root / "signal_snapshot.csv",
+        SNAPSHOT_HEADERS,
+        [
+            {
+                "snapshot_date": snapshot_date,
+                "created_at_utc": f"{snapshot_date}T00:00:00+00:00",
+                "run_id": "RUN-TEST",
+                "provider": "FIDELITY",
+                "source_file": "fixture.csv",
+                "symbol": "AAA",
+                "coverage_domain": "STARMINE_COVERED",
+                "signal_coverage_status": "COVERED",
+                "starmine_ess_text": "BULLISH",
+                "starmine_ess_numeric": "4.0",
+                "starmine_ess_numeric_estimated": "True",
+                "starmine_ess_source_type": "TEXT_MAPPED",
+            }
+        ],
+    )
+
+
+class _DateCapturingBenchmarkProvider:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str, str]] = []
+
+    def get_benchmark_returns(self, *, benchmark_id: str, symbol_or_index: str, start_date: str, end_date: str):
+        self.calls.append((benchmark_id, symbol_or_index, start_date, end_date))
+        return [
+            BenchmarkReturnRow(benchmark_id, symbol_or_index, start_date, 100.0, 0.0, "TEST"),
+            BenchmarkReturnRow(benchmark_id, symbol_or_index, end_date, 101.0, 0.01, "TEST"),
+        ]
+
+    def get_benchmark_series(self, benchmark_symbol_or_index: str, start_date: str, end_date: str):
+        return [
+            PricePoint(date=start_date, value=100.0),
+            PricePoint(date=end_date, value=101.0),
+        ]
+
+
+class _DateCapturingVehicleProvider:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str, str]] = []
+
+    def get_investable_vehicle_returns(self, *, vehicle_id: str, symbol: str, start_date: str, end_date: str):
+        self.calls.append((vehicle_id, symbol, start_date, end_date))
+        return [
+            InvestableVehicleReturnRow(vehicle_id, symbol, start_date, 100.0, 0.0, "TEST"),
+            InvestableVehicleReturnRow(vehicle_id, symbol, end_date, 101.0, 0.01, "TEST"),
+        ]
+
+    def get_vehicle_series(self, symbol: str, start_date: str, end_date: str):
+        return [
+            PricePoint(date=start_date, value=100.0),
+            PricePoint(date=end_date, value=101.0),
+        ]
 
 
 class _FakeSecurityProvider:
@@ -281,3 +364,58 @@ def test_performance_series_contract_generation_and_persistence(tmp_path: Path) 
     assert "current_inputs_path" in paths
     assert "current_series_path" in paths
     assert Path(paths["replay_metadata_path"]).exists()
+
+
+def test_wp04_foundation_default_window_uses_trailing_history_for_same_day_snapshot(tmp_path: Path) -> None:
+    snapshot_date = date.today().isoformat()
+    expected_start = (date.today() - timedelta(days=365)).isoformat()
+    current_root = tmp_path / "data" / "current"
+
+    _seed_current_inputs(current_root, snapshot_date=snapshot_date)
+    benchmark_provider = _DateCapturingBenchmarkProvider()
+    vehicle_provider = _DateCapturingVehicleProvider()
+
+    result = build_wp04_foundation(
+        run_id="RUN-WP04-DATE-DEFAULT",
+        snapshot_date=snapshot_date,
+        current_root=current_root,
+        analytical_history_root=tmp_path / "data" / "history" / "analytical_universe",
+        replay_history_root=tmp_path / "data" / "history" / "replays",
+        benchmark_return_provider=benchmark_provider,
+        investable_vehicle_return_provider=vehicle_provider,
+    )
+
+    assert result["selection"]["composite_score_snapshot_date"] == snapshot_date
+    assert result["selection"]["start_date"] == expected_start
+    assert result["selection"]["end_date"] == snapshot_date
+    assert benchmark_provider.calls
+    assert benchmark_provider.calls[0][2] == expected_start
+    assert benchmark_provider.calls[0][3] == snapshot_date
+
+
+def test_wp04_foundation_explicit_history_window_uses_snapshot_for_analytical_selection(tmp_path: Path) -> None:
+    snapshot_date = "2026-08-13"
+    history_start = "2025-08-13"
+    history_end = snapshot_date
+    current_root = tmp_path / "data" / "current"
+
+    _seed_current_inputs(current_root, snapshot_date=snapshot_date)
+    benchmark_provider = _DateCapturingBenchmarkProvider()
+    vehicle_provider = _DateCapturingVehicleProvider()
+
+    result = build_wp04_foundation(
+        run_id="RUN-WP04-DATE-EXPLICIT",
+        snapshot_date=snapshot_date,
+        start_date=history_start,
+        end_date=history_end,
+        current_root=current_root,
+        analytical_history_root=tmp_path / "data" / "history" / "analytical_universe",
+        replay_history_root=tmp_path / "data" / "history" / "replays",
+        benchmark_return_provider=benchmark_provider,
+        investable_vehicle_return_provider=vehicle_provider,
+    )
+
+    assert result["selection"]["start_date"] == history_start
+    assert result["selection"]["end_date"] == history_end
+    assert result["selection"]["composite_score_snapshot_date"] == snapshot_date
+    assert tuple(result["selection"]["selected_symbols"]) == ("AAA",)

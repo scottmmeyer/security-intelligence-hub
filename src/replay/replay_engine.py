@@ -107,6 +107,7 @@ def select_top_n_replay(
     analytical_rows: Iterable[AnalyticalUniverseRow],
     start_date: str,
     end_date: str,
+    analytical_snapshot_date: str | None = None,
     market_cap_bucket: str,
     geography: str,
     industry: str,
@@ -132,11 +133,13 @@ def select_top_n_replay(
     industry_filter = industry.upper()
     subtier_filter = filter_analytical_subtier.upper() if filter_analytical_subtier else None
 
-    start_rows = [row for row in analytical_rows if row.snapshot_date == start_date]
+    composite_snapshot_date = analytical_snapshot_date or start_date
+
+    start_rows = [row for row in analytical_rows if row.snapshot_date == composite_snapshot_date]
     if not start_rows:
         raise ValueError(
-            "Replay selection blocked: no analytical universe rows found for start_date="
-            f"{start_date}."
+            "Replay selection blocked: no analytical universe rows found for composite_score_snapshot_date="
+            f"{composite_snapshot_date}."
         )
 
     filtered_rows = [
@@ -186,7 +189,7 @@ def select_top_n_replay(
         selection_method=selection_method,
         top_n=top_n,
         selected_symbols=tuple(row.symbol for row in selected_rows),
-        composite_score_snapshot_date=start_date,
+        composite_score_snapshot_date=composite_snapshot_date,
         replay_mode=detect_replay_mode(start_date, end_date),
     )
 

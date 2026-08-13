@@ -156,18 +156,23 @@ def validate_replay_no_lookahead(
     selection: ReplaySelection,
     start_snapshot_rows: Sequence[AnalyticalUniverseRow],
 ) -> List[str]:
-    """Enforce that selected symbols originate from the start-date snapshot only."""
+    """Enforce that selected symbols originate from the declared composite snapshot.
+
+    The composite snapshot date must lie within the replay window to avoid
+    lookahead leakage outside the evaluation interval.
+    """
 
     errors: List[str] = []
     try:
         start_date = date.fromisoformat(selection.start_date)
+        end_date = date.fromisoformat(selection.end_date)
         composite_date = date.fromisoformat(selection.composite_score_snapshot_date)
     except ValueError:
-        return ["Replay selection has invalid start_date or composite_score_snapshot_date."]
+        return ["Replay selection has invalid start_date/end_date/composite_score_snapshot_date."]
 
-    if composite_date != start_date:
+    if composite_date < start_date or composite_date > end_date:
         errors.append(
-            "Replay no-lookahead violation: composite_score_snapshot_date must equal start_date."
+            "Replay no-lookahead violation: composite_score_snapshot_date must lie within [start_date, end_date]."
         )
 
     rows_by_symbol = {row.symbol: row for row in start_snapshot_rows}
