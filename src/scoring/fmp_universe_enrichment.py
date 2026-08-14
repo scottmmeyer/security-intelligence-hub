@@ -55,6 +55,10 @@ COVERAGE_PROVIDER_NO_DATA = "PROVIDER_NO_DATA"
 COVERAGE_FETCH_FAILED = "FETCH_FAILED"
 COVERAGE_NOT_FETCHED = "NOT_FETCHED"
 
+ATTEMPT_PROVENANCE_LEDGER = "LEDGER_CONFIRMED"
+ATTEMPT_PROVENANCE_LEGACY = "LEGACY_PAYLOAD_CONFIRMED"
+ATTEMPT_PROVENANCE_UNKNOWN = "UNKNOWN"
+
 FETCH_STATUS_SUCCESS = "SUCCESS"
 FETCH_STATUS_PROVIDER_NO_DATA = "PROVIDER_NO_DATA"
 FETCH_STATUS_FETCH_FAILED = "FETCH_FAILED"
@@ -68,6 +72,7 @@ ENRICHED_HEADERS = [
     "symbol",
     "fmp_coverage_status",
     "fmp_attempted",
+    "fmp_attempt_provenance",
     "fmp_sourced_date",
     # Key Metrics TTM
     "pe_ratio_ttm",
@@ -108,6 +113,7 @@ class FmpEnrichedRecord:
     symbol: str
     fmp_coverage_status: str
     fmp_attempted: str
+    fmp_attempt_provenance: str
     fmp_sourced_date: str
 
     # Key metrics TTM
@@ -246,6 +252,29 @@ def classify_coverage(
     return COVERAGE_PROVIDER_NO_DATA
 
 
+def _attempt_provenance(
+    *,
+    security_type: str,
+    product_statuses: Dict[str, str],
+    km: Optional[Dict[str, str]],
+    gr: Optional[Dict[str, str]],
+    es: Optional[Dict[str, str]],
+    ig: Optional[Dict[str, str]],
+) -> str:
+    """Return symbol-level attempt provenance.
+
+    Ledger rows are authoritative for modern attempts. For pre-ledger symbols,
+    persisted product cache rows are treated as legacy-confirmed evidence.
+    """
+    if security_type.strip().upper() in _ETF_LIKE_TYPES:
+        return ATTEMPT_PROVENANCE_UNKNOWN
+    if product_statuses:
+        return ATTEMPT_PROVENANCE_LEDGER
+    if any(row is not None for row in (km, gr, es, ig)):
+        return ATTEMPT_PROVENANCE_LEGACY
+    return ATTEMPT_PROVENANCE_UNKNOWN
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 
 def build_fmp_enriched_universe(
@@ -298,7 +327,15 @@ def build_fmp_enriched_universe(
         ig        = ig_by_sym.get(sym)
 
         product_statuses = status_by_sym.get(sym, {})
-        attempted = bool(product_statuses) or any(row is not None for row in (km, gr, es, ig))
+        attempt_provenance = _attempt_provenance(
+            security_type=sec_type,
+            product_statuses=product_statuses,
+            km=km,
+            gr=gr,
+            es=es,
+            ig=ig,
+        )
+        attempted = attempt_provenance != ATTEMPT_PROVENANCE_UNKNOWN
         coverage = classify_coverage(sec_type, attempted, product_statuses, km, gr, es, ig)
 
         # Derive sourced_date from any available row
@@ -309,6 +346,7 @@ def build_fmp_enriched_universe(
             symbol=sym,
             fmp_coverage_status=coverage,
             fmp_attempted="1" if attempted else "0",
+            fmp_attempt_provenance=attempt_provenance,
             fmp_sourced_date=sourced,
             # Key metrics
             pe_ratio_ttm=_get(km, "pe_ratio_ttm"),

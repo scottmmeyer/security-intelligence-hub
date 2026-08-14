@@ -585,12 +585,19 @@ def _build_fmp_component(*, repo_root: Path) -> PreflightComponentResult:
         )
 
     full = partial = provider_no_data = applicable = fetch_failure = not_fetched = not_applicable = 0
+    ledger_confirmed_attempted = 0
+    legacy_confirmed_attempted = 0
     for row in rows:
         status = str(row.get("fmp_coverage_status", "")).strip().upper()
         if status in {"ETF_NOT_APPLICABLE", "NOT_APPLICABLE"}:
             not_applicable += 1
             continue
         applicable += 1
+        provenance = str(row.get("fmp_attempt_provenance", "")).strip().upper()
+        if provenance == "LEDGER_CONFIRMED":
+            ledger_confirmed_attempted += 1
+        elif provenance == "LEGACY_PAYLOAD_CONFIRMED":
+            legacy_confirmed_attempted += 1
         if status == "FULL":
             full += 1
         elif status == "PARTIAL":
@@ -603,6 +610,7 @@ def _build_fmp_component(*, repo_root: Path) -> PreflightComponentResult:
             fetch_failure += 1
 
     attempted = full + partial + provider_no_data + fetch_failure
+    coverage_inferred_attempted = max(0, attempted - ledger_confirmed_attempted - legacy_confirmed_attempted)
     completed_hydration = full + partial + provider_no_data
     usable_data = full + partial
     hydration_pct = round((completed_hydration / applicable * 100.0), 4) if applicable > 0 else None
@@ -612,6 +620,9 @@ def _build_fmp_component(*, repo_root: Path) -> PreflightComponentResult:
         {
             "applicable_symbols": applicable,
             "attempted_symbols": attempted,
+            "ledger_confirmed_attempted_symbols": ledger_confirmed_attempted,
+            "legacy_confirmed_attempted_symbols": legacy_confirmed_attempted,
+            "coverage_inferred_attempted_symbols": coverage_inferred_attempted,
             "completed_hydration_symbols": completed_hydration,
             "full_symbols": full,
             "partial_symbols": partial,
