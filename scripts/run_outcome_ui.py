@@ -1201,6 +1201,20 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self._json_response(data)
         elif path == "/api/refresh-transparency":
             self._json_response(_refresh_transparency_payload())
+        elif path == "/api/portfolio/preflight":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.validation.analysis_preflight import run_analysis_preflight
+
+                payload = run_analysis_preflight(
+                    repo_root=_REPO_ROOT,
+                    require_active_ess=True,
+                ).to_dict()
+                self._json_response(payload)
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
         elif path == "/api/signal-refresh/status":
             running = _refresh_proc is not None and _refresh_proc.poll() is None
             self._json_response(_refresh_status_payload(running=running))

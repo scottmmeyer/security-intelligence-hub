@@ -222,3 +222,28 @@ def test_operator_priorities_alias_routes_return_json_contract():
     assert payload_b["reason"] == "operator_action_plan_missing"
     assert payload_a["run_id"] == "PAR-TEST"
     assert payload_b["run_id"] == "PAR-TEST"
+
+
+def test_portfolio_preflight_endpoint_returns_read_only_payload():
+    class _StubPreflight:
+        def to_dict(self):
+            return {
+                "status": "DEGRADED",
+                "reason_codes": ["PF-GEO-001"],
+                "components": {"geography": {"status": "DEGRADED"}},
+                "suppression_flags": {"suppress_action_recommendation_cards": False},
+            }
+
+    payload = _fetch_json(
+        "/api/portfolio/preflight",
+        patchers=[
+            patch(
+                "src.validation.analysis_preflight.run_analysis_preflight",
+                return_value=_StubPreflight(),
+            )
+        ],
+    )
+
+    assert payload["status"] == "DEGRADED"
+    assert payload["reason_codes"] == ["PF-GEO-001"]
+    assert payload["components"]["geography"]["status"] == "DEGRADED"

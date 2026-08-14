@@ -62,6 +62,7 @@ from .scoring import compute_multi_dimensional_score, detect_intentional_asymmet
 from .trim_intelligence import build_strategic_profiles, validate_trim_intelligence_consistency
 from .fvi_loader import load_fvi_registry, build_fvi_data_for_holdings
 from .action_latency import build_action_latency_by_symbol
+from src.validation.analysis_preflight import run_analysis_preflight
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INGESTION_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion"
@@ -842,31 +843,52 @@ def run_analysis(
         portfolio_compliance = None
         operational_warnings.append(f"CPV_EVALUATION_FAILED: {_cpv_exc}")
 
+    # ── Analysis preflight (read-only readiness governance gate) ─────────────
+    preflight = run_analysis_preflight(
+        repo_root=_REPO_ROOT,
+        require_active_ess=True,
+        holdings_rows=[dataclasses.asdict(h) for h in enriched],
+    )
+    preflight_blocked = preflight.status == "BLOCKED"
+    if preflight_blocked:
+        operational_warnings.append(
+            "PREFLIGHT_BLOCKED: Action-oriented outputs are suppressed; see analysis_preflight reason codes."
+        )
+
     # ── Phase F/G/H — Recommendations + security overlays ────────────────────
-    overlays = build_security_overlays(
-        portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
-        holdings=investable,
-        alignment_results=alignment,
-    )
+    if preflight_blocked:
+        overlays = []
+        strategic_profiles = []
+        sti_warnings = []
+        recs = []
+        phase_e_warnings = [
+            "Preflight BLOCKED: action-oriented recommendations suppressed until blocking prerequisites are resolved."
+        ]
+    else:
+        overlays = build_security_overlays(
+            portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
+            holdings=investable,
+            alignment_results=alignment,
+        )
 
-    # ── Phase D — Strategic Trim Intelligence ─────────────────────────────
-    strategic_profiles = build_strategic_profiles(
-        portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
-        holdings=investable,
-        overlays=overlays,
-        alignment_results=alignment,
-    )
-    sti_warnings = validate_trim_intelligence_consistency(strategic_profiles)
+        # ── Phase D — Strategic Trim Intelligence ─────────────────────────────
+        strategic_profiles = build_strategic_profiles(
+            portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
+            holdings=investable,
+            overlays=overlays,
+            alignment_results=alignment,
+        )
+        sti_warnings = validate_trim_intelligence_consistency(strategic_profiles)
 
-    recs, phase_e_warnings = generate_recommendations_with_phase_e_warnings(
-        analysis_run_id=run_id,
-        portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
-        holdings=investable,
-        alignment_results=alignment,
-        concentration=concentration,
-        overlays=overlays,
-        strategic_profiles=strategic_profiles,
-    )
+        recs, phase_e_warnings = generate_recommendations_with_phase_e_warnings(
+            analysis_run_id=run_id,
+            portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
+            holdings=investable,
+            alignment_results=alignment,
+            concentration=concentration,
+            overlays=overlays,
+            strategic_profiles=strategic_profiles,
+        )
 
     # Overall alignment score = mean of per-node alignment scores
     if alignment:
@@ -948,15 +970,18 @@ def run_analysis(
 
     # ── Phase 7.3A — Parallel Optimizer (metadata only, does NOT change recs) ──
     from .optimizer import run_parallel_optimizer as _run_parallel_optimizer
-    optimizer_scores = _run_parallel_optimizer(
-        recs_with_overlay=recs_with_drilldown,
-        holdings=investable,
-        overlays=overlays,
-        profiles=strategic_profiles,
-        alignment_results=alignment,
-        mandate_interpretations=mandate_interpretations,
-        total_mv=snapshot.total_market_value,
-    )
+    if preflight_blocked:
+        optimizer_scores = {}
+    else:
+        optimizer_scores = _run_parallel_optimizer(
+            recs_with_overlay=recs_with_drilldown,
+            holdings=investable,
+            overlays=overlays,
+            profiles=strategic_profiles,
+            alignment_results=alignment,
+            mandate_interpretations=mandate_interpretations,
+            total_mv=snapshot.total_market_value,
+        )
     # Inject optimizer_metadata into each rec dict (additive; rec content unchanged)
     for rd in recs_with_drilldown:
         rid = rd.get("recommendation_id", "")
@@ -964,14 +989,17 @@ def run_analysis(
             rd["optimizer_metadata"] = optimizer_scores[rid]
 
     # ── Phase 7.5B — Capital Deployment Queue (additive; does not alter any existing data) ──
-    deployment_queue = build_deployment_queue(
-        portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
-        holdings=investable,
-        overlays=overlays,
-        strategic_profiles=strategic_profiles,
-        alignment_results=alignment,
-        total_market_value=snapshot.total_market_value,
-    )
+    if preflight_blocked:
+        deployment_queue = []
+    else:
+        deployment_queue = build_deployment_queue(
+            portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
+            holdings=investable,
+            overlays=overlays,
+            strategic_profiles=strategic_profiles,
+            alignment_results=alignment,
+            total_market_value=snapshot.total_market_value,
+        )
 
     # ── Phase 23.2 — Operator Policy Layer ───────────────────────────────────
     # Load operator policies AFTER deployment queue is built (pre-policy scores preserved).
@@ -1049,6 +1077,8 @@ def run_analysis(
         # Phase 23.2 — policy layer output
         "policy_suppressed": _policy_suppressed_all,
         "policy_active_count": len(_policy_registry.all_active()),
+        "suppressed_by_preflight": preflight_blocked,
+        "preflight_reason_codes": list(preflight.reason_codes),
     }
 
     # ── Persist outputs ───────────────────────────────────────────────────────
@@ -1123,22 +1153,50 @@ def run_analysis(
     # Phase 22D.10 (D3): CW-DAS uses adjusted_deployable_mv as the budget.
     # If no settlement obligations exist (_settlement_adjustment == 0), this
     # equals deployable_mv and behavior is identical to pre-22D.10.
-    deployment_plan = build_deployment_plan(
-        deployment_queue_data=dq_payload,
-        deployable_cash=_adjusted_deployable_mv,  # Phase 22D.10: settlement-adjusted
-    )
-    dp_payload = {
-        "run_id": run_id,
-        "planner_version": f"DP-{PLANNER_VERSION}",
-        "generated_at": deployment_plan.generated_at,
-        "deployable_cash": deployment_plan.deployable_cash,
-        "total_market_value": deployment_plan.total_market_value,
-        "total_allocated": deployment_plan.total_allocated,
-        "plan_advisory": deployment_plan.plan_advisory,
-        "tier_summaries": [dataclasses.asdict(t) for t in deployment_plan.tier_summaries],
-        "portfolio_impact": dataclasses.asdict(deployment_plan.portfolio_impact),
-        "recommendations": [dataclasses.asdict(r) for r in deployment_plan.recommendations],
-    }
+    if preflight_blocked:
+        dp_payload = {
+            "run_id": run_id,
+            "planner_version": f"DP-{PLANNER_VERSION}",
+            "generated_at": now_utc,
+            "deployable_cash": _adjusted_deployable_mv,
+            "total_market_value": snapshot.total_market_value,
+            "total_allocated": 0.0,
+            "plan_advisory": "Suppressed by analysis preflight BLOCKED state.",
+            "tier_summaries": [],
+            "portfolio_impact": {
+                "total_market_value": snapshot.total_market_value,
+                "cash_before_pct": cash_context.get("cash_pct", 0.0),
+                "cash_after_pct": cash_context.get("cash_pct", 0.0),
+                "cash_before_mv": cash_context.get("cash_mv", 0.0),
+                "cash_after_mv": cash_context.get("cash_mv", 0.0),
+                "positions_at_warn_before": 0,
+                "positions_at_warn_after": 0,
+                "total_deployed": 0.0,
+                "unallocated_cash": _adjusted_deployable_mv,
+            },
+            "recommendations": [],
+            "suppressed_by_preflight": True,
+            "preflight_reason_codes": list(preflight.reason_codes),
+        }
+    else:
+        deployment_plan = build_deployment_plan(
+            deployment_queue_data=dq_payload,
+            deployable_cash=_adjusted_deployable_mv,  # Phase 22D.10: settlement-adjusted
+        )
+        dp_payload = {
+            "run_id": run_id,
+            "planner_version": f"DP-{PLANNER_VERSION}",
+            "generated_at": deployment_plan.generated_at,
+            "deployable_cash": deployment_plan.deployable_cash,
+            "total_market_value": deployment_plan.total_market_value,
+            "total_allocated": deployment_plan.total_allocated,
+            "plan_advisory": deployment_plan.plan_advisory,
+            "tier_summaries": [dataclasses.asdict(t) for t in deployment_plan.tier_summaries],
+            "portfolio_impact": dataclasses.asdict(deployment_plan.portfolio_impact),
+            "recommendations": [dataclasses.asdict(r) for r in deployment_plan.recommendations],
+            "suppressed_by_preflight": False,
+            "preflight_reason_codes": list(preflight.reason_codes),
+        }
     with open(out_dir / "deployment_plan.json", "w") as fh:
         json.dump(dp_payload, fh, indent=2, default=str)
 
@@ -1241,6 +1299,7 @@ def run_analysis(
     with open(out_dir / "run_metadata.json", "w") as fh:
         meta = dataclasses.asdict(analysis_run)
         meta["warnings"] = list(meta["warnings"])
+        meta["analysis_preflight"] = preflight.to_dict()
         meta["reconciliation_status"] = reconciliation.overall_status
         meta["reconciliation_checks_passed"] = reconciliation.checks_passed
         meta["reconciliation_checks_failed"] = reconciliation.checks_failed
@@ -1262,13 +1321,16 @@ def run_analysis(
         )
         json.dump(meta, fh, indent=2)
 
+    with open(out_dir / "preflight.json", "w") as fh:
+        json.dump(preflight.to_dict(), fh, indent=2)
+
     # ── Coverage history trend baseline ──────────────────────────────────────
     rc13 = next((c for c in reconciliation.checks if c.check_id == "RC-13"), None)
     if rc13 and rc13.sub_checks:
         _append_coverage_history(run_id, now_utc, rc13.sub_checks)
 
     # ── Update manifest ───────────────────────────────────────────────────────
-    _update_manifest(run_id, snapshot, analysis_run, now_utc, reconciliation)
+    _update_manifest(run_id, snapshot, analysis_run, now_utc, reconciliation, preflight)
 
     # ── Archive incoming file ─────────────────────────────────────────────────
     archive_dir = _INGESTION_ROOT / "archive"
@@ -1330,6 +1392,7 @@ def run_analysis(
         "total_market_value": snapshot.total_market_value,
         "source_format": snapshot.source_format,
         "warnings": list(snapshot.normalization_warnings) + pis_warnings + operational_warnings,
+        "analysis_preflight": preflight.to_dict(),
         "pis_snapshot_registration": pis_registration,
         "concentration_tier": concentration.concentration_tier,
         "overall_alignment_score": overall_score,
@@ -1913,7 +1976,7 @@ def _append_coverage_history(run_id: str, run_at: str, signal_sub_checks: list) 
             })
 
 
-def _update_manifest(run_id, snapshot, analysis_run, now_utc: str, reconciliation=None) -> None:
+def _update_manifest(run_id, snapshot, analysis_run, now_utc: str, reconciliation=None, preflight=None) -> None:
     manifest_path = _INGESTION_ROOT / "manifest.json"
     try:
         with open(manifest_path) as fh:
@@ -1936,6 +1999,9 @@ def _update_manifest(run_id, snapshot, analysis_run, now_utc: str, reconciliatio
         "recommendation_count": analysis_run.recommendation_count,
         "created_at_utc": now_utc,
     }
+    if preflight is not None:
+        entry["preflight_status"] = preflight.status
+        entry["preflight_reason_codes"] = list(preflight.reason_codes)
     if reconciliation is not None:
         entry["reconciliation_status"] = reconciliation.overall_status
         entry["reconciliation_checks_passed"] = reconciliation.checks_passed
@@ -2007,6 +2073,29 @@ def load_analysis_run(run_id: str) -> Optional[dict]:
     if dp_path.exists():
         with open(dp_path) as fh:
             result["deployment_plan"] = json.load(fh)
+
+    preflight_path = run_dir / "preflight.json"
+    if preflight_path.exists():
+        with open(preflight_path) as fh:
+            result["analysis_preflight"] = json.load(fh)
+        result["analysis_preflight_provenance"] = "persisted_preflight_artifact"
+    else:
+        meta_preflight = ((result.get("run_metadata") or {}).get("analysis_preflight"))
+        if isinstance(meta_preflight, dict):
+            result["analysis_preflight"] = meta_preflight
+            result["analysis_preflight_provenance"] = "persisted_run_metadata"
+        else:
+            computed = run_analysis_preflight(
+                repo_root=_REPO_ROOT,
+                require_active_ess=True,
+                holdings_rows=holdings_for_drilldown,
+            ).to_dict()
+            computed["computed_at_load_time"] = True
+            computed["historical_provenance_note"] = (
+                "Computed during load from current runtime artifacts; not persisted at original run time."
+            )
+            result["analysis_preflight"] = computed
+            result["analysis_preflight_provenance"] = "computed_load_time_fallback"
 
     # ucf_verdicts.json (Phase 7.5E — additive, absent for pre-7.5E runs)
     ucf_path = run_dir / "ucf_verdicts.json"
