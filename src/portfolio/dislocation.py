@@ -68,7 +68,15 @@ _COUNT_MODERATE        = 10    # analyst count gate for MODERATE
 _COUNT_WATCH           = 5     # analyst count gate for WATCH
 
 # FMP coverage states that block A1
-_FMP_NO_DATA_STATES = frozenset({"NO_DATA", "ETF_NOT_APPLICABLE", ""})
+_FMP_NO_DATA_STATES = frozenset({
+    "NO_DATA",
+    "PROVIDER_NO_DATA",
+    "FETCH_FAILED",
+    "NOT_FETCHED",
+    "ETF_NOT_APPLICABLE",
+    "NOT_APPLICABLE",
+    "",
+})
 
 # Tier ordering for multi-class resolution (higher index = higher tier)
 _TIER_ORDER = {DISLOCATION_NONE: 0, DISLOCATION_WATCH: 1,

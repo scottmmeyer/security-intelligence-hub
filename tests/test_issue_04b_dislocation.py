@@ -91,6 +91,15 @@ class TestGates:
         result = classify_dislocation("VOO", fmp_row=fmp, overlay=_overlay())
         assert result.tier == DISLOCATION_NONE
 
+    @pytest.mark.parametrize(
+        "coverage",
+        ["NOT_FETCHED", "PROVIDER_NO_DATA", "FETCH_FAILED", "NOT_APPLICABLE"],
+    )
+    def test_new_missing_states_do_not_trigger_a1(self, coverage: str):
+        fmp = _fmp(coverage=coverage)
+        result = classify_dislocation("AAPL", fmp_row=fmp, overlay=_overlay("VERY_BEARISH", 1.0))
+        assert result.tier == DISLOCATION_NONE
+
     def test_deteriorating_thesis_returns_none(self):
         """DETERIORATING thesis must never produce a dislocation classification."""
         fmp = _fmp_deteriorating()
@@ -129,6 +138,12 @@ class TestHighConviction:
         result = classify_dislocation("LRCX", fmp_row=fmp, overlay=ov)
         assert result.tier == DISLOCATION_HIGH_CONVICTION
 
+    def test_full_coverage_behavior_still_produces_high_when_signals_match(self):
+        fmp = _fmp(coverage="FULL", beat_rate=0.875)
+        ov = _overlay(ess="VERY_BEARISH", danelfin=1.0)
+        result = classify_dislocation("AEIS", fmp_row=fmp, overlay=ov)
+        assert result.tier == DISLOCATION_HIGH_CONVICTION
+
     def test_high_conviction_very_bearish_ess_alone(self):
         """Beat 87.5%+ + VERY_BEARISH ESS alone should meet HIGH CONVICTION."""
         fmp = _fmp(beat_rate=0.875)
@@ -158,6 +173,12 @@ class TestModerate:
     def test_moderate_beat75_neutral_dan_moderate(self):
         """Beat 75%+ + NEUTRAL ESS + Danelfin < 3.0 → MODERATE."""
         fmp = _fmp(beat_rate=0.75)
+        ov = _overlay(ess="NEUTRAL", danelfin=2.8)
+        result = classify_dislocation("VRT", fmp_row=fmp, overlay=ov)
+        assert result.tier == DISLOCATION_MODERATE
+
+    def test_partial_coverage_behavior_still_produces_moderate_when_signals_match(self):
+        fmp = _fmp(coverage="PARTIAL", beat_rate=0.75)
         ov = _overlay(ess="NEUTRAL", danelfin=2.8)
         result = classify_dislocation("VRT", fmp_row=fmp, overlay=ov)
         assert result.tier == DISLOCATION_MODERATE

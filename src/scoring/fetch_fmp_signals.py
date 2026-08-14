@@ -63,6 +63,7 @@ _FMP_LATEST_DIR = _FMP_DIR / "latest"
 
 KEY_METRICS_HEADERS = [
     "symbol", "sourced_date",
+    "fetch_status", "failure_type", "failure_reason",
     "pe_ratio_ttm", "ev_ebitda_ttm", "price_to_fcf_ttm",
     "fcf_yield_ttm", "roe_ttm", "roic_ttm",
     "earnings_yield_ttm", "revenue_per_share_ttm",
@@ -71,6 +72,7 @@ KEY_METRICS_HEADERS = [
 
 GRADES_CONSENSUS_HEADERS = [
     "symbol", "sourced_date",
+    "fetch_status", "failure_type", "failure_reason",
     "strong_buy_count", "buy_count", "hold_count",
     "sell_count", "strong_sell_count",
     "total_analysts", "net_buy_score", "consensus_label",
@@ -78,6 +80,7 @@ GRADES_CONSENSUS_HEADERS = [
 
 EARNINGS_SURPRISES_HEADERS = [
     "symbol", "sourced_date",
+    "fetch_status", "failure_type", "failure_reason",
     "latest_eps_actual", "latest_eps_estimate", "latest_eps_surprise_pct",
     "q1_surprise_pct", "q2_surprise_pct", "q3_surprise_pct", "q4_surprise_pct",
     "q5_surprise_pct", "q6_surprise_pct", "q7_surprise_pct", "q8_surprise_pct",
@@ -86,6 +89,7 @@ EARNINGS_SURPRISES_HEADERS = [
 
 INCOME_GROWTH_HEADERS = [
     "symbol", "sourced_date",
+    "fetch_status", "failure_type", "failure_reason",
     "revenue_growth_q1_yoy", "revenue_growth_q2_yoy",
     "revenue_growth_q3_yoy", "revenue_growth_q4_yoy",
     "eps_growth_q1_yoy", "eps_growth_q2_yoy",
@@ -404,6 +408,30 @@ def _parse_income_growth(symbol: str, data: Any, today: str) -> Dict[str, str]:
     return row
 
 
+def _failure_type(status: int, err: Optional[str]) -> str:
+    if status == 429:
+        return "RATE_LIMIT"
+    if status in {500, 502, 503, 504}:
+        return "UPSTREAM_UNAVAILABLE"
+    if status == 401:
+        return "AUTH"
+    if status == 402:
+        return "PLAN_LIMIT"
+    if status == 403:
+        return "FORBIDDEN"
+    if status == 404:
+        return "NOT_FOUND"
+    if status > 0:
+        return "HTTP_ERROR"
+    if err:
+        return "NETWORK_ERROR"
+    return "UNKNOWN_ERROR"
+
+
+def _has_usable_fields(row: Dict[str, str], fields: Iterable[str]) -> bool:
+    return any(str(row.get(f, "")).strip() not in ("", "None", "nan") for f in fields)
+
+
 # ── Per-symbol fetch functions ────────────────────────────────────────────────
 
 def fetch_key_metrics_ttm(
@@ -416,8 +444,18 @@ def fetch_key_metrics_ttm(
     data, status, err = _fmp_get_with_retry(url, api_key)
     if status != 200 or data is None:
         log.debug("[fmp] key_metrics_ttm %s: status=%s err=%s", symbol, status, err)
-        return {"symbol": symbol, "sourced_date": today}
-    return _parse_key_metrics_ttm(symbol, data, today)
+        return {
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": _failure_type(status, err),
+            "failure_reason": str(err or f"HTTP {status}"),
+        }
+    row = _parse_key_metrics_ttm(symbol, data, today)
+    row["fetch_status"] = "SUCCESS" if _has_usable_fields(row, ("ev_ebitda_ttm", "roe_ttm", "roic_ttm")) else "PROVIDER_NO_DATA"
+    row.setdefault("failure_type", "")
+    row.setdefault("failure_reason", "")
+    return row
 
 
 def fetch_grades_consensus(
@@ -430,8 +468,18 @@ def fetch_grades_consensus(
     data, status, err = _fmp_get_with_retry(url, api_key)
     if status != 200 or data is None:
         log.debug("[fmp] grades_consensus %s: status=%s err=%s", symbol, status, err)
-        return {"symbol": symbol, "sourced_date": today}
-    return _parse_grades_consensus(symbol, data, today)
+        return {
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": _failure_type(status, err),
+            "failure_reason": str(err or f"HTTP {status}"),
+        }
+    row = _parse_grades_consensus(symbol, data, today)
+    row["fetch_status"] = "SUCCESS" if _has_usable_fields(row, ("consensus_label", "net_buy_score", "total_analysts")) else "PROVIDER_NO_DATA"
+    row.setdefault("failure_type", "")
+    row.setdefault("failure_reason", "")
+    return row
 
 
 def fetch_earnings_surprises(
@@ -444,8 +492,18 @@ def fetch_earnings_surprises(
     data, status, err = _fmp_get_with_retry(url, api_key)
     if status != 200 or data is None:
         log.debug("[fmp] earnings %s: status=%s err=%s", symbol, status, err)
-        return {"symbol": symbol, "sourced_date": today}
-    return _parse_earnings_surprises(symbol, data, today)
+        return {
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": _failure_type(status, err),
+            "failure_reason": str(err or f"HTTP {status}"),
+        }
+    row = _parse_earnings_surprises(symbol, data, today)
+    row["fetch_status"] = "SUCCESS" if _has_usable_fields(row, ("beat_rate_8q", "latest_eps_surprise_pct", "beats_last_8q")) else "PROVIDER_NO_DATA"
+    row.setdefault("failure_type", "")
+    row.setdefault("failure_reason", "")
+    return row
 
 
 def fetch_income_growth(
@@ -458,8 +516,18 @@ def fetch_income_growth(
     data, status, err = _fmp_get_with_retry(url, api_key)
     if status != 200 or data is None:
         log.debug("[fmp] income_growth %s: status=%s err=%s", symbol, status, err)
-        return {"symbol": symbol, "sourced_date": today}
-    return _parse_income_growth(symbol, data, today)
+        return {
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": _failure_type(status, err),
+            "failure_reason": str(err or f"HTTP {status}"),
+        }
+    row = _parse_income_growth(symbol, data, today)
+    row["fetch_status"] = "SUCCESS" if _has_usable_fields(row, ("revenue_growth_q1_yoy", "eps_growth_q1_yoy", "revenue_acceleration")) else "PROVIDER_NO_DATA"
+    row.setdefault("failure_type", "")
+    row.setdefault("failure_reason", "")
+    return row
 
 
 # ── Bulk fetch functions ──────────────────────────────────────────────────────

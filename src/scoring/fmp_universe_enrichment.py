@@ -20,7 +20,9 @@ Coverage status per symbol:
   FULL               — all 4 datasets have at least one populated field
   PARTIAL            — at least 1 dataset populated but not all
   ETF_NOT_APPLICABLE — symbol is an ETF/FUND/ETN/MUTUALFUND in the universe
-  NO_DATA            — FMP returned no data for this symbol
+    PROVIDER_NO_DATA   — symbol was attempted but provider returned no usable payload
+    FETCH_FAILED       — symbol was attempted and one or more product calls failed
+    NOT_FETCHED        — symbol exists in universe but has not been attempted yet
 
 Usage:
     PYTHONPATH=. .venv/bin/python3 src/scoring/fmp_universe_enrichment.py
@@ -36,6 +38,7 @@ from typing import Dict, Optional
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FMP_LATEST_DIR = _REPO_ROOT / "data" / "signals" / "fmp" / "latest"
 _OUTPUT_PATH    = _FMP_LATEST_DIR / "latest_fmp_enriched_universe.csv"
+_FETCH_STATUS_PATH = _FMP_LATEST_DIR / "latest_fmp_fetch_status.csv"
 _UNIVERSE_PATH  = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
 
 # Security types considered not applicable for FMP fundamental data
@@ -48,7 +51,15 @@ _ETF_LIKE_TYPES = frozenset({
 COVERAGE_FULL       = "FULL"
 COVERAGE_PARTIAL    = "PARTIAL"
 COVERAGE_ETF_NA     = "ETF_NOT_APPLICABLE"
-COVERAGE_NO_DATA    = "NO_DATA"
+COVERAGE_PROVIDER_NO_DATA = "PROVIDER_NO_DATA"
+COVERAGE_FETCH_FAILED = "FETCH_FAILED"
+COVERAGE_NOT_FETCHED = "NOT_FETCHED"
+
+FETCH_STATUS_SUCCESS = "SUCCESS"
+FETCH_STATUS_PROVIDER_NO_DATA = "PROVIDER_NO_DATA"
+FETCH_STATUS_FETCH_FAILED = "FETCH_FAILED"
+
+_PRODUCTS = ("key_metrics", "grades_consensus", "earnings", "income_growth")
 
 # ── Output schema ─────────────────────────────────────────────────────────────
 
@@ -56,6 +67,7 @@ ENRICHED_HEADERS = [
     # Identity
     "symbol",
     "fmp_coverage_status",
+    "fmp_attempted",
     "fmp_sourced_date",
     # Key Metrics TTM
     "pe_ratio_ttm",
@@ -95,6 +107,7 @@ class FmpEnrichedRecord:
 
     symbol: str
     fmp_coverage_status: str
+    fmp_attempted: str
     fmp_sourced_date: str
 
     # Key metrics TTM
@@ -149,6 +162,21 @@ def _load_csv(path: Path) -> Dict[str, Dict[str, str]]:
     return result
 
 
+def _load_fetch_status(path: Path = _FETCH_STATUS_PATH) -> Dict[str, Dict[str, str]]:
+    """Load symbol -> product -> fetch status from the status ledger."""
+    result: Dict[str, Dict[str, str]] = {}
+    if not path.exists():
+        return result
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sym = str(row.get("symbol", "")).strip().upper()
+            product = str(row.get("product", "")).strip().lower()
+            status = str(row.get("status", "")).strip().upper()
+            if sym and product and status:
+                result.setdefault(sym, {})[product] = status
+    return result
+
+
 def _has_data(row: Optional[Dict[str, str]], *fields: str) -> bool:
     """Return True if at least one of the given fields is non-empty."""
     if not row:
@@ -164,11 +192,25 @@ def _get(row: Optional[Dict[str, str]], field: str) -> Optional[str]:
     return v if v not in ("", "None", "nan") else None
 
 
+def _is_explicit_failure(row: Optional[Dict[str, str]]) -> bool:
+    """Return True when a row carries explicit technical failure markers."""
+    if not row:
+        return False
+    for field in ("fetch_status", "status", "fetch_error", "error", "error_type", "error_message"):
+        value = str(row.get(field, "")).strip().upper()
+        if not value:
+            continue
+        if "FAIL" in value or "ERROR" in value or "TIMEOUT" in value or value.startswith("HTTP "):
+            return True
+    return False
+
+
 # ── Coverage classifier ───────────────────────────────────────────────────────
 
 def classify_coverage(
-    sym: str,
     security_type: str,
+    attempted: bool,
+    product_statuses: Dict[str, str],
     km: Optional[Dict[str, str]],
     gr: Optional[Dict[str, str]],
     es: Optional[Dict[str, str]],
@@ -178,6 +220,15 @@ def classify_coverage(
     # ETF / Fund: not applicable for FMP fundamentals
     if security_type.strip().upper() in _ETF_LIKE_TYPES:
         return COVERAGE_ETF_NA
+
+    if not attempted:
+        return COVERAGE_NOT_FETCHED
+
+    if any(
+        str(product_statuses.get(product, "")).upper() == FETCH_STATUS_FETCH_FAILED
+        for product in _PRODUCTS
+    ):
+        return COVERAGE_FETCH_FAILED
 
     has_km = _has_data(km, "ev_ebitda_ttm", "roe_ttm", "roic_ttm")
     has_gr = _has_data(gr, "consensus_label", "net_buy_score")
@@ -190,7 +241,9 @@ def classify_coverage(
         return COVERAGE_FULL
     if populated >= 1:
         return COVERAGE_PARTIAL
-    return COVERAGE_NO_DATA
+    if any(_is_explicit_failure(row) for row in (km, gr, es, ig)):
+        return COVERAGE_FETCH_FAILED
+    return COVERAGE_PROVIDER_NO_DATA
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
@@ -217,6 +270,7 @@ def build_fmp_enriched_universe(
     gr_by_sym = _load_csv(fmp_latest_dir / "latest_fmp_grades_consensus.csv")
     es_by_sym = _load_csv(fmp_latest_dir / "latest_fmp_earnings_surprises.csv")
     ig_by_sym = _load_csv(fmp_latest_dir / "latest_fmp_income_growth.csv")
+    status_by_sym = _load_fetch_status(fmp_latest_dir / "latest_fmp_fetch_status.csv")
 
     # Load universe for security_type lookup
     sec_type_by_sym: Dict[str, str] = {}
@@ -243,7 +297,9 @@ def build_fmp_enriched_universe(
         es        = es_by_sym.get(sym)
         ig        = ig_by_sym.get(sym)
 
-        coverage = classify_coverage(sym, sec_type, km, gr, es, ig)
+        product_statuses = status_by_sym.get(sym, {})
+        attempted = bool(product_statuses) or any(row is not None for row in (km, gr, es, ig))
+        coverage = classify_coverage(sec_type, attempted, product_statuses, km, gr, es, ig)
 
         # Derive sourced_date from any available row
         sourced = (_get(km, "sourced_date") or _get(gr, "sourced_date") or
@@ -252,6 +308,7 @@ def build_fmp_enriched_universe(
         rec = FmpEnrichedRecord(
             symbol=sym,
             fmp_coverage_status=coverage,
+            fmp_attempted="1" if attempted else "0",
             fmp_sourced_date=sourced,
             # Key metrics
             pe_ratio_ttm=_get(km, "pe_ratio_ttm"),
@@ -317,7 +374,10 @@ def coverage_stats(records: Dict[str, FmpEnrichedRecord]) -> Dict[str, object]:
     total = len(records)
     counts: Dict[str, int] = {
         COVERAGE_FULL: 0, COVERAGE_PARTIAL: 0,
-        COVERAGE_ETF_NA: 0, COVERAGE_NO_DATA: 0,
+        COVERAGE_ETF_NA: 0,
+        COVERAGE_PROVIDER_NO_DATA: 0,
+        COVERAGE_FETCH_FAILED: 0,
+        COVERAGE_NOT_FETCHED: 0,
     }
     for rec in records.values():
         counts[rec.fmp_coverage_status] = counts.get(rec.fmp_coverage_status, 0) + 1
@@ -327,7 +387,7 @@ def coverage_stats(records: Dict[str, FmpEnrichedRecord]) -> Dict[str, object]:
     n = len(eligible)
     null_rates: Dict[str, float] = {}
     if n > 0:
-        for field in ENRICHED_HEADERS[3:]:  # skip symbol, coverage, date
+        for field in ENRICHED_HEADERS[4:]:  # skip symbol, coverage, attempted flag, date
             null_count = sum(1 for r in eligible if not getattr(r, field, None))
             null_rates[field] = round(null_count / n * 100, 1)
 

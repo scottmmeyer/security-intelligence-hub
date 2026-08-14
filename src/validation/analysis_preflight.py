@@ -584,27 +584,48 @@ def _build_fmp_component(*, repo_root: Path) -> PreflightComponentResult:
             metrics=metrics,
         )
 
-    full = partial = no_data = applicable = fetch_failure = 0
+    full = partial = provider_no_data = applicable = fetch_failure = not_fetched = not_applicable = 0
     for row in rows:
         status = str(row.get("fmp_coverage_status", "")).strip().upper()
-        if status == "ETF_NOT_APPLICABLE":
+        if status in {"ETF_NOT_APPLICABLE", "NOT_APPLICABLE"}:
+            not_applicable += 1
             continue
         applicable += 1
         if status == "FULL":
             full += 1
         elif status == "PARTIAL":
             partial += 1
-        elif status == "NO_DATA":
-            no_data += 1
+        elif status in {"PROVIDER_NO_DATA", "NO_DATA"}:
+            provider_no_data += 1
+        elif status == "NOT_FETCHED":
+            not_fetched += 1
         elif "FAIL" in status or "ERROR" in status:
             fetch_failure += 1
+
+    attempted = full + partial + provider_no_data + fetch_failure
+    completed_hydration = full + partial + provider_no_data
+    usable_data = full + partial
+    hydration_pct = round((completed_hydration / applicable * 100.0), 4) if applicable > 0 else None
+    usable_data_pct = round((usable_data / applicable * 100.0), 4) if applicable > 0 else None
 
     metrics.update(
         {
             "applicable_symbols": applicable,
+            "attempted_symbols": attempted,
+            "completed_hydration_symbols": completed_hydration,
+            "full_symbols": full,
+            "partial_symbols": partial,
+            "usable_data_symbols": usable_data,
+            "provider_no_data_symbols": provider_no_data,
+            "fetch_failed_symbols": fetch_failure,
+            "not_fetched_symbols": not_fetched,
+            "not_applicable_symbols": not_applicable,
+            "hydration_pct": hydration_pct,
+            "usable_data_pct": usable_data_pct,
+            # Backward-compatible aliases consumed by older diagnostics.
             "full_count": full,
             "partial_count": partial,
-            "no_data_count": no_data,
+            "no_data_count": provider_no_data,
             "fetch_failure_count": fetch_failure,
         }
     )
@@ -614,12 +635,15 @@ def _build_fmp_component(*, repo_root: Path) -> PreflightComponentResult:
     if partial > 0:
         reason_codes.append("PF-FMP-001")
         messages.append("FMP coverage is partial for part of the applicable universe.")
-    if no_data > 0:
+    if provider_no_data > 0:
         reason_codes.append("PF-FMP-003")
-        messages.append("FMP has explicit NO_DATA rows for part of the applicable universe.")
+        messages.append("FMP has explicit provider no-data rows for part of the applicable universe.")
     if fetch_failure > 0:
         reason_codes.append("PF-FMP-004")
         messages.append("FMP reports explicit fetch failures.")
+    if not_fetched > 0:
+        reason_codes.append("PF-FMP-005")
+        messages.append("FMP hydration is incomplete: one or more applicable symbols are NOT_FETCHED.")
 
     status = COMPONENT_READY if not reason_codes else COMPONENT_DEGRADED
     if applicable == 0:

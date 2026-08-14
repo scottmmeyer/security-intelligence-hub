@@ -23,7 +23,7 @@ import csv
 import json
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,19 @@ from src.scoring.fmp_universe_enrichment import build_fmp_enriched_universe, cov
 
 _ETF_LIKE = frozenset({"Unit Trust Fund", "ETF", "FUND", "MUTUAL FUND"})
 _DELAY = 0.22   # seconds between calls; 4 calls/symbol → ~0.9s/symbol → ~2,465 symbols in ~37 min
+
+_FETCH_STATUS_PATH = _FMP_LATEST_DIR / "latest_fmp_fetch_status.csv"
+_FETCH_STATUS_HEADERS = [
+    "symbol",
+    "product",
+    "status",
+    "attempted_at_utc",
+    "source_date",
+    "failure_type",
+    "failure_reason",
+]
+_PRODUCTS = ("key_metrics", "grades_consensus", "earnings", "income_growth")
+_COMPLETE_STATUSES = frozenset({"SUCCESS", "PROVIDER_NO_DATA"})
 
 UNIVERSE_CSV = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
 MANIFEST_JSON = _REPO_ROOT / "data" / "portfolio_ingestion" / "manifest.json"
@@ -85,18 +98,96 @@ def _load_queue_symbols() -> list[str]:
     return [c["symbol"] for c in dq.get("queue", []) if c.get("symbol")]
 
 
-def _already_cached() -> set[str]:
-    """Return symbols that already have key_metrics cached (use as proxy for all 4 datasets)."""
-    km_path = _FMP_LATEST_DIR / "latest_fmp_key_metrics.csv"
-    if not km_path.exists():
-        return set()
-    cached: set[str] = set()
-    with km_path.open("r", encoding="utf-8", newline="") as fh:
+def _status_key(symbol: str, product: str) -> tuple[str, str]:
+    return symbol.strip().upper(), product.strip().lower()
+
+
+def _load_fetch_status_rows() -> dict[tuple[str, str], dict[str, str]]:
+    if not _FETCH_STATUS_PATH.exists():
+        return {}
+    rows: dict[tuple[str, str], dict[str, str]] = {}
+    with _FETCH_STATUS_PATH.open("r", encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
             sym = str(row.get("symbol", "")).strip().upper()
-            if sym:
-                cached.add(sym)
-    return cached
+            product = str(row.get("product", "")).strip().lower()
+            if sym and product:
+                rows[_status_key(sym, product)] = dict(row)
+    return rows
+
+
+def _save_fetch_status_rows(rows: dict[tuple[str, str], dict[str, str]]) -> None:
+    _write_csv(_FETCH_STATUS_PATH, list(rows.values()), _FETCH_STATUS_HEADERS)
+
+
+def _row_fetch_status(row: dict[str, str] | None) -> str:
+    if not row:
+        return ""
+    explicit = str(row.get("fetch_status", "")).strip().upper()
+    if explicit:
+        return explicit
+    # Back-compat for older rows created before fetch_status existed.
+    return "SUCCESS"
+
+
+def _product_status(
+    *,
+    symbol: str,
+    product: str,
+    status_rows: dict[tuple[str, str], dict[str, str]],
+    product_row: dict[str, str] | None,
+) -> str:
+    ledger = status_rows.get(_status_key(symbol, product))
+    if ledger:
+        return str(ledger.get("status", "")).strip().upper()
+    return _row_fetch_status(product_row)
+
+
+def _symbol_completed(
+    *,
+    symbol: str,
+    status_rows: dict[tuple[str, str], dict[str, str]],
+    km_rows: dict[str, dict],
+    gr_rows: dict[str, dict],
+    es_rows: dict[str, dict],
+    ig_rows: dict[str, dict],
+) -> bool:
+    row_map = {
+        "key_metrics": km_rows.get(symbol),
+        "grades_consensus": gr_rows.get(symbol),
+        "earnings": es_rows.get(symbol),
+        "income_growth": ig_rows.get(symbol),
+    }
+    for product in _PRODUCTS:
+        status = _product_status(
+            symbol=symbol,
+            product=product,
+            status_rows=status_rows,
+            product_row=row_map[product],
+        )
+        if status not in _COMPLETE_STATUSES:
+            return False
+    return True
+
+
+def _set_status_row(
+    *,
+    status_rows: dict[tuple[str, str], dict[str, str]],
+    symbol: str,
+    product: str,
+    source_date: str,
+    status: str,
+    failure_type: str,
+    failure_reason: str,
+) -> None:
+    status_rows[_status_key(symbol, product)] = {
+        "symbol": symbol,
+        "product": product,
+        "status": status,
+        "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_date": source_date,
+        "failure_type": failure_type,
+        "failure_reason": failure_reason,
+    }
 
 
 def fetch_and_checkpoint(
@@ -107,6 +198,7 @@ def fetch_and_checkpoint(
     gr_rows: dict,
     es_rows: dict,
     ig_rows: dict,
+    status_rows: dict[tuple[str, str], dict[str, str]],
     verbose: bool = True,
 ) -> tuple[int, int]:
     """Fetch all 4 datasets for each symbol, checkpointing after every symbol.
@@ -116,28 +208,93 @@ def fetch_and_checkpoint(
     fetched = 0
 
     for i, sym in enumerate(symbols, start=1):
+        sym = sym.upper()
         if verbose:
             print(f"[{i}/{len(symbols)}] {sym}...", end=" ", flush=True)
 
-        km = fetch_key_metrics_ttm(sym, api_key, today)
-        km["sourced_date"] = today
-        km_rows[sym] = km
-        time.sleep(_DELAY)
+        km_current = _product_status(
+            symbol=sym,
+            product="key_metrics",
+            status_rows=status_rows,
+            product_row=km_rows.get(sym),
+        )
+        if km_current not in _COMPLETE_STATUSES:
+            km = fetch_key_metrics_ttm(sym, api_key, today)
+            km["sourced_date"] = today
+            km_rows[sym] = km
+            _set_status_row(
+                status_rows=status_rows,
+                symbol=sym,
+                product="key_metrics",
+                source_date=today,
+                status=str(km.get("fetch_status", "")).strip().upper() or "FETCH_FAILED",
+                failure_type=str(km.get("failure_type", "")),
+                failure_reason=str(km.get("failure_reason", "")),
+            )
+            time.sleep(_DELAY)
 
-        gr = fetch_grades_consensus(sym, api_key, today)
-        gr["sourced_date"] = today
-        gr_rows[sym] = gr
-        time.sleep(_DELAY)
+        gr_current = _product_status(
+            symbol=sym,
+            product="grades_consensus",
+            status_rows=status_rows,
+            product_row=gr_rows.get(sym),
+        )
+        if gr_current not in _COMPLETE_STATUSES:
+            gr = fetch_grades_consensus(sym, api_key, today)
+            gr["sourced_date"] = today
+            gr_rows[sym] = gr
+            _set_status_row(
+                status_rows=status_rows,
+                symbol=sym,
+                product="grades_consensus",
+                source_date=today,
+                status=str(gr.get("fetch_status", "")).strip().upper() or "FETCH_FAILED",
+                failure_type=str(gr.get("failure_type", "")),
+                failure_reason=str(gr.get("failure_reason", "")),
+            )
+            time.sleep(_DELAY)
 
-        es = fetch_earnings_surprises(sym, api_key, today)
-        es["sourced_date"] = today
-        es_rows[sym] = es
-        time.sleep(_DELAY)
+        es_current = _product_status(
+            symbol=sym,
+            product="earnings",
+            status_rows=status_rows,
+            product_row=es_rows.get(sym),
+        )
+        if es_current not in _COMPLETE_STATUSES:
+            es = fetch_earnings_surprises(sym, api_key, today)
+            es["sourced_date"] = today
+            es_rows[sym] = es
+            _set_status_row(
+                status_rows=status_rows,
+                symbol=sym,
+                product="earnings",
+                source_date=today,
+                status=str(es.get("fetch_status", "")).strip().upper() or "FETCH_FAILED",
+                failure_type=str(es.get("failure_type", "")),
+                failure_reason=str(es.get("failure_reason", "")),
+            )
+            time.sleep(_DELAY)
 
-        ig = fetch_income_growth(sym, api_key, today)
-        ig["sourced_date"] = today
-        ig_rows[sym] = ig
-        time.sleep(_DELAY)
+        ig_current = _product_status(
+            symbol=sym,
+            product="income_growth",
+            status_rows=status_rows,
+            product_row=ig_rows.get(sym),
+        )
+        if ig_current not in _COMPLETE_STATUSES:
+            ig = fetch_income_growth(sym, api_key, today)
+            ig["sourced_date"] = today
+            ig_rows[sym] = ig
+            _set_status_row(
+                status_rows=status_rows,
+                symbol=sym,
+                product="income_growth",
+                source_date=today,
+                status=str(ig.get("fetch_status", "")).strip().upper() or "FETCH_FAILED",
+                failure_type=str(ig.get("failure_type", "")),
+                failure_reason=str(ig.get("failure_reason", "")),
+            )
+            time.sleep(_DELAY)
 
         # Checkpoint: write all 4 latest files after every symbol
         _FMP_LATEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -145,8 +302,12 @@ def fetch_and_checkpoint(
         _write_csv(_FMP_LATEST_DIR / "latest_fmp_grades_consensus.csv",   list(gr_rows.values()), GRADES_CONSENSUS_HEADERS)
         _write_csv(_FMP_LATEST_DIR / "latest_fmp_earnings_surprises.csv", list(es_rows.values()), EARNINGS_SURPRISES_HEADERS)
         _write_csv(_FMP_LATEST_DIR / "latest_fmp_income_growth.csv",      list(ig_rows.values()), INCOME_GROWTH_HEADERS)
+        _save_fetch_status_rows(status_rows)
 
         if verbose:
+            km = km_rows.get(sym, {})
+            gr = gr_rows.get(sym, {})
+            es = es_rows.get(sym, {})
             ev  = km.get("ev_ebitda_ttm", "")
             roe = km.get("roe_ttm", "")
             br  = es.get("beat_rate_8q", "")
@@ -175,8 +336,22 @@ def main() -> None:
     gr_rows  = {r["symbol"]: r for r in _load_csv_by_symbol(_FMP_LATEST_DIR / "latest_fmp_grades_consensus.csv").values()}
     es_rows  = {r["symbol"]: r for r in _load_csv_by_symbol(_FMP_LATEST_DIR / "latest_fmp_earnings_surprises.csv").values()}
     ig_rows  = {r["symbol"]: r for r in _load_csv_by_symbol(_FMP_LATEST_DIR / "latest_fmp_income_growth.csv").values()}
+    status_rows = _load_fetch_status_rows()
 
-    already = set(km_rows.keys()) if not args.force_refresh else set()
+    already = set()
+    if not args.force_refresh:
+        symbols = set(km_rows) | set(gr_rows) | set(es_rows) | set(ig_rows)
+        already = {
+            sym for sym in symbols
+            if _symbol_completed(
+                symbol=sym,
+                status_rows=status_rows,
+                km_rows=km_rows,
+                gr_rows=gr_rows,
+                es_rows=es_rows,
+                ig_rows=ig_rows,
+            )
+        }
 
     # Build prioritized symbol list
     queue_syms  = _load_queue_symbols()
@@ -210,6 +385,7 @@ def main() -> None:
         fetched, _ = fetch_and_checkpoint(
             pending, api_key, today,
             km_rows, gr_rows, es_rows, ig_rows,
+            status_rows,
             verbose=verbose,
         )
         print(f"\nFetch complete: {fetched} symbols processed.")
