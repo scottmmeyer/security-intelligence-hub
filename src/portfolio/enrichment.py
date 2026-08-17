@@ -22,10 +22,13 @@ import csv
 import os
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from .exposure_decomposition import build_holding_decomposition
 from .models import FundingSourceEntry, FundingSourceAnalysis, PortfolioHolding
+from src.scoring.fetch_danelfin_scores import load_latest_danelfin_scores
+from src.scoring.fetch_zacks_scores import load_latest_zacks_scores
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +145,9 @@ _HYPER_MEGA_SYMBOLS = {
     "AVGO", "ASML", "TSM", "MU",
 }
 
+_DANELFIN_SIGNALS_DIR = Path(__file__).resolve().parents[2] / "data" / "signals" / "danelfin"
+_ZACKS_SIGNALS_DIR = Path(__file__).resolve().parents[2] / "data" / "signals" / "zacks"
+
 
 def _load_universe(universe_csv: str) -> dict[str, dict]:
     """Load analytical_universe.csv into a symbol→row dict.
@@ -184,6 +190,8 @@ def enrich_holdings(
       4. UNKNOWN (preserved)
     """
     universe = _load_universe(universe_csv)
+    zacks_scores_by_symbol = load_latest_zacks_scores(_ZACKS_SIGNALS_DIR)
+    danelfin_scores_by_symbol = load_latest_danelfin_scores(_DANELFIN_SIGNALS_DIR)
     now_utc = datetime.now(timezone.utc).isoformat()
 
     enriched: list[PortfolioHolding] = []
@@ -198,6 +206,13 @@ def enrich_holdings(
             # registry-listed ETFs (e.g. VOO) are decomposed correctly even when the
             # portfolio CSV delivered a non-ETF security_type value.
             security_type_resolved = u.get("security_type") or h.security_type
+            zacks_rating, danelfin_score = _overlay_provider_scores(
+                sym,
+                zacks_scores_by_symbol=zacks_scores_by_symbol,
+                danelfin_scores_by_symbol=danelfin_scores_by_symbol,
+                zacks_rating=u.get("zacks_rating") or None,
+                danelfin_score=u.get("danelfin_score") or None,
+            )
             decomposition = build_holding_decomposition(
                 symbol=sym,
                 security_type=security_type_resolved,
@@ -219,8 +234,8 @@ def enrich_holdings(
                 security_type=security_type_resolved,
                 composite_score=_safe_float(u.get("composite_score")),
                 ess_score_text=u.get("ess_score_text") or None,
-                zacks_rating=u.get("zacks_rating") or None,
-                danelfin_score=u.get("danelfin_score") or None,
+                zacks_rating=zacks_rating,
+                danelfin_score=danelfin_score,
                 benchmark_id=u.get("benchmark_id") or None,
                 investable_vehicle_id=u.get("investable_vehicle_id") or None,
                 exposure_geography_mix=decomposition.exposure_geography_mix,
@@ -240,6 +255,13 @@ def enrich_holdings(
             ))
         elif sym in _ETF_OVERRIDES:
             ov = _ETF_OVERRIDES[sym]
+            zacks_rating, danelfin_score = _overlay_provider_scores(
+                sym,
+                zacks_scores_by_symbol=zacks_scores_by_symbol,
+                danelfin_scores_by_symbol=danelfin_scores_by_symbol,
+                zacks_rating=h.zacks_rating,
+                danelfin_score=h.danelfin_score,
+            )
             # Zero-value legacy positions (contra lots, broker artifacts): skip ETF
             # decomposition — enrich with static override metadata only.
             if h.operational_state == "ZERO_VALUE_LEGACY_POSITION":
@@ -252,6 +274,8 @@ def enrich_holdings(
                     sector=ov.get("sector", "UNKNOWN"),
                     industry=ov.get("industry", "UNKNOWN"),
                     security_type=ov.get("security_type", "CONTRA_ENTRY"),
+                    zacks_rating=zacks_rating,
+                    danelfin_score=danelfin_score,
                     is_cash_equivalent=False,
                     operational_state="ZERO_VALUE_LEGACY_POSITION",
                     created_at_utc=now_utc,
@@ -288,6 +312,8 @@ def enrich_holdings(
                 sector=ov["sector"],
                 industry=ov["industry"],
                 security_type=effective_security_type,
+                zacks_rating=zacks_rating,
+                danelfin_score=danelfin_score,
                 is_cash_equivalent=is_cash_equiv,
                 operational_state=new_op_state,
                 exposure_geography_mix=decomposition.exposure_geography_mix,
@@ -304,6 +330,13 @@ def enrich_holdings(
                 created_at_utc=now_utc,
             ))
         elif h.security_type == "Cash" or sym == "CASH" or sym in _CASH_EQUIVALENT_SYMBOLS:
+            zacks_rating, danelfin_score = _overlay_provider_scores(
+                sym,
+                zacks_scores_by_symbol=zacks_scores_by_symbol,
+                danelfin_scores_by_symbol=danelfin_scores_by_symbol,
+                zacks_rating=h.zacks_rating,
+                danelfin_score=h.danelfin_score,
+            )
             decomposition = build_holding_decomposition(
                 symbol=sym,
                 security_type="Cash",
@@ -323,6 +356,8 @@ def enrich_holdings(
                 sector="Cash",
                 industry="Cash",
                 security_type="Cash",
+                zacks_rating=zacks_rating,
+                danelfin_score=danelfin_score,
                 is_cash_equivalent=True,
                 operational_state="CASH_EQUIVALENT",
                 exposure_geography_mix=decomposition.exposure_geography_mix,
@@ -341,6 +376,13 @@ def enrich_holdings(
                 created_at_utc=now_utc,
             ))
         else:
+            zacks_rating, danelfin_score = _overlay_provider_scores(
+                sym,
+                zacks_scores_by_symbol=zacks_scores_by_symbol,
+                danelfin_scores_by_symbol=danelfin_scores_by_symbol,
+                zacks_rating=h.zacks_rating,
+                danelfin_score=h.danelfin_score,
+            )
             decomposition = build_holding_decomposition(
                 symbol=sym,
                 security_type=h.security_type,
@@ -366,6 +408,8 @@ def enrich_holdings(
                 decomposition_source=decomposition.decomposition_source,
                 decomposition_confidence_tier=decomposition.decomposition_confidence_tier,
                 strategic_role=decomposition.strategic_role,
+                zacks_rating=zacks_rating,
+                danelfin_score=danelfin_score,
                 created_at_utc=now_utc,
             ))
 
@@ -386,6 +430,26 @@ def _safe_float(val) -> Optional[float]:
         return float(val) if val not in (None, "", "N/A") else None
     except (ValueError, TypeError):
         return None
+
+
+def _overlay_provider_scores(
+    symbol: str,
+    *,
+    zacks_scores_by_symbol: dict[str, float],
+    danelfin_scores_by_symbol: dict[str, float],
+    zacks_rating: Optional[str],
+    danelfin_score: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Overlay live provider cache values without changing normalization semantics."""
+    fetched_zacks = zacks_scores_by_symbol.get(symbol)
+    if fetched_zacks is not None:
+        zacks_rating = str(fetched_zacks)
+
+    fetched_danelfin = danelfin_scores_by_symbol.get(symbol)
+    if fetched_danelfin is not None:
+        danelfin_score = str(fetched_danelfin)
+
+    return zacks_rating, danelfin_score
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ import dataclasses
 from typing import Optional
 import pytest
 
+from src.scoring.fetch_zacks_scores import load_latest_zacks_scores
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures / helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,6 +165,195 @@ class TestDanelfinPropagation:
         matches = [e for e in enriched if e.symbol == "UNKNOWN"]
         # Not in universe → no enrichment; danelfin stays None
         assert not matches or matches[0].danelfin_score is None
+
+    def test_live_danelfin_cache_overlays_into_enrichment_and_overlay(self, tmp_path):
+        """Live Danelfin cache values should flow into enrichment and overlay construction."""
+        import csv
+        from src.portfolio.enrichment import enrich_holdings, normalize_and_aggregate_holdings
+        from src.portfolio.models import PortfolioHolding
+        from src.portfolio.recommendations import build_security_overlays
+
+        univ = tmp_path / "universe.csv"
+        with open(univ, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=[
+                "symbol", "composite_score", "ess_score_text", "zacks_rating",
+                "danelfin_score", "geography", "sector", "industry",
+                "security_type", "market_cap_bucket", "benchmark_id",
+                "investable_vehicle_id", "is_etf",
+            ])
+            writer.writeheader()
+            writer.writerow({
+                "symbol": "MSFT", "composite_score": "4.0", "ess_score_text": "BULLISH",
+                "zacks_rating": "", "danelfin_score": "", "geography": "US",
+                "sector": "Technology", "industry": "Software", "security_type": "Common Stock",
+                "market_cap_bucket": "MEGA", "benchmark_id": "", "investable_vehicle_id": "", "is_etf": "false",
+            })
+            writer.writerow({
+                "symbol": "NVDA", "composite_score": "3.0", "ess_score_text": "NEUTRAL",
+                "zacks_rating": "", "danelfin_score": "", "geography": "US",
+                "sector": "Technology", "industry": "Semiconductors", "security_type": "Common Stock",
+                "market_cap_bucket": "MEGA", "benchmark_id": "", "investable_vehicle_id": "", "is_etf": "false",
+            })
+            writer.writerow({
+                "symbol": "FAKE", "composite_score": "3.0", "ess_score_text": "NEUTRAL",
+                "zacks_rating": "", "danelfin_score": "", "geography": "US",
+                "sector": "Technology", "industry": "Software", "security_type": "Common Stock",
+                "market_cap_bucket": "MID", "benchmark_id": "", "investable_vehicle_id": "", "is_etf": "false",
+            })
+
+        holdings = [
+            PortfolioHolding(
+                portfolio_snapshot_id="TEST",
+                snapshot_date="2026-08-17",
+                account_name="test",
+                symbol="MSFT",
+                description="Microsoft",
+                quantity=1.0,
+                market_value=100.0,
+                percent_of_portfolio=1.0,
+                asset_class=None,
+                geography=None,
+                market_cap_bucket=None,
+                mega_subtier=None,
+                sector=None,
+                industry=None,
+                security_type=None,
+                cost_basis=None,
+                composite_score=None,
+                ess_score_text=None,
+                zacks_rating=None,
+                benchmark_id=None,
+                investable_vehicle_id=None,
+                source_file="test",
+                created_at_utc="2026-08-17T00:00:00Z",
+            ),
+            PortfolioHolding(
+                portfolio_snapshot_id="TEST",
+                snapshot_date="2026-08-17",
+                account_name="test",
+                symbol="NVDA",
+                description="NVIDIA",
+                quantity=1.0,
+                market_value=100.0,
+                percent_of_portfolio=1.0,
+                asset_class=None,
+                geography=None,
+                market_cap_bucket=None,
+                mega_subtier=None,
+                sector=None,
+                industry=None,
+                security_type=None,
+                cost_basis=None,
+                composite_score=None,
+                ess_score_text=None,
+                zacks_rating=None,
+                benchmark_id=None,
+                investable_vehicle_id=None,
+                source_file="test",
+                created_at_utc="2026-08-17T00:00:00Z",
+            ),
+            PortfolioHolding(
+                portfolio_snapshot_id="TEST",
+                snapshot_date="2026-08-17",
+                account_name="test",
+                symbol="FAKE",
+                description="Fake",
+                quantity=1.0,
+                market_value=100.0,
+                percent_of_portfolio=1.0,
+                asset_class=None,
+                geography=None,
+                market_cap_bucket=None,
+                mega_subtier=None,
+                sector=None,
+                industry=None,
+                security_type=None,
+                cost_basis=None,
+                composite_score=None,
+                ess_score_text=None,
+                zacks_rating=None,
+                benchmark_id=None,
+                investable_vehicle_id=None,
+                source_file="test",
+                created_at_utc="2026-08-17T00:00:00Z",
+            ),
+        ]
+
+        enriched = normalize_and_aggregate_holdings(enrich_holdings(holdings, universe_csv=str(univ)))
+        by_symbol = {row.symbol: row for row in enriched}
+
+        assert by_symbol["MSFT"].danelfin_score == "1.5"
+        assert by_symbol["NVDA"].danelfin_score == "4.0"
+        assert by_symbol["FAKE"].danelfin_score is None
+
+        overlays = build_security_overlays(
+            portfolio_snapshot_id="TEST",
+            holdings=enriched,
+            alignment_results=[],
+        )
+        overlays_by_symbol = {row.symbol: row for row in overlays}
+        assert overlays_by_symbol["MSFT"].danelfin_score == "1.5"
+        assert overlays_by_symbol["NVDA"].danelfin_score == "4.0"
+        assert overlays_by_symbol["FAKE"].danelfin_score is None
+
+        assert dataclasses.asdict(overlays_by_symbol["MSFT"])["danelfin_score"] == "1.5"
+        assert dataclasses.asdict(overlays_by_symbol["NVDA"])["danelfin_score"] == "4.0"
+
+    def test_live_zacks_cache_overlays_into_enrichment(self, tmp_path):
+        """Zacks should share the same live-cache overlay path."""
+        import csv
+        from src.portfolio.enrichment import enrich_holdings
+        from src.portfolio.models import PortfolioHolding
+
+        zacks_scores = load_latest_zacks_scores()
+        if not zacks_scores:
+            pytest.skip("No Zacks cache available")
+        symbol, expected = next(iter(zacks_scores.items()))
+
+        univ = tmp_path / "universe.csv"
+        with open(univ, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=[
+                "symbol", "composite_score", "ess_score_text", "zacks_rating",
+                "danelfin_score", "geography", "sector", "industry",
+                "security_type", "market_cap_bucket", "benchmark_id",
+                "investable_vehicle_id", "is_etf",
+            ])
+            writer.writeheader()
+            writer.writerow({
+                "symbol": symbol, "composite_score": "3.0", "ess_score_text": "NEUTRAL",
+                "zacks_rating": "", "danelfin_score": "", "geography": "US",
+                "sector": "Technology", "industry": "Software", "security_type": "Common Stock",
+                "market_cap_bucket": "MEGA", "benchmark_id": "", "investable_vehicle_id": "", "is_etf": "false",
+            })
+
+        holding = PortfolioHolding(
+            portfolio_snapshot_id="TEST",
+            snapshot_date="2026-08-17",
+            account_name="test",
+            symbol=symbol,
+            description="Zacks Test",
+            quantity=1.0,
+            market_value=100.0,
+            percent_of_portfolio=1.0,
+            asset_class=None,
+            geography=None,
+            market_cap_bucket=None,
+            mega_subtier=None,
+            sector=None,
+            industry=None,
+            security_type=None,
+            cost_basis=None,
+            composite_score=None,
+            ess_score_text=None,
+            zacks_rating=None,
+            benchmark_id=None,
+            investable_vehicle_id=None,
+            source_file="test",
+            created_at_utc="2026-08-17T00:00:00Z",
+        )
+
+        enriched = enrich_holdings([holding], universe_csv=str(univ))
+        assert enriched[0].zacks_rating == str(expected)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
