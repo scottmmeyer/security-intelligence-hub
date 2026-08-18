@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import pytest
@@ -25,6 +26,7 @@ from src.portfolio.phase_e_synthesis import (
     validate_phase_e_consistency,
     synthesize_phase_e_recommendations,
 )
+from src.portfolio.scoring import compute_multi_dimensional_score
 from src.portfolio.models import (
     HoldingStrategicProfile,
     MultiDimensionalScore,
@@ -412,6 +414,205 @@ class TestReplayAlignmentContextSemantics:
         assert "coverage=15.0/60" in rec.title
         assert "quality=unavailable" in rec.title
         assert "Quality: unavailable" in rec.evidence_summary
+
+    def test_replay_availability_metadata_tracks_unavailable_state_without_changing_numeric_score(self):
+        overlays = [_FakeOverlay("AAA", replay_supported=False, replay_percentile=None)]
+        mds = compute_multi_dimensional_score(
+            analysis_run_id=_RUN_ID,
+            portfolio_snapshot_id=_SNAP_ID,
+            mandate_type="CONCENTRATED_ALPHA",
+            alignment_results=[],
+            concentration={"total_weight": 100.0},
+            overlays=overlays,
+            recs=[],
+            strategic_profiles=[],
+        )
+        assert mds.replay_alignment_score == 0.0
+        assert mds.replay_alignment_available is False
+
+    def test_replay_availability_metadata_tracks_actual_zero_when_quality_is_available(self):
+        overlays = [
+            _FakeOverlay("AAA", replay_supported=True, replay_percentile=0.0),
+            _FakeOverlay("BBB", replay_supported=True, replay_percentile=0.0),
+        ]
+        mds = compute_multi_dimensional_score(
+            analysis_run_id=_RUN_ID,
+            portfolio_snapshot_id=_SNAP_ID,
+            mandate_type="CONCENTRATED_ALPHA",
+            alignment_results=[],
+            concentration={"total_weight": 100.0},
+            overlays=overlays,
+            recs=[],
+            strategic_profiles=[],
+        )
+        assert mds.replay_alignment_score == 0.0
+        assert mds.replay_alignment_available is True
+
+    def test_replay_unavailable_for_current_style_77_overlay_evidence(self):
+        mds = self._mds(
+            replay_score=0.0,
+            coverage_score=0.0,
+            coverage_expl="0.0% of portfolio value is in replay-supported positions (0 of 77 holdings).",
+            quality_score=0.0,
+            quality_expl="Replay quality unavailable — no cohort percentile scores found for supported holdings.",
+        )
+        overlays = [
+            _FakeOverlay(f"SYM{i:03}", replay_supported=False, replay_percentile=None)
+            for i in range(77)
+        ]
+        rec = _generate_replay_alignment_context(_RUN_ID, _SNAP_ID, mds, _NOW, overlays=overlays)
+        assert rec is not None
+        assert "unavailable" in rec.title.lower()
+        assert "partial" not in rec.title.lower()
+        assert "0.0/100" not in rec.title
+
+
+class TestPortfolioAlignmentReplayTopCardContract:
+    @staticmethod
+    def _is_nonblank_percentile(value: object) -> bool:
+        if value is None:
+            return False
+        cleaned = str(value).strip()
+        return bool(cleaned) and cleaned not in {"None", "null", "nan", "N/A"}
+
+    @classmethod
+    def _render_multidim_contract(cls, data: dict) -> dict[str, tuple[str, str]]:
+        mds = dict(data.get("multi_dimensional_score") or {})
+        overlays = list(data.get("security_overlays") or [])
+        replay_supported = [
+            o for o in overlays
+            if (o.get("replay_supported") is True or o.get("replay_supported") == "True")
+        ]
+        replay_percentiles = [
+            o for o in overlays if cls._is_nonblank_percentile(o.get("replay_percentile"))
+        ]
+        if "replay_alignment_available" in mds:
+            replay_available = bool(mds.get("replay_alignment_available"))
+        else:
+            replay_available = bool(replay_supported) and bool(replay_percentiles)
+
+        dims = [
+            ("allocation_alignment_score", "Allocation Alignment"),
+            ("portfolio_quality_score", "Portfolio Quality"),
+            ("implementation_quality_score", "Implementation Quality"),
+            ("replay_alignment_score", "Replay Alignment"),
+        ]
+
+        rendered: dict[str, tuple[str, str]] = {}
+        for key, label in dims:
+            raw = float(mds.get(key, 0) or 0)
+            pct = min(100.0, max(0.0, raw))
+            is_replay = key == "replay_alignment_score"
+            show_unavailable = is_replay and not replay_available
+            value = "Unavailable" if show_unavailable else f"{pct:.0f}"
+            if show_unavailable:
+                sublabel = "Unavailable"
+            elif pct >= 75:
+                sublabel = "Strong"
+            elif pct >= 50:
+                sublabel = "Moderate"
+            else:
+                sublabel = "Needs attention"
+            rendered[label] = (value, sublabel)
+        return rendered
+
+    def test_case_a_replay_unavailable_not_rendered_as_zero(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 81.0,
+                "portfolio_quality_score": 70.0,
+                "implementation_quality_score": 65.0,
+                "replay_alignment_score": 0.0,
+                "replay_alignment_available": False,
+            },
+            "security_overlays": [],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Replay Alignment"] == ("Unavailable", "Unavailable")
+        assert rendered["Replay Alignment"][0] != "0"
+        assert rendered["Replay Alignment"][1] != "Needs attention"
+
+    def test_case_b_genuine_measured_zero_stays_numeric_when_available(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 81.0,
+                "portfolio_quality_score": 70.0,
+                "implementation_quality_score": 65.0,
+                "replay_alignment_score": 0.0,
+                "replay_alignment_available": True,
+            },
+            "security_overlays": [],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Replay Alignment"] == ("0", "Needs attention")
+
+    def test_case_c_positive_replay_score_stays_numeric_when_available(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 81.0,
+                "portfolio_quality_score": 70.0,
+                "implementation_quality_score": 65.0,
+                "replay_alignment_score": 42.0,
+                "replay_alignment_available": True,
+            },
+            "security_overlays": [],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Replay Alignment"] == ("42", "Needs attention")
+
+    def test_case_d_other_cards_unchanged_when_replay_unavailable(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 81.0,
+                "portfolio_quality_score": 65.0,
+                "implementation_quality_score": 49.0,
+                "replay_alignment_score": 0.0,
+                "replay_alignment_available": False,
+            },
+            "security_overlays": [],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Allocation Alignment"] == ("81", "Strong")
+        assert rendered["Portfolio Quality"] == ("65", "Moderate")
+        assert rendered["Implementation Quality"] == ("49", "Needs attention")
+
+    def test_backward_compat_no_flag_and_no_replay_evidence_is_unavailable(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 80.0,
+                "portfolio_quality_score": 80.0,
+                "implementation_quality_score": 80.0,
+                "replay_alignment_score": 0.0,
+            },
+            "security_overlays": [
+                {"symbol": "AAA", "replay_supported": False, "replay_percentile": None},
+                {"symbol": "BBB", "replay_supported": False, "replay_percentile": ""},
+            ],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Replay Alignment"] == ("Unavailable", "Unavailable")
+
+    def test_backward_compat_no_flag_with_replay_evidence_preserves_zero(self):
+        data = {
+            "multi_dimensional_score": {
+                "allocation_alignment_score": 80.0,
+                "portfolio_quality_score": 80.0,
+                "implementation_quality_score": 80.0,
+                "replay_alignment_score": 0.0,
+            },
+            "security_overlays": [
+                {"symbol": "AAA", "replay_supported": True, "replay_percentile": 0.0},
+                {"symbol": "BBB", "replay_supported": False, "replay_percentile": None},
+            ],
+        }
+        rendered = self._render_multidim_contract(data)
+        assert rendered["Replay Alignment"] == ("0", "Needs attention")
+
+
+def test_runner_source_passes_overlays_kwarg_to_replay_alignment_context() -> None:
+    runner_source = (Path(__file__).resolve().parents[1] / "src" / "portfolio" / "runner.py").read_text(encoding="utf-8")
+    assert "replay_ctx = _generate_replay_alignment_context(" in runner_source
+    assert "overlays=overlays" in runner_source
 
 
 # ─────────────────────────────────────────────────────────────────────────────

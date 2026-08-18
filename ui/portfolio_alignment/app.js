@@ -1165,6 +1165,13 @@ function renderMultiDimScores(data) {
   const mds = data.multi_dimensional_score;
   if (!el || !mds) { if (el) el.innerHTML = ""; return; }
 
+  const overlays = Array.isArray(data.security_overlays) ? data.security_overlays : [];
+  const replaySupported = overlays.filter(o => o.replay_supported === true || o.replay_supported === "True");
+  const replayPercentiles = overlays.filter(o => o.replay_percentile != null && String(o.replay_percentile).trim() && !["None","null","nan","N/A"].includes(String(o.replay_percentile).trim()));
+  const replayAvailableExplicit = Object.prototype.hasOwnProperty.call(mds, "replay_alignment_available")
+    ? Boolean(mds.replay_alignment_available)
+    : (replaySupported.length > 0 && replayPercentiles.length > 0);
+
   const dims = [
     { key: "allocation_alignment_score",   label: "Allocation Alignment",   tooltip: "Distance from target model allocations" },
     { key: "portfolio_quality_score",      label: "Portfolio Quality",       tooltip: "Concentration, signal quality, strategic classification" },
@@ -1174,15 +1181,18 @@ function renderMultiDimScores(data) {
 
   const cards = dims.map(d => {
     const raw = parseFloat(mds[d.key] ?? 0);
-    const pct  = Math.min(100, Math.max(0, raw));
+    const isReplay = d.key === "replay_alignment_score";
+    const showUnavailable = isReplay && !replayAvailableExplicit;
+    const pct = Math.min(100, Math.max(0, raw));
     const color = pct >= 75 ? "var(--green)" : pct >= 50 ? "var(--accent-2)" : "var(--sev-high)";
-    const label = pct >= 75 ? "Strong" : pct >= 50 ? "Moderate" : "Needs attention";
+    const label = showUnavailable ? "Unavailable" : (pct >= 75 ? "Strong" : pct >= 50 ? "Moderate" : "Needs attention");
+    const displayValue = showUnavailable ? "Unavailable" : `${pct.toFixed(0)}`;
     return `<div class="multidim-card" title="${escHtml(d.tooltip)}">
-      <div class="multidim-score" style="color:${color}">${pct.toFixed(0)}</div>
+      <div class="multidim-score" style="color:${showUnavailable ? "var(--muted)" : color}">${displayValue}</div>
       <div class="multidim-label">${d.label}</div>
       <div class="multidim-sublabel">${label}</div>
       <div class="multidim-track">
-        <div class="multidim-fill" style="width:${pct.toFixed(0)}%;background:${color}"></div>
+        <div class="multidim-fill" style="width:${showUnavailable ? "100" : pct.toFixed(0)}%;background:${showUnavailable ? "var(--muted)" : color}"></div>
       </div>
     </div>`;
   }).join("");

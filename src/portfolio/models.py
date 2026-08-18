@@ -427,6 +427,7 @@ class MultiDimensionalScore:
     replay_alignment_components: tuple
 
     created_at_utc: str
+    replay_alignment_available: bool = False
 
 
 @dataclass(frozen=True)

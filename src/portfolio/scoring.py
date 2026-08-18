@@ -392,6 +392,13 @@ def compute_multi_dimensional_score(
     iq_score, iq_comps = _compute_implementation_quality(alignment_results, recs)
     rp_score, rp_comps = _compute_replay_alignment(overlays)
 
+    replay_alignment_available = bool(
+        [o for o in overlays if _to_bool(_fld(o, "replay_supported"))]
+    ) and any(
+        _fld(o, "replay_percentile") is not None and str(_fld(o, "replay_percentile")).strip() not in {"", "None", "null", "nan", "N/A"}
+        for o in overlays
+    )
+
     return MultiDimensionalScore(
         analysis_run_id=analysis_run_id,
         portfolio_snapshot_id=portfolio_snapshot_id,
@@ -400,6 +407,7 @@ def compute_multi_dimensional_score(
         portfolio_quality_score=pq_score,
         implementation_quality_score=iq_score,
         replay_alignment_score=rp_score,
+        replay_alignment_available=replay_alignment_available,
         allocation_alignment_components=alloc_comps,
         portfolio_quality_components=pq_comps,
         implementation_quality_components=iq_comps,

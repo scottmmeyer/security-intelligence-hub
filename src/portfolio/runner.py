@@ -921,6 +921,7 @@ def run_analysis(
             portfolio_snapshot_id=snapshot.portfolio_snapshot_id,
             multi_dim_score=multi_dim_score,
             now_utc=now_utc,
+            overlays=overlays,
         )
         if replay_ctx:
             recs = _prioritize_recs(list(recs) + [replay_ctx])
