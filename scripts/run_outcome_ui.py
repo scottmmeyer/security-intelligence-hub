@@ -1396,6 +1396,224 @@ def _build_operator_priorities_payload(run_id: str | None = None) -> dict:
     }
 
 
+PIS_DASHBOARD_API_ROUTES = {
+    "/api/pis/snapshots",
+    "/api/pis/summary",
+    "/api/pis/latest",
+    "/api/pis/health",
+    "/api/pis/governance/latest",
+    "/api/pis/governance-summary",
+    "/api/pis/canonical/latest",
+    "/api/pis/canonical/history",
+    "/api/pis/canonical-summary",
+    "/api/pis/changes/latest",
+    "/api/pis/change-summary",
+    "/api/pis/lineage/latest",
+    "/api/pis/lineage-summary",
+    "/api/pis/attribution/latest",
+    "/api/pis/attribution/history",
+    "/api/pis/attribution-summary",
+    "/api/pis/benchmark-attribution/latest",
+    "/api/pis/benchmark-attribution/returns",
+    "/api/pis/benchmark-attribution/sources",
+    "/api/pis/allocation-drift/latest",
+    "/api/pis/allocation-drift/summary",
+    "/api/pis/action-attribution/summary",
+    "/api/pis/action-attribution/recommendations",
+    "/api/pis/action-attribution/sources",
+    "/api/pis/dor/summary",
+    "/api/pis/dor/cohorts",
+    "/api/pis/dor/recommendations",
+    "/api/pis/policy/current",
+    "/api/pis/policy/history",
+    "/api/pis/policy/diff",
+    "/api/pis/policy/summary",
+    "/api/pis/policy/impact",
+    "/api/pis/policy/timeline",
+    "/api/pis/compliance/latest",
+    "/api/pis/compliance/summary",
+}
+
+
+MEI_DASHBOARD_API_ROUTES = {
+    "/api/mei/events",
+    "/api/mei/events/summary",
+    "/api/mei/exposures",
+    "/api/mei/exposures/summary",
+    "/api/mei/recommendation-context",
+    "/api/mei/recommendation-context/summary",
+    "/api/mei/event-history/summary",
+    "/api/mei/outcomes",
+    "/api/mei/outcome-summary",
+    "/api/mei/event-impact",
+}
+
+
+def _resolve_pis_dashboard_payload(path: str) -> object | None:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from src.pis.action_attribution import (
+        pis_action_attribution_recommendations,
+        pis_action_attribution_sources,
+        pis_action_attribution_summary,
+    )
+    from src.pis.allocation_compliance import pis_compliance_latest, pis_compliance_summary
+    from src.pis.allocation_drift import pis_allocation_drift_latest, pis_allocation_drift_summary
+    from src.pis.benchmark_attribution import (
+        pis_benchmark_latest,
+        pis_benchmark_returns,
+        pis_benchmark_sources,
+    )
+    from src.pis.canonical_daily import pis_canonical_history, pis_canonical_latest, pis_canonical_summary
+    from src.pis.change_detection import pis_change_summary, pis_changes_latest
+    from src.pis.dislocation_outcome_review import (
+        pis_dor_cohorts,
+        pis_dor_recommendations,
+        pis_dor_summary,
+    )
+    from src.pis.governance import pis_governance_latest, pis_governance_summary
+    from src.pis.performance_attribution import (
+        pis_attribution_history,
+        pis_attribution_latest,
+        pis_attribution_summary,
+    )
+    from src.pis.policy_change_summary import policy_impact, policy_summary, policy_timeline
+    from src.pis.policy_version_diff import pis_policy_current, pis_policy_diff, pis_policy_history
+    from src.pis.recommendation_lineage import pis_lineage_latest, pis_lineage_summary
+    from src.pis.storage import (
+        pis_latest_snapshot_summary,
+        pis_sih_lineage_summary,
+        pis_snapshot_history_health,
+        pis_snapshot_inventory,
+        pis_value_timeline,
+    )
+
+    if path == "/api/pis/snapshots":
+        return pis_snapshot_inventory()
+    if path == "/api/pis/summary":
+        return {
+            "timeline": pis_value_timeline(),
+            "lineage": pis_sih_lineage_summary(repo_root=_REPO_ROOT),
+            "health": pis_snapshot_history_health(),
+        }
+    if path == "/api/pis/latest":
+        return pis_latest_snapshot_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/health":
+        return pis_snapshot_history_health()
+    if path == "/api/pis/governance/latest":
+        return pis_governance_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/governance-summary":
+        return pis_governance_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/canonical/latest":
+        return pis_canonical_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/canonical/history":
+        return pis_canonical_history(repo_root=_REPO_ROOT)
+    if path == "/api/pis/canonical-summary":
+        return pis_canonical_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/changes/latest":
+        return pis_changes_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/change-summary":
+        return pis_change_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/lineage/latest":
+        return pis_lineage_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/lineage-summary":
+        return pis_lineage_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/attribution/latest":
+        return pis_attribution_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/attribution/history":
+        return pis_attribution_history(repo_root=_REPO_ROOT)
+    if path == "/api/pis/attribution-summary":
+        return pis_attribution_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/benchmark-attribution/latest":
+        return pis_benchmark_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/benchmark-attribution/returns":
+        return pis_benchmark_returns(repo_root=_REPO_ROOT)
+    if path == "/api/pis/benchmark-attribution/sources":
+        return pis_benchmark_sources(repo_root=_REPO_ROOT)
+    if path == "/api/pis/allocation-drift/latest":
+        return pis_allocation_drift_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/allocation-drift/summary":
+        return pis_allocation_drift_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/action-attribution/summary":
+        return pis_action_attribution_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/action-attribution/recommendations":
+        return pis_action_attribution_recommendations(repo_root=_REPO_ROOT)
+    if path == "/api/pis/action-attribution/sources":
+        return pis_action_attribution_sources(repo_root=_REPO_ROOT)
+    if path == "/api/pis/dor/summary":
+        return pis_dor_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/dor/cohorts":
+        return pis_dor_cohorts(repo_root=_REPO_ROOT)
+    if path == "/api/pis/dor/recommendations":
+        return pis_dor_recommendations(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/current":
+        return pis_policy_current(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/history":
+        return pis_policy_history(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/diff":
+        return pis_policy_diff(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/summary":
+        return policy_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/impact":
+        return policy_impact(repo_root=_REPO_ROOT)
+    if path == "/api/pis/policy/timeline":
+        return policy_timeline(repo_root=_REPO_ROOT)
+    if path == "/api/pis/compliance/latest":
+        return pis_compliance_latest(repo_root=_REPO_ROOT)
+    if path == "/api/pis/compliance/summary":
+        return pis_compliance_summary(repo_root=_REPO_ROOT)
+    return None
+
+
+def _resolve_mei_dashboard_payload(path: str, query: str) -> object | None:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from src.mei.event_history import mei_event_history_summary
+    from src.mei.event_outcome_tracker import (
+        mei_event_impact,
+        mei_outcome_by_event,
+        mei_outcome_summary,
+        mei_outcomes,
+    )
+    from src.mei.events import mei_events, mei_events_summary
+    from src.mei.exposures import mei_exposures, mei_exposures_summary
+    from src.mei.recommendation_context import (
+        mei_recommendation_context,
+        mei_recommendation_context_summary,
+    )
+
+    if path == "/api/mei/events":
+        return mei_events(_REPO_ROOT)
+    if path == "/api/mei/events/summary":
+        return mei_events_summary(_REPO_ROOT)
+    if path == "/api/mei/exposures":
+        return mei_exposures(_REPO_ROOT)
+    if path == "/api/mei/exposures/summary":
+        return mei_exposures_summary(_REPO_ROOT)
+    if path == "/api/mei/recommendation-context":
+        return mei_recommendation_context(_REPO_ROOT)
+    if path == "/api/mei/recommendation-context/summary":
+        return mei_recommendation_context_summary(_REPO_ROOT)
+    if path == "/api/mei/event-history/summary":
+        return mei_event_history_summary(_REPO_ROOT)
+    if path == "/api/mei/outcome-summary":
+        return mei_outcome_summary(_REPO_ROOT)
+    if path == "/api/mei/event-impact":
+        return mei_event_impact(_REPO_ROOT)
+    if path == "/api/mei/outcomes":
+        event_id = (parse_qs(query).get("event_id", [""])[0] or "").strip()
+        if event_id:
+            return mei_outcome_by_event(event_id, _REPO_ROOT)
+        return mei_outcomes(_REPO_ROOT)
+    return None
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static file handler extended with /api/* JSON endpoints."""
 
@@ -1415,6 +1633,16 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             return
         self.send_error(404)
+
+    def do_HEAD(self) -> None:  # type: ignore[override]
+        if self.path.startswith("/api/"):
+            self.command = "HEAD"
+            try:
+                self.do_GET()
+            finally:
+                self.command = "HEAD"
+            return
+        super().do_HEAD()
 
     def do_GET(self) -> None:  # type: ignore[override]
         global _refresh_proc
@@ -1881,6 +2109,39 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/security-metadata":
             # Optional enrichment endpoint; fail-open to an empty mapping.
             self._json_response({})
+        elif path.startswith("/api/pis/"):
+            try:
+                payload = _resolve_pis_dashboard_payload(path)
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "status": "degraded",
+                        "endpoint": path,
+                        "error": str(exc),
+                    }
+                )
+                return
+            if payload is None:
+                self._json_response({"error": "not found", "endpoint": path}, 404)
+                return
+            self._json_response(payload)
+        elif path.startswith("/api/mei/"):
+            try:
+                query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                payload = _resolve_mei_dashboard_payload(path, query)
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "status": "degraded",
+                        "endpoint": path,
+                        "error": str(exc),
+                    }
+                )
+                return
+            if payload is None:
+                self._json_response({"error": "not found", "endpoint": path}, 404)
+                return
+            self._json_response(payload)
         else:
             super().do_GET()
 
@@ -2296,7 +2557,8 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def log_message(self, fmt: str, *args: object) -> None:  # type: ignore[override]
         # Suppress noisy polling requests from the UI
