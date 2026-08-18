@@ -15,13 +15,20 @@ def test_queue_includes_required_pairs_in_order() -> None:
     assert 'const LOCAL_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/queue";' in src
     assert 'const LOCAL_DIAGNOSTIC_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue";' in src
     assert 'const LOCAL_DIAGNOSTIC_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/pending";' in src
+    assert 'const LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/claim";' in src
     assert 'const LOCAL_DIAGNOSTIC_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-status";' in src
-    assert 'async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "")' in src
+    assert 'async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "", queueMode = "auto")' in src
+    assert 'if (mode === "diagnostic") {' in src
+    assert 'endpoint = params.toString()' in src
+    assert 'LOCAL_DIAGNOSTIC_PENDING_ENDPOINT;' in src
+    assert "async function claimDiagnosticRun(diagnosticRunId, workerId)" in src
+    assert "const pendingQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint, queueMode);" in src
+    assert "const captureQueue = await claimDiagnosticRun(diagnosticRunId, workerId);" in src
+    assert "if (!captureQueue.length)" in src
     assert 'if (!body || body.status !== "ok" || !Array.isArray(body.jobs))' in src
-    assert 'const captureQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint);' in src
-    assert 'if (!captureQueue.length)' in src
     assert 'for (const job of captureQueue)' in src
     assert 'job.kind' in src
+    assert 'job.mode' in src
     assert 'job.operator_source' in src
     assert 'singleUrl(left)' in src
     assert 'pairUrl(left, right)' in src
@@ -55,6 +62,18 @@ def test_queue_blocks_concurrent_starts() -> None:
     assert "queueRunning = true;" in src
     assert "queueRunning = false;" in src
     assert "processedJobs" in src
+    assert "trigger" in src
+
+
+def test_queue_has_alarm_based_auto_trigger() -> None:
+    src = _source()
+    assert 'const AUTO_POLL_ALARM = "sih-danelfin-auto-poll";' in src
+    assert "ensureAutoPollAlarm();" in src
+    assert "chrome.runtime.onInstalled.addListener(() => {" in src
+    assert "chrome.runtime.onStartup.addListener(() => {" in src
+    assert "chrome.alarms.onAlarm.addListener(async (alarm) => {" in src
+    assert "await runCaptureWorker(\"alarm_poll\", \"\", \"\", \"diagnostic\");" in src
+    assert "await runCaptureWorker(\"alarm_poll\");" not in src
 
 
 def test_queue_supports_diagnostic_symbol_opt_in_and_event_posting() -> None:
@@ -62,9 +81,14 @@ def test_queue_supports_diagnostic_symbol_opt_in_and_event_posting() -> None:
     assert "danelfin_diag_symbol" in src
     assert "danelfin_diag_run_id" in src
     assert "LOCAL_DIAGNOSTIC_PENDING_ENDPOINT" in src
-    assert "await postDiagnosticEvent(diagnosticRunId, \"worker_started\")" in src
+    assert "await postDiagnosticEvent(diagnosticRunId, \"worker_started\", {" in src
     assert "await postDiagnosticEvent(runId, \"worker_claimed\"" in src
     assert "await postDiagnosticEvent(runId, \"navigation_started\"" in src
     assert "await postDiagnosticEvent(runId, \"navigation_completed\"" in src
     assert "await postDiagnosticEvent(runId, \"capture_started\"" in src
     assert "await postDiagnosticEvent(runId, \"capture_completed\"" in src
+
+
+def test_manual_click_path_preserves_existing_queue_mode_resolution() -> None:
+    src = _source()
+    assert "await runCaptureWorker(\"manual_click\", diagnosticSymbol, diagnosticRunIdHint, \"auto\");" in src

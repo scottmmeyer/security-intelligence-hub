@@ -95,6 +95,7 @@ def _record_danelfin_diag_event(
     *,
     error: str | None = None,
     url: str | None = None,
+    payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     with _danelfin_diag_lock:
         state = _danelfin_diag_runs.get(run_id)
@@ -112,22 +113,44 @@ def _record_danelfin_diag_event(
                 "normalized": None,
                 "validation_passed": None,
                 "error": None,
+                "mode": "diagnostic",
+                "state": "PREPARED",
+                "claimed_at": None,
+                "event_log": [],
             }
             _danelfin_diag_runs[run_id] = state
 
         timestamp = _utc_now_iso()
         if event == "created":
             state["created"] = timestamp
+            state["state"] = "PREPARED"
         elif event in _DANELFIN_DIAGNOSTIC_STATUS_FIELDS:
             state[event] = timestamp
+            if event == "worker_started":
+                state["state"] = "RUNNING"
         elif event == "error":
             state["error"] = {
                 "timestamp": timestamp,
                 "message": str(error or "unknown_error"),
             }
+            state["state"] = "ERROR"
+
+        if event == "validation_passed":
+            state["state"] = "COMPLETED"
 
         if url:
             state["url"] = str(url)
+        event_log = state.get("event_log")
+        if not isinstance(event_log, list):
+            event_log = []
+            state["event_log"] = event_log
+        event_log.append(
+            {
+                "event": str(event),
+                "timestamp": timestamp,
+                "payload": copy.deepcopy(payload) if isinstance(payload, dict) else {},
+            }
+        )
         state["updated_at"] = timestamp
         return copy.deepcopy(state)
 
@@ -147,6 +170,7 @@ def _build_danelfin_diagnostic_queue_payload(symbol: str, pair_symbol: str) -> d
     symbols = [primary_symbol, secondary_symbol]
     job = {
         "job_id": run_id,
+        "mode": "diagnostic",
         "kind": "pair",
         "symbols": symbols,
         "url": _danelfin_capture_pair_url(symbols),
@@ -161,12 +185,15 @@ def _build_danelfin_diagnostic_queue_payload(symbol: str, pair_symbol: str) -> d
         _danelfin_diag_runs[run_id] = {
             "diagnostic_run_id": run_id,
             "diagnostic": True,
+            "mode": "diagnostic",
             "dry_run": True,
             "symbol": primary_symbol,
             "symbols": symbols,
             "job_id": run_id,
             "url": str(job["url"]),
             "created": _utc_now_iso(),
+            "state": "PREPARED",
+            "claimed_at": None,
             "worker_started": None,
             "worker_claimed": None,
             "navigation_started": None,
@@ -177,6 +204,7 @@ def _build_danelfin_diagnostic_queue_payload(symbol: str, pair_symbol: str) -> d
             "normalized": None,
             "validation_passed": None,
             "error": None,
+            "event_log": [],
             "updated_at": _utc_now_iso(),
         }
 
@@ -215,6 +243,7 @@ def _build_danelfin_diagnostic_queue_payload_from_state(state: dict[str, object]
     url = str(state.get("url") or "").strip() or _danelfin_capture_pair_url(symbols)
     job = {
         "job_id": str(state.get("job_id") or run_id),
+        "mode": str(state.get("mode") or "diagnostic"),
         "kind": "pair",
         "symbols": symbols,
         "url": url,
@@ -246,6 +275,10 @@ def _find_prepared_danelfin_diagnostic_run(symbol: str = "", run_id: str = "") -
         if requested_run_id:
             state = _danelfin_diag_runs.get(requested_run_id)
             if isinstance(state, dict):
+                if state.get("claimed_at") is not None:
+                    return None
+                if state.get("state") in {"COMPLETED", "ERROR"}:
+                    return None
                 return copy.deepcopy(state)
             return None
 
@@ -256,7 +289,9 @@ def _find_prepared_danelfin_diagnostic_run(symbol: str = "", run_id: str = "") -
         for state in _danelfin_diag_runs.values():
             if not isinstance(state, dict):
                 continue
-            if state.get("worker_started") is not None:
+            if state.get("claimed_at") is not None:
+                continue
+            if state.get("state") in {"COMPLETED", "ERROR"}:
                 continue
             symbols_raw = state.get("symbols")
             symbols = [str(item).strip().upper() for item in symbols_raw] if isinstance(symbols_raw, list) else []
@@ -270,6 +305,45 @@ def _find_prepared_danelfin_diagnostic_run(symbol: str = "", run_id: str = "") -
 
     candidates.sort(key=lambda item: str(item.get("created") or ""), reverse=True)
     return candidates[0]
+
+
+def _claim_prepared_danelfin_diagnostic_run(run_id: str, worker_id: str = "") -> dict[str, object] | None:
+    requested_run_id = str(run_id or "").strip()
+    worker = str(worker_id or "").strip() or "local_worker"
+    if not requested_run_id:
+        raise ValueError("diagnostic run id is required for claim")
+
+    with _danelfin_diag_lock:
+        state = _danelfin_diag_runs.get(requested_run_id)
+        if not isinstance(state, dict):
+            return None
+        if state.get("claimed_at") is not None:
+            return None
+        if state.get("state") in {"COMPLETED", "ERROR"}:
+            return None
+
+        claim_ts = _utc_now_iso()
+        state["claimed_at"] = claim_ts
+        state["worker_id"] = worker
+        state["state"] = "RUNNING"
+        state["worker_claimed"] = claim_ts
+        state["updated_at"] = claim_ts
+
+        event_log = state.get("event_log")
+        if not isinstance(event_log, list):
+            event_log = []
+            state["event_log"] = event_log
+        event_log.append(
+            {
+                "event": "worker_claimed",
+                "timestamp": claim_ts,
+                "payload": {"worker_id": worker, "claim_source": "claim_endpoint"},
+            }
+        )
+
+        claimed = copy.deepcopy(state)
+
+    return _build_danelfin_diagnostic_queue_payload_from_state(claimed)
 
 
 def _resolve_provider_signal_file(provider_name: str) -> Path:
@@ -2261,6 +2335,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         if path in {
             "/api/danelfin/browser-capture",
             "/api/danelfin/browser-capture/diagnostic-status",
+            "/api/danelfin/browser-capture/diagnostic-queue/claim",
         }:
             self.send_response(204)
             origin = _capture_cors_origin(self)
@@ -3318,8 +3393,52 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     event,
                     error=str(payload.get("error") or "").strip() or None,
                     url=str(payload.get("url") or "").strip() or None,
+                    payload={
+                        key: value
+                        for key, value in payload.items()
+                        if key not in {"diagnostic_run_id", "event", "error", "url"}
+                    },
                 )
                 self._json_response({"status": "ok", "diagnostic": state}, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
+        elif path == "/api/danelfin/browser-capture/diagnostic-queue/claim":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400, extra_headers=self._cors_headers())
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400, extra_headers=self._cors_headers())
+                return
+
+            run_id = str(payload.get("diagnostic_run_id") or "").strip()
+            worker_id = str(payload.get("worker_id") or "").strip()
+            if not run_id:
+                self._json_response({"error": "diagnostic_run_id is required"}, 422, extra_headers=self._cors_headers())
+                return
+
+            try:
+                claimed_payload = _claim_prepared_danelfin_diagnostic_run(run_id, worker_id=worker_id)
+                if claimed_payload is None:
+                    self._json_response(
+                        {
+                            "status": "ok",
+                            "provider": "danelfin",
+                            "diagnostic": True,
+                            "jobs": [],
+                            "job_count": 0,
+                            "diagnostic_run_id": run_id,
+                            "generated_at_utc": _utc_now_iso(),
+                        },
+                        extra_headers=self._cors_headers(),
+                    )
+                    return
+                self._json_response(claimed_payload, extra_headers=self._cors_headers())
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422, extra_headers=self._cors_headers())
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
         else:

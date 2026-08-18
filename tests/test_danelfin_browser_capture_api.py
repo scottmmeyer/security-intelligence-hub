@@ -347,6 +347,103 @@ def test_diagnostic_pending_queue_reuses_prepared_run_without_creating_second_ru
     assert run_ids == [prepared_run_id]
 
 
+def test_diagnostic_claim_is_atomic_and_prevents_double_claim(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA&pair_symbol=ANIP",
+            timeout=10,
+        ) as resp:
+            prepared = json.loads(resp.read().decode("utf-8"))
+
+        run_id = str(prepared["diagnostic_run_id"])
+
+        status_code, first_claim = _post_json(
+            port,
+            "/api/danelfin/browser-capture/diagnostic-queue/claim",
+            {
+                "diagnostic_run_id": run_id,
+                "worker_id": "extension-worker-1",
+            },
+        )
+        status_code_second, second_claim = _post_json(
+            port,
+            "/api/danelfin/browser-capture/diagnostic-queue/claim",
+            {
+                "diagnostic_run_id": run_id,
+                "worker_id": "extension-worker-2",
+            },
+        )
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            pending_after_claim = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status_code == 200
+    assert first_claim["status"] == "ok"
+    assert first_claim["job_count"] == 1
+    assert first_claim["diagnostic_run_id"] == run_id
+    assert first_claim["jobs"][0]["diagnostic_run_id"] == run_id
+
+    assert status_code_second == 200
+    assert second_claim["status"] == "ok"
+    assert second_claim["job_count"] == 0
+    assert second_claim["diagnostic_run_id"] == run_id
+    assert second_claim["jobs"] == []
+
+    assert pending_after_claim["status"] == "ok"
+    assert pending_after_claim["job_count"] == 0
+    assert pending_after_claim["jobs"] == []
+
+
+def test_diagnostic_pending_poll_does_not_claim_or_transition_state(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA&pair_symbol=ANIP",
+            timeout=10,
+        ) as resp:
+            prepared = json.loads(resp.read().decode("utf-8"))
+
+        run_id = str(prepared["diagnostic_run_id"])
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            first_poll = json.loads(resp.read().decode("utf-8"))
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            second_poll = json.loads(resp.read().decode("utf-8"))
+
+        with run_outcome_ui._danelfin_diag_lock:
+            state = dict(run_outcome_ui._danelfin_diag_runs[run_id])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert first_poll["status"] == "ok"
+    assert first_poll["job_count"] == 1
+    assert second_poll["status"] == "ok"
+    assert second_poll["job_count"] == 1
+    assert first_poll["diagnostic_run_id"] == run_id
+    assert second_poll["diagnostic_run_id"] == run_id
+
+    assert state["state"] == "PREPARED"
+    assert state["claimed_at"] is None
+    assert state["worker_claimed"] is None
+
+
 def test_diagnostic_run_attribution_events_and_capture_update_prepared_run(isolated_repo: Path) -> None:
     server, thread, port = _start_server()
     try:

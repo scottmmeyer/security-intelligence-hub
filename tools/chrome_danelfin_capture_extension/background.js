@@ -2,7 +2,10 @@ const LOCAL_CAPTURE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-captu
 const LOCAL_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/queue";
 const LOCAL_DIAGNOSTIC_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue";
 const LOCAL_DIAGNOSTIC_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/pending";
+const LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/claim";
 const LOCAL_DIAGNOSTIC_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-status";
+const AUTO_POLL_ALARM = "sih-danelfin-auto-poll";
+const AUTO_POLL_MINUTES = 1;
 
 const PAGE_LOAD_TIMEOUT_MS = 30000;
 const MESSAGE_RETRY_COUNT = 6;
@@ -139,9 +142,21 @@ function diagnosticRunIdFromUrl(urlValue) {
   return "";
 }
 
-async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "") {
+async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "", queueMode = "auto") {
+  const mode = String(queueMode || "auto").trim().toLowerCase();
   let endpoint = LOCAL_QUEUE_ENDPOINT;
-  if (diagnosticSymbol || diagnosticRunId) {
+  if (mode === "diagnostic") {
+    const params = new URLSearchParams();
+    if (diagnosticRunId) {
+      params.set("id", diagnosticRunId);
+    }
+    if (diagnosticSymbol) {
+      params.set("symbol", diagnosticSymbol);
+    }
+    endpoint = params.toString()
+      ? `${LOCAL_DIAGNOSTIC_PENDING_ENDPOINT}?${params.toString()}`
+      : LOCAL_DIAGNOSTIC_PENDING_ENDPOINT;
+  } else if (diagnosticSymbol || diagnosticRunId) {
     const params = new URLSearchParams();
     if (diagnosticRunId) {
       params.set("id", diagnosticRunId);
@@ -166,6 +181,31 @@ async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "") {
     throw new Error(`queue payload invalid: ${JSON.stringify(body)}`);
   }
 
+  return body.jobs;
+}
+
+async function claimDiagnosticRun(diagnosticRunId, workerId) {
+  const runId = String(diagnosticRunId || "").trim();
+  if (!runId) {
+    return [];
+  }
+
+  const resp = await fetch(LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      diagnostic_run_id: runId,
+      worker_id: String(workerId || "").trim() || "extension-worker"
+    })
+  });
+
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`claim failed: ${resp.status} ${JSON.stringify(body)}`);
+  }
+  if (!body || body.status !== "ok" || !Array.isArray(body.jobs)) {
+    throw new Error(`claim payload invalid: ${JSON.stringify(body)}`);
+  }
   return body.jobs;
 }
 
@@ -214,9 +254,21 @@ function hasSameDayConflict(body) {
   return skipped.some((entry) => String((entry && entry.reason) || "") === "conflicts_with_existing_same_day_value");
 }
 
-chrome.action.onClicked.addListener(async () => {
+function ensureAutoPollAlarm() {
+  chrome.alarms.get(AUTO_POLL_ALARM, (existing) => {
+    if (existing) {
+      return;
+    }
+    chrome.alarms.create(AUTO_POLL_ALARM, {
+      delayInMinutes: AUTO_POLL_MINUTES,
+      periodInMinutes: AUTO_POLL_MINUTES
+    });
+  });
+}
+
+async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdHint = "", queueMode = "auto") {
   if (queueRunning) {
-    console.warn("Danelfin capture queue already running; ignoring duplicate click");
+    console.info("Danelfin capture worker already running; wake ignored", { trigger });
     return;
   }
 
@@ -228,21 +280,29 @@ chrome.action.onClicked.addListener(async () => {
   let diagnosticRunId = "";
 
   try {
-    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const activeUrl = activeTab && activeTab.url ? activeTab.url : "";
-    const diagnosticSymbol = diagnosticSymbolFromUrl(activeUrl);
-    const diagnosticRunIdHint = diagnosticRunIdFromUrl(activeUrl);
-    const captureQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint);
-    totalJobs = captureQueue.length;
-    if (!captureQueue.length) {
-      console.info("Danelfin background capture queue is empty; nothing to do");
+    const pendingQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint, queueMode);
+    totalJobs = pendingQueue.length;
+    if (!pendingQueue.length) {
+      console.info("Danelfin background capture queue is empty; nothing to do", { trigger });
       return;
     }
-    diagnosticRunId = String((captureQueue[0] && captureQueue[0].diagnostic_run_id) || "").trim();
-    await postDiagnosticEvent(diagnosticRunId, "worker_started");
+
+    const workerId = `${chrome.runtime.id}:${trigger}`;
+    diagnosticRunId = String((pendingQueue[0] && pendingQueue[0].diagnostic_run_id) || "").trim();
+    const captureQueue = await claimDiagnosticRun(diagnosticRunId, workerId);
+    if (!captureQueue.length) {
+      console.info("Danelfin prepared job already claimed; skipping", { trigger, diagnosticRunId });
+      return;
+    }
+
+    await postDiagnosticEvent(diagnosticRunId, "worker_started", {
+      trigger,
+      worker_id: workerId,
+    });
 
     for (const job of captureQueue) {
       const kind = String(job && job.kind ? job.kind : "").trim().toLowerCase();
+      const mode = String(job && job.mode ? job.mode : "").trim().toLowerCase();
       const symbols = Array.isArray(job && job.symbols) ? job.symbols.map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean) : [];
       const operatorSource = String(job && job.operator_source ? job.operator_source : (kind === "single" ? "STOCK_PAGE" : "PAIR_PAGE")).trim().toUpperCase();
       const dryRun = Boolean(job && job.dry_run);
@@ -251,6 +311,12 @@ chrome.action.onClicked.addListener(async () => {
       if (kind !== "pair" && kind !== "single") {
         throw new Error(`invalid queue job kind: ${JSON.stringify(job)}`);
       }
+      if (mode !== "diagnostic" && mode !== "production") {
+        throw new Error(`invalid queue job mode: ${JSON.stringify(job)}`);
+      }
+      if (mode === "diagnostic" && dryRun !== true) {
+        throw new Error(`diagnostic job must run in dry_run mode: ${JSON.stringify(job)}`);
+      }
       if ((kind === "pair" && symbols.length !== 2) || (kind === "single" && symbols.length !== 1)) {
         throw new Error(`invalid queue job symbols: ${JSON.stringify(job)}`);
       }
@@ -258,9 +324,10 @@ chrome.action.onClicked.addListener(async () => {
       const left = symbols[0];
       const right = symbols[1];
       const jobUrl = url || (kind === "single" ? singleUrl(left) : pairUrl(left, right));
-      await postDiagnosticEvent(runId, "worker_claimed", { url: jobUrl });
-      await postDiagnosticEvent(runId, "navigation_started", { url: jobUrl });
+      await postDiagnosticEvent(runId, "worker_claimed", { url: jobUrl, trigger, mode, dry_run: dryRun });
+      await postDiagnosticEvent(runId, "navigation_started", { url: jobUrl, trigger });
 
+      const [activeBefore] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       const created = await chrome.tabs.create({
         url: jobUrl,
         active: false
@@ -272,15 +339,25 @@ chrome.action.onClicked.addListener(async () => {
 
       try {
         const loadedTab = await waitForTabComplete(created.id);
-        await postDiagnosticEvent(runId, "navigation_completed", { url: String((loadedTab && loadedTab.url) || jobUrl) });
+        const [activeAfter] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        await postDiagnosticEvent(runId, "navigation_completed", {
+          url: String((loadedTab && loadedTab.url) || jobUrl),
+          active_tab_before: activeBefore && typeof activeBefore.id === "number" ? activeBefore.id : null,
+          active_tab_after: activeAfter && typeof activeAfter.id === "number" ? activeAfter.id : null,
+          auto_tab_active: false,
+        });
         const tabUrl = String((loadedTab && loadedTab.url) || "");
         if (!tabUrl.startsWith("https://danelfin.com/") && !tabUrl.startsWith("https://www.danelfin.com/")) {
           throw new Error(`temporary tab loaded unexpected URL: ${tabUrl || "(empty)"}`);
         }
 
-        await postDiagnosticEvent(runId, "capture_started", { url: tabUrl });
+        await postDiagnosticEvent(runId, "capture_started", { url: tabUrl, trigger });
         const response = await requestCapture(created.id, symbols);
-        await postDiagnosticEvent(runId, "capture_completed", { url: tabUrl });
+        await postDiagnosticEvent(runId, "capture_completed", {
+          url: tabUrl,
+          raw_capture_present: Boolean(response && response.capture),
+          parser_executed: true,
+        });
         if (response.capture.challenge) {
           stopReason = `provider challenge detected for ${symbols.join("/")}`;
           throw new Error(stopReason);
@@ -300,7 +377,10 @@ chrome.action.onClicked.addListener(async () => {
       await sleep(QUEUE_DELAY_MS);
     }
   } catch (err) {
-    await postDiagnosticEvent(diagnosticRunId, "error", { error: String(err && err.message ? err.message : err) });
+    await postDiagnosticEvent(diagnosticRunId, "error", {
+      error: String(err && err.message ? err.message : err),
+      trigger,
+    });
     if (stopReason === "completed") {
       stopReason = String(err && err.message ? err.message : err);
     }
@@ -309,10 +389,36 @@ chrome.action.onClicked.addListener(async () => {
     queueRunning = false;
     const elapsedMs = Date.now() - runStartedAt;
     console.info("Danelfin background capture queue finished", {
+      trigger,
       processedJobs,
       totalJobs,
       elapsedMs,
       stopReason
     });
   }
+}
+
+chrome.action.onClicked.addListener(async () => {
+  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const activeUrl = activeTab && activeTab.url ? activeTab.url : "";
+  const diagnosticSymbol = diagnosticSymbolFromUrl(activeUrl);
+  const diagnosticRunIdHint = diagnosticRunIdFromUrl(activeUrl);
+  await runCaptureWorker("manual_click", diagnosticSymbol, diagnosticRunIdHint, "auto");
 });
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureAutoPollAlarm();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureAutoPollAlarm();
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (!alarm || alarm.name !== AUTO_POLL_ALARM) {
+    return;
+  }
+  await runCaptureWorker("alarm_poll", "", "", "diagnostic");
+});
+
+ensureAutoPollAlarm();
