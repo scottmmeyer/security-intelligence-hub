@@ -68,6 +68,89 @@ _DANELFIN_CAPTURE_ALLOWED_METHODS = {
 }
 
 
+def _danelfin_capture_pair_url(symbols: list[str]) -> str:
+    if len(symbols) < 2:
+        symbol = symbols[0].lower()
+        return f"https://danelfin.com/stock/{symbol}"
+    left = symbols[0].lower()
+    right = symbols[1].lower()
+    return f"https://danelfin.com/stocks/{left}-vs-{right}"
+
+
+def _danelfin_capture_queue_payload() -> dict[str, object]:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from src.portfolio.holdings_coverage import summarize_holdings_coverage
+
+    coverage = summarize_holdings_coverage(
+        provider="danelfin",
+        latest_csv=_SIGNAL_FILES["danelfin"],
+        analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+        base_universe_csv=_REPO_ROOT / "data" / "current" / "base_equity_universe.csv",
+        threshold_days=2,
+    )
+    symbols_info = coverage.get("symbols") if isinstance(coverage, dict) else {}
+    if not isinstance(symbols_info, dict):
+        symbols_info = {}
+
+    baseline = None
+    try:
+        from src.portfolio.holdings_coverage import load_active_holdings_baseline
+
+        baseline = load_active_holdings_baseline(_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs")
+    except Exception:
+        baseline = None
+
+    capture_symbols: list[str] = []
+    seen: set[str] = set()
+    if baseline is not None:
+        for row in baseline.holdings:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            info = symbols_info.get(symbol)
+            if not isinstance(info, dict):
+                continue
+            if not bool(info.get("applicable")):
+                continue
+            if str(info.get("classification") or "").strip().upper() not in {"STALE", "MISSING", "FAILED"}:
+                continue
+            seen.add(symbol)
+            capture_symbols.append(symbol)
+
+    jobs: list[dict[str, object]] = []
+    for idx in range(0, len(capture_symbols), 2):
+        chunk = capture_symbols[idx:idx + 2]
+        kind = "single" if len(chunk) == 1 else "pair"
+        operator_source = "STOCK_PAGE" if kind == "single" else "PAIR_PAGE"
+        jobs.append(
+            {
+                "kind": kind,
+                "symbols": chunk,
+                "url": _danelfin_capture_pair_url(chunk),
+                "operator_source": operator_source,
+                "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+            }
+        )
+
+    return {
+        "status": "ok",
+        "provider": "danelfin",
+        "run_id": coverage.get("run_id"),
+        "coverage": coverage,
+        "symbols": capture_symbols,
+        "jobs": jobs,
+        "pair_count": sum(1 for job in jobs if job.get("kind") == "pair"),
+        "single_count": sum(1 for job in jobs if job.get("kind") == "single"),
+        "symbol_count": len(capture_symbols),
+        "job_count": len(jobs),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _capture_cors_origin(handler: http.server.BaseHTTPRequestHandler) -> str | None:
     origin = str(handler.headers.get("Origin") or "").strip()
     if not origin:
@@ -1341,6 +1424,11 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             data = _signal_status()
             data["_running"] = running
             self._json_response(data)
+        elif path == "/api/danelfin/browser-capture/queue":
+            try:
+                self._json_response(_danelfin_capture_queue_payload())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
         elif path == "/api/refresh-transparency":
             self._json_response(_refresh_transparency_payload())
         elif path == "/api/portfolio/preflight":

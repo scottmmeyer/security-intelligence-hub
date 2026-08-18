@@ -1,11 +1,5 @@
 const LOCAL_CAPTURE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture";
-const CAPTURE_QUEUE = [
-  ["MU", "VRT"],
-  ["FHI", "DELL"],
-  ["CVE", "AEIS"],
-  ["CAH", "TSM"],
-  ["ATLC", "TSLA"]
-];
+const LOCAL_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/queue";
 
 const PAGE_LOAD_TIMEOUT_MS = 30000;
 const MESSAGE_RETRY_COUNT = 6;
@@ -16,6 +10,10 @@ let queueRunning = false;
 
 function pairUrl(left, right) {
   return `https://danelfin.com/stocks/${String(left).toLowerCase()}-vs-${String(right).toLowerCase()}`;
+}
+
+function singleUrl(symbol) {
+  return `https://danelfin.com/stock/${String(symbol).toLowerCase()}`;
 }
 
 function sleep(ms) {
@@ -104,11 +102,29 @@ async function requestCapture(tabId, expectedSymbols) {
   );
 }
 
-async function postCapture(observations, dryRun) {
+async function loadCaptureQueue() {
+  const resp = await fetch(LOCAL_QUEUE_ENDPOINT, {
+    method: "GET",
+    headers: { "Accept": "application/json" }
+  });
+
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`queue fetch failed: ${resp.status} ${JSON.stringify(body)}`);
+  }
+
+  if (!body || body.status !== "ok" || !Array.isArray(body.jobs)) {
+    throw new Error(`queue payload invalid: ${JSON.stringify(body)}`);
+  }
+
+  return body.jobs;
+}
+
+async function postCapture(observations, dryRun, operatorSource) {
   const payload = {
     dry_run: Boolean(dryRun),
     acquisition_method: "BROWSER_CAPTURE_DANELFIN_UI",
-    operator_source: "PAIR_PAGE",
+    operator_source: operatorSource,
     observations
   };
 
@@ -138,19 +154,36 @@ chrome.action.onClicked.addListener(async () => {
 
   queueRunning = true;
   const runStartedAt = Date.now();
-  let processedPairs = 0;
+  let processedJobs = 0;
+  let totalJobs = 0;
   let stopReason = "completed";
 
   try {
-    for (const pair of CAPTURE_QUEUE) {
-      const left = String(pair[0] || "").trim().toUpperCase();
-      const right = String(pair[1] || "").trim().toUpperCase();
-      if (!left || !right) {
-        throw new Error(`invalid queue pair: ${JSON.stringify(pair)}`);
+    const captureQueue = await loadCaptureQueue();
+    totalJobs = captureQueue.length;
+    if (!captureQueue.length) {
+      console.info("Danelfin background capture queue is empty; nothing to do");
+      return;
+    }
+
+    for (const job of captureQueue) {
+      const kind = String(job && job.kind ? job.kind : "").trim().toLowerCase();
+      const symbols = Array.isArray(job && job.symbols) ? job.symbols.map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean) : [];
+      const operatorSource = String(job && job.operator_source ? job.operator_source : (kind === "single" ? "STOCK_PAGE" : "PAIR_PAGE")).trim().toUpperCase();
+      const url = String(job && job.url ? job.url : "").trim();
+      if (kind !== "pair" && kind !== "single") {
+        throw new Error(`invalid queue job kind: ${JSON.stringify(job)}`);
+      }
+      if ((kind === "pair" && symbols.length !== 2) || (kind === "single" && symbols.length !== 1)) {
+        throw new Error(`invalid queue job symbols: ${JSON.stringify(job)}`);
       }
 
+      const left = symbols[0];
+      const right = symbols[1];
+      const jobUrl = url || (kind === "single" ? singleUrl(left) : pairUrl(left, right));
+
       const created = await chrome.tabs.create({
-        url: pairUrl(left, right),
+        url: jobUrl,
         active: false
       });
 
@@ -165,19 +198,19 @@ chrome.action.onClicked.addListener(async () => {
           throw new Error(`temporary tab loaded unexpected URL: ${tabUrl || "(empty)"}`);
         }
 
-        const response = await requestCapture(created.id, [left, right]);
+        const response = await requestCapture(created.id, symbols);
         if (response.capture.challenge) {
-          stopReason = `provider challenge detected for ${left}/${right}`;
+          stopReason = `provider challenge detected for ${symbols.join("/")}`;
           throw new Error(stopReason);
         }
 
-        const ingestBody = await postCapture(response.capture.observations, false);
+        const ingestBody = await postCapture(response.capture.observations, false, operatorSource);
         if (hasSameDayConflict(ingestBody)) {
-          stopReason = `same-day conflict for ${left}/${right}`;
+          stopReason = `same-day conflict for ${symbols.join("/")}`;
           throw new Error(stopReason);
         }
 
-        processedPairs += 1;
+        processedJobs += 1;
       } finally {
         await chrome.tabs.remove(created.id).catch(() => {});
       }
@@ -193,8 +226,8 @@ chrome.action.onClicked.addListener(async () => {
     queueRunning = false;
     const elapsedMs = Date.now() - runStartedAt;
     console.info("Danelfin background capture queue finished", {
-      processedPairs,
-      totalPairs: CAPTURE_QUEUE.length,
+      processedJobs,
+      totalJobs,
       elapsedMs,
       stopReason
     });
