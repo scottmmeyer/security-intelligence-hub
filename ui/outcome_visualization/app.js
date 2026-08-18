@@ -661,8 +661,14 @@ function _renderRecommendationFreshness(payload) {
   const providerCell = (cell) => {
     const source = cell && typeof cell === "object" ? cell : {};
     const stateText = String(source.state || "missing").toUpperCase();
+    const stateLabel = {
+      FRESH: "FRESH",
+      STALE: "STALE",
+      MISSING: "HOLDING ABSENT",
+      NO_STARMINE_SCORE: "NO STARMINE ESS SCORE",
+    }[stateText] || stateText;
     const dateText = String(source.date || "NA");
-    return `${_ovEscHtml(stateText)} (${_ovEscHtml(dateText)})`;
+    return `${_ovEscHtml(stateLabel)} (${_ovEscHtml(dateText)})`;
   };
 
   bodyEl.innerHTML = rows.slice(0, 200).map((row) => `
@@ -2310,7 +2316,7 @@ function _renderSignalPills(data) {
     let warningHtml = "";
     if (info.coverage_warning_count > 0) {
       const examples = (info.coverage_warning_examples || []).join(", ");
-      warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} holdings absent${examples ? ` · ${examples}` : ""}</span>`;
+      warningHtml = `<span class="pill-degraded">ESS coverage warning: ${info.coverage_warning_count} holdings with ESS coverage gaps${examples ? ` · ${examples}` : ""}</span>`;
     }
 
     let holdingsHtml = "";

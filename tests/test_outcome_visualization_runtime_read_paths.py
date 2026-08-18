@@ -295,6 +295,64 @@ def test_active_refresh_progress_displays_separately_from_canonical_coverage() -
         assert "Active refresh progress: 10/54 rows" in signal_text
 
 
+def test_recommendation_freshness_ess_labels_distinguish_no_score_and_missing() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    updated_payload = _base_refresh_transparency_payload()
+    updated_payload["rows"] = [
+        {
+            "symbol": "SIMO",
+            "zacks": {"state": "fresh", "date": "2026-08-18"},
+            "danelfin": {"state": "fresh", "date": "2026-08-18"},
+            "yahoo": {"state": "fresh", "date": "2026-08-18"},
+            "ess": {"state": "no_starmine_score", "date": "2026-08-18"},
+            "fmp": {"state": "missing", "date": "NA"},
+            "freshness": "FRESH",
+        },
+        {
+            "symbol": "MISSING1",
+            "zacks": {"state": "fresh", "date": "2026-08-18"},
+            "danelfin": {"state": "fresh", "date": "2026-08-18"},
+            "yahoo": {"state": "fresh", "date": "2026-08-18"},
+            "ess": {"state": "missing", "date": "2026-08-18"},
+            "fmp": {"state": "missing", "date": "NA"},
+            "freshness": "FRESH",
+        },
+    ]
+
+    routes = [
+        (r".*/api/refresh-transparency$", updated_payload, 200, "application/json")
+        if pattern == r".*/api/refresh-transparency$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        body_text = page.locator("#recommendationFreshnessBody").inner_text()
+        assert "SIMO" in body_text
+        assert "NO STARMINE ESS SCORE (2026-08-18)" in body_text
+        assert "MISSING1" in body_text
+        assert "HOLDING ABSENT (2026-08-18)" in body_text
+
+
+def test_ess_summary_wording_uses_coverage_gap_language() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    signal_payload = _base_signal_status_payload()
+    signal_payload["ess"]["coverage_warning_count"] = 2
+    signal_payload["ess"]["coverage_warning_examples"] = ["SIMO", "MISSING1"]
+
+    routes = [
+        (r".*/api/signal-status$", signal_payload, 200, "application/json")
+        if pattern == r".*/api/signal-status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        assert "ESS coverage warning: 2 holdings with ESS coverage gaps" in signal_text
+        assert "holdings absent" not in signal_text
+
+
 def test_holdings_summary_label_is_explicit_about_equity_scope() -> None:
     with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False)) as page:
         summary = page.locator("#holdingsCoverageSummary").inner_text()

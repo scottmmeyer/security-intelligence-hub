@@ -540,6 +540,40 @@ def _load_ess_coverage_warning() -> dict:
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "ERROR"}
 
 
+def _latest_ess_symbol_semantics() -> tuple[str | None, dict[str, dict[str, object]]]:
+    """Return latest ESS snapshot date and per-symbol row/score availability."""
+    latest_date = _latest_snapshot_date(_ESS_SIGNAL_SNAPSHOT)
+    if not latest_date or not _ESS_SIGNAL_SNAPSHOT.exists():
+        return None, {}
+
+    symbol_map: dict[str, dict[str, object]] = {}
+    try:
+        with _ESS_SIGNAL_SNAPSHOT.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                row_date = str(row.get("snapshot_date") or "").strip()
+                if row_date != latest_date:
+                    continue
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if not symbol:
+                    continue
+
+                coverage_domain = str(row.get("coverage_domain") or "").strip().upper()
+                ess_text = str(row.get("starmine_ess_text") or "").strip()
+                ess_numeric = str(row.get("starmine_ess_numeric") or "").strip()
+                score_present = coverage_domain == "STARMINE_COVERED" and bool(ess_text or ess_numeric)
+
+                prior = symbol_map.get(symbol)
+                symbol_map[symbol] = {
+                    "row_present": True,
+                    "score_present": bool(score_present or (prior and prior.get("score_present"))),
+                    "source_date": latest_date,
+                }
+    except Exception:
+        return latest_date, {}
+
+    return latest_date, symbol_map
+
+
 def _statement_gain_loss_latest_payload() -> tuple[dict, int]:
     """Return latest statement gain/loss artifact payload with graceful fallback."""
     artifacts_dir = _REPO_ROOT / "artifacts" / "statement_gain_loss"
@@ -1115,6 +1149,48 @@ def _provider_cell(provider_data: dict[str, object], provider_name: str) -> dict
         "date": sourced_date or "NA",
     }
 
+
+def _ess_cell_for_symbol(
+    *,
+    symbol: str,
+    ess_provider_data: dict[str, object],
+    ess_latest_snapshot_date: str | None,
+    ess_symbol_semantics: dict[str, dict[str, object]],
+    true_missing_symbols: set[str],
+) -> dict[str, str]:
+    """Return symbol-level ESS cell semantics independent from provider freshness badge."""
+    default_cell = _provider_cell(ess_provider_data, "ess")
+
+    if not ess_symbol_semantics and not true_missing_symbols:
+        return default_cell
+
+    snapshot_date = ess_latest_snapshot_date or str(default_cell.get("date") or "")
+    today = date.today().isoformat()
+    sem = ess_symbol_semantics.get(symbol)
+
+    if sem and bool(sem.get("row_present")):
+        if bool(sem.get("score_present")):
+            state = "fresh" if snapshot_date == today else "stale"
+            return {
+                "provider": "ess",
+                "state": state,
+                "date": snapshot_date or "NA",
+            }
+        return {
+            "provider": "ess",
+            "state": "no_starmine_score",
+            "date": snapshot_date or "NA",
+        }
+
+    if symbol in true_missing_symbols:
+        return {
+            "provider": "ess",
+            "state": "missing",
+            "date": snapshot_date or "NA",
+        }
+
+    return default_cell
+
 def _refresh_transparency_payload() -> dict[str, object]:
     signal_data = _signal_status()
 
@@ -1198,6 +1274,15 @@ def _refresh_transparency_payload() -> dict[str, object]:
     }
 
     holdings_providers = ((signal_data.get("portfolio_holdings_coverage") or {}).get("providers") or {})
+    ess_provider_data = signal_data.get("ess") if isinstance(signal_data.get("ess"), dict) else {}
+    ess_gap = _load_ess_coverage_warning()
+    true_missing_symbols = {
+        str(s).strip().upper()
+        for s in (ess_gap.get("true_missing_symbols") or [])
+        if str(s).strip()
+    }
+    ess_latest_snapshot_date, ess_symbol_semantics = _latest_ess_symbol_semantics()
+
     symbols: set[str] = set()
     provider_symbol_maps: dict[str, dict[str, object]] = {}
     for provider in ("zacks", "danelfin", "yahoo"):
@@ -1217,7 +1302,13 @@ def _refresh_transparency_payload() -> dict[str, object]:
             "zacks": _provider_cell(signal_data.get("zacks") if isinstance(signal_data.get("zacks"), dict) else {}, "zacks"),
             "danelfin": _provider_cell(signal_data.get("danelfin") if isinstance(signal_data.get("danelfin"), dict) else {}, "danelfin"),
             "yahoo": _provider_cell(signal_data.get("yahoo") if isinstance(signal_data.get("yahoo"), dict) else {}, "yahoo"),
-            "ess": _provider_cell(signal_data.get("ess") if isinstance(signal_data.get("ess"), dict) else {}, "ess"),
+            "ess": _ess_cell_for_symbol(
+                symbol=symbol,
+                ess_provider_data=ess_provider_data,
+                ess_latest_snapshot_date=ess_latest_snapshot_date,
+                ess_symbol_semantics=ess_symbol_semantics,
+                true_missing_symbols=true_missing_symbols,
+            ),
             "fmp": {"provider": "fmp", "state": "missing", "date": "NA"},
             "sources": {
                 "cw_das": True,

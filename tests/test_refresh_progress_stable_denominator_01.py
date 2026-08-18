@@ -209,3 +209,92 @@ def test_provider_health_metrics_preserved() -> None:
     assert metrics["no_score"] == 1
     assert metrics["stale_carryover"] == 4
     assert metrics["failed"] == 2
+
+
+def test_refresh_transparency_ess_symbol_level_semantics(tmp_path, monkeypatch) -> None:
+    today = outcome_ui.date.today().isoformat()
+    root = tmp_path
+
+    snapshot_path = root / "data" / "current" / "signal_snapshot.csv"
+    _write_csv(
+        snapshot_path,
+        [
+            "snapshot_date",
+            "symbol",
+            "coverage_domain",
+            "starmine_ess_text",
+            "starmine_ess_numeric",
+        ],
+        [
+            {
+                "snapshot_date": today,
+                "symbol": "SIMO",
+                "coverage_domain": "NON_STARMINE_ANALYST",
+                "starmine_ess_text": "",
+                "starmine_ess_numeric": "",
+            },
+            {
+                "snapshot_date": today,
+                "symbol": "AAPL",
+                "coverage_domain": "STARMINE_COVERED",
+                "starmine_ess_text": "BULLISH",
+                "starmine_ess_numeric": "4.0",
+            },
+        ],
+    )
+
+    warning_path = root / "data" / "current" / "ess_coverage_warning.json"
+    warning_path.parent.mkdir(parents=True, exist_ok=True)
+    warning_path.write_text(
+        json.dumps(
+            {
+                "warning_count": 1,
+                "true_missing_symbols": ["MISSING1"],
+                "example_symbols": ["MISSING1"],
+                "summary_message": "ESS Coverage Warning",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider_symbols = {
+        "SIMO": {"applicable": True, "classification": "WITHIN_THRESHOLD"},
+        "AAPL": {"applicable": True, "classification": "WITHIN_THRESHOLD"},
+        "MISSING1": {"applicable": True, "classification": "WITHIN_THRESHOLD"},
+    }
+
+    fake_signal_status = {
+        "zacks": {"sourced_date": today, "badge_state": "FRESH", "with_data_count": 3, "attempted_count": 3},
+        "danelfin": {"sourced_date": today, "badge_state": "FRESH", "with_data_count": 3, "attempted_count": 3},
+        "yahoo": {"sourced_date": today, "badge_state": "FRESH", "with_data_count": 3, "attempted_count": 3},
+        "ess": {"sourced_date": today, "badge_state": "FRESH_PARTIAL"},
+        "portfolio_holdings_coverage": {
+            "providers": {
+                "zacks": {"symbols": provider_symbols},
+                "danelfin": {"symbols": provider_symbols},
+                "yahoo": {"symbols": provider_symbols},
+            }
+        },
+    }
+
+    monkeypatch.setattr(outcome_ui, "_REPO_ROOT", root)
+    monkeypatch.setattr(outcome_ui, "_ESS_SIGNAL_SNAPSHOT", snapshot_path)
+    monkeypatch.setattr(outcome_ui, "_ESS_COVERAGE_WARNING", warning_path)
+
+    with patch("scripts.run_outcome_ui._signal_status", return_value=fake_signal_status), patch(
+        "scripts.run_outcome_ui._count_research_universe_rows", return_value=3
+    ):
+        payload = outcome_ui._refresh_transparency_payload()
+
+    rows = {str(row["symbol"]): row for row in payload["rows"]}
+
+    simo_ess = rows["SIMO"]["ess"]
+    assert simo_ess["state"] == "no_starmine_score"
+    assert simo_ess["date"] == today
+
+    missing_ess = rows["MISSING1"]["ess"]
+    assert missing_ess["state"] == "missing"
+
+    aapl_ess = rows["AAPL"]["ess"]
+    assert aapl_ess["state"] == "fresh"
+    assert aapl_ess["date"] == today
