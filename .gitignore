@@ -158,6 +158,7 @@ data/derived/
 # Temporary diagnostic and debug scripts (prefix convention: scripts/_*.py)
 # Operational scripts are explicitly named without underscore prefix.
 scripts/_*.py
+!scripts/_run_intake.py
 
 # Auto-generated audit reports (regeneratable from report-generator scripts)
 # Exception: optimizer_ui_validation_report.md is a Phase 7.3B tracked deliverable.
