@@ -102,6 +102,14 @@ async function fetchText(path) {
   return response.text();
 }
 
+async function fetchJson(path) {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to load ${path}: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 async function fetchTextStatus(path) {
   try {
     const text = await fetchText(path);
@@ -2031,13 +2039,39 @@ async function loadLatestPortfolioActionPanel(attempt = 0) {
       el.innerHTML = "No completed portfolio analysis runs available.";
       return;
     }
-    const detailResp = await fetch(`/api/portfolio/runs/${encodeURIComponent(latest.run_id)}`, { cache: "no-store" });
-    if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
-    const detail = await detailResp.json();
-    _latestPortfolioRun = { ...latest, ...detail };
+
+    const runId = String(latest.run_id);
+    const runRoot = `/data/portfolio_ingestion/analysis_runs/${encodeURIComponent(runId)}`;
+    const [deploymentPlan, deploymentQueue, alignmentCsv, runMetadata] = await Promise.all([
+      fetchJson(`${runRoot}/deployment_plan.json`),
+      fetchJson(`${runRoot}/deployment_queue.json`),
+      fetchText(`${runRoot}/alignment.csv`),
+      fetchJson(`${runRoot}/run_metadata.json`).catch(() => ({})),
+    ]);
+
+    const alignment = parseCsv(alignmentCsv || "");
+    if (!alignment.length || !deploymentPlan || !deploymentQueue) {
+      el.innerHTML = "Operator action plan unavailable - persisted operator artifacts are incomplete for the latest run.";
+      return;
+    }
+
+    _latestPortfolioRun = {
+      ...latest,
+      run_id: runId,
+      snapshot_date: latest.snapshot_date || runMetadata.snapshot_date || "",
+      holding_count: latest.holding_count,
+      total_market_value: latest.total_market_value,
+      alignment,
+      deployment_queue: deploymentQueue,
+      deployment_plan: deploymentPlan,
+      hard_asset_priority_gate: runMetadata.hard_asset_priority_gate || null,
+      hard_asset_candidate_queue: runMetadata.hard_asset_candidate_queue || null,
+      daily_operator_action_plan: runMetadata.daily_operator_action_plan || null,
+      today_operator_action_plan: runMetadata.today_operator_action_plan || null,
+    };
     _renderLatestPortfolioActionPanel(_latestPortfolioRun);
   } catch (error) {
-    el.innerHTML = `Operator action plan unavailable — ${_ovEscHtml(error.message || "request failed")}`;
+    el.innerHTML = `Operator action plan unavailable - ${_ovEscHtml(error.message || "request failed")}`;
   }
 }
 

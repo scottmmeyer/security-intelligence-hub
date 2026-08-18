@@ -172,7 +172,10 @@ def _base_routes(*, replay_series_status: int, refresh_running: bool, refresh_co
         (r".*/api/signal-refresh/status$", refresh_status, 200, "application/json"),
         (r".*/api/refresh-transparency$", _base_refresh_transparency_payload(), 200, "application/json"),
         (r".*/api/portfolio/runs$", {"portfolios": [{"run_id": "PAR-20260817-40E00509", "status": "COMPLETE", "snapshot_date": "2026-08-17", "holding_count": 77}]}, 200, "application/json"),
-        (r".*/api/portfolio/runs/PAR-20260817-40E00509$", {"run_id": "PAR-20260817-40E00509", "alignment": []}, 200, "application/json"),
+        (r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/deployment_plan\.json$", {"run_id": "PAR-20260817-40E00509", "deployable_cash": 6898, "recommendations": []}, 200, "application/json"),
+        (r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/deployment_queue\.json$", {"run_id": "PAR-20260817-40E00509", "queue": [], "cash_context": {"deployable_mv": 6898}}, 200, "application/json"),
+        (r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/alignment\.csv$", "node_key,target_pct,actual_pct\nCOMMODITIES,2.0,1.1\nCOMMODITIES.GOLD,1.0,0.5\nCOMMODITIES.ENERGY,0.7,0.4\nCOMMODITIES.BROAD_BASKET,0.3,0.2\n", 200, "text/csv"),
+        (r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/run_metadata\.json$", {"run_id": "PAR-20260817-40E00509", "snapshot_date": "2026-08-17"}, 200, "application/json"),
     ]
 
 
@@ -318,6 +321,26 @@ def test_operator_panel_renders_explicit_empty_state_when_no_runs_exist() -> Non
         panel = page.locator("#portfolioActionPanel").inner_text()
         assert "Loading latest portfolio action plan" not in panel
         assert "No completed portfolio analysis runs available." in panel
+
+
+def test_operator_panel_renders_explicit_unavailable_state_when_artifacts_incomplete() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    routes = [
+        (
+            r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/alignment\.csv$",
+            "node_key,target_pct,actual_pct\n",
+            200,
+            "text/csv",
+        )
+        if pattern == r".*/data/portfolio_ingestion/analysis_runs/PAR-20260817-40E00509/alignment\.csv$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+    with _serve_outcome_page(routes) as page:
+        panel = page.locator("#portfolioActionPanel").inner_text()
+        assert "Loading latest portfolio action plan" not in panel
+        assert "Operator action plan unavailable" in panel
+        assert "persisted operator artifacts are incomplete" in panel
 
 
 def test_operator_panel_renders_explicit_error_state_when_runs_endpoint_fails() -> None:
