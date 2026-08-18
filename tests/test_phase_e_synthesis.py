@@ -17,6 +17,7 @@ from typing import Optional
 import pytest
 
 from src.portfolio.phase_e_synthesis import (
+    _generate_replay_alignment_context,
     _build_retain_rationale,
     _build_cluster_trim_narrative,
     _deduplicate_recs,
@@ -26,8 +27,10 @@ from src.portfolio.phase_e_synthesis import (
 )
 from src.portfolio.models import (
     HoldingStrategicProfile,
+    MultiDimensionalScore,
     PortfolioHolding,
     PortfolioRecommendation,
+    ScoreComponent,
 )
 
 
@@ -314,6 +317,101 @@ class TestPrioritizeRecs:
         low = _rec("TOP_TRIM_CANDIDATES", severity="LOW", priority=2)
         result = _prioritize_recs([low, high])
         assert result[0].severity == "HIGH"
+
+
+class TestReplayAlignmentContextSemantics:
+    def _mds(
+        self,
+        *,
+        replay_score: float,
+        coverage_score: float,
+        coverage_expl: str,
+        quality_score: float,
+        quality_expl: str,
+    ) -> MultiDimensionalScore:
+        return MultiDimensionalScore(
+            analysis_run_id=_RUN_ID,
+            portfolio_snapshot_id=_SNAP_ID,
+            mandate_type="CONCENTRATED_ALPHA",
+            allocation_alignment_score=80.0,
+            portfolio_quality_score=80.0,
+            implementation_quality_score=80.0,
+            replay_alignment_score=replay_score,
+            allocation_alignment_components=(),
+            portfolio_quality_components=(),
+            implementation_quality_components=(),
+            replay_alignment_components=(
+                ScoreComponent(
+                    component_name="Replay Coverage",
+                    raw_score=coverage_score,
+                    weight=1.0,
+                    weighted_score=coverage_score,
+                    explanation=coverage_expl,
+                ),
+                ScoreComponent(
+                    component_name="Replay Quality",
+                    raw_score=quality_score,
+                    weight=1.0,
+                    weighted_score=quality_score,
+                    explanation=quality_expl,
+                ),
+            ),
+            created_at_utc=_NOW,
+        )
+
+    def test_replay_unavailable_does_not_render_numeric_zero(self):
+        mds = self._mds(
+            replay_score=0.0,
+            coverage_score=0.0,
+            coverage_expl="0.0% of portfolio value is in replay-supported positions (0 of 77 holdings).",
+            quality_score=0.0,
+            quality_expl="Replay quality unavailable — no cohort percentile scores found for supported holdings.",
+        )
+        overlays = [_FakeOverlay("AAA", replay_supported=False, replay_percentile=None)]
+        rec = _generate_replay_alignment_context(_RUN_ID, _SNAP_ID, mds, _NOW, overlays=overlays)
+        assert rec is not None
+        assert "unavailable" in rec.title.lower()
+        assert "0.0/100" not in rec.title
+        assert "Coverage: unavailable" in rec.evidence_summary
+        assert "Quality: unavailable" in rec.evidence_summary
+
+    def test_replay_measured_zero_quality_stays_numeric_when_available(self):
+        mds = self._mds(
+            replay_score=10.0,
+            coverage_score=10.0,
+            coverage_expl="16.7% of portfolio value is in replay-supported positions (2 of 77 holdings).",
+            quality_score=0.0,
+            quality_expl="Mean replay percentile 0.0 among 2 supported holding(s).",
+        )
+        overlays = [
+            _FakeOverlay("AAA", replay_supported=True, replay_percentile=0.0),
+            _FakeOverlay("BBB", replay_supported=True, replay_percentile=0.0),
+        ]
+        rec = _generate_replay_alignment_context(_RUN_ID, _SNAP_ID, mds, _NOW, overlays=overlays)
+        assert rec is not None
+        assert "Replay alignment: 10.0/100" in rec.title
+        assert "quality=0.0/40" in rec.title
+        assert "Quality: 0.0/40" in rec.evidence_summary
+
+    def test_replay_partial_availability_keeps_coverage_and_marks_quality_unavailable(self):
+        mds = self._mds(
+            replay_score=15.0,
+            coverage_score=15.0,
+            coverage_expl="25.0% of portfolio value is in replay-supported positions (3 of 77 holdings).",
+            quality_score=0.0,
+            quality_expl="Replay quality unavailable — no cohort percentile scores found for supported holdings.",
+        )
+        overlays = [
+            _FakeOverlay("AAA", replay_supported=True, replay_percentile=None),
+            _FakeOverlay("BBB", replay_supported=True, replay_percentile=None),
+            _FakeOverlay("CCC", replay_supported=True, replay_percentile=None),
+        ]
+        rec = _generate_replay_alignment_context(_RUN_ID, _SNAP_ID, mds, _NOW, overlays=overlays)
+        assert rec is not None
+        assert "partial" in rec.title.lower()
+        assert "coverage=15.0/60" in rec.title
+        assert "quality=unavailable" in rec.title
+        assert "Quality: unavailable" in rec.evidence_summary
 
 
 # ─────────────────────────────────────────────────────────────────────────────

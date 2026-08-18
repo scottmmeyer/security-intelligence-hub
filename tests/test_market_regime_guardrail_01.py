@@ -79,6 +79,7 @@ def test_market_regime_guardrail_unknown_when_data_unavailable() -> None:
     assert payload["deployment_posture"] == "CAUTION_DEPLOY"
     assert payload["scoring_impact"] == "none"
     assert payload["safe_to_deploy"] is False
+    assert "unavailable or stale" in payload["operator_summary"].lower()
 
 
 def test_market_regime_guardrail_maps_semi_ai_pullback() -> None:
@@ -121,6 +122,34 @@ def test_market_regime_guardrail_unknown_when_market_proxy_stale() -> None:
     assert payload["data_freshness"]["operator_action"] == "REFRESH_MARKET_PROXIES"
     assert payload["data_freshness"]["market_proxy_age_days"] == 57
     assert "proxy date 2026-05-14 is 57 day(s) behind portfolio date 2026-07-10" in payload["evidence"][0]
+    assert "unavailable or stale" in payload["operator_summary"].lower()
+    assert validate_guardrail_payload(payload) == []
+
+
+def test_market_regime_guardrail_fresh_unknown_does_not_claim_stale_inputs() -> None:
+    summary = {
+        "status": "OK",
+        "signal": "NO_CLEAR_SIGNAL",
+        "risk_score": 18,
+        "as_of_date": "2026-07-10",
+        "confirmation": {"confirmation_passed": False},
+        "proxy_returns": {
+            "latest_proxy_date": "2026-07-09",
+            "tech_returns": {"5d": 0.1, "20d": -0.1, "60d": 0.0},
+            "rotation_spread_pct": {"5d": 0.1, "20d": 0.1, "60d": -0.1},
+        },
+        "portfolio_exposure": {"tech_pct": 31.0},
+        "data_quality": {"missing_inputs": []},
+    }
+
+    payload = build_market_regime_guardrail_from_rotation_summary(summary)
+
+    assert payload["regime"] == "UNKNOWN"
+    assert payload["data_freshness"]["freshness_status"] == "FRESH"
+    assert payload["data_freshness"]["operator_action"] == "NONE"
+    assert "unavailable or stale" not in payload["operator_summary"].lower()
+    assert "unavailable or stale" not in payload["evidence"][0].lower()
+    assert "inconclusive" in payload["operator_summary"].lower()
     assert validate_guardrail_payload(payload) == []
 
 

@@ -24,10 +24,15 @@ def build_market_regime_guardrail_from_rotation_summary(
         return unknown_guardrail(
             market_proxies_ts=ctx["market_proxies_ts"],
             portfolio_snapshot_ts=ctx["portfolio_snapshot_ts"],
+            reason="Market proxy data unavailable or stale; using conservative display-only posture.",
             freshness_status=freshness_status,
             proxy_lag_days=freshness.get("proxy_lag_days"),
             freshness_threshold_days=int(freshness.get("freshness_threshold_days") or 2),
             operator_action=str(freshness.get("operator_action") or "REFRESH_MARKET_PROXIES"),
+            operator_summary=(
+                "Market regime inputs are unavailable or stale. Use conservative posture: "
+                "deploy cautiously, review overweights, and hold excess cash."
+            ),
         ).to_dict()
 
     if freshness_status in {"STALE", "MISSING", "PARTIAL", "UNKNOWN"}:
@@ -241,11 +246,18 @@ def build_market_regime_guardrail_from_rotation_summary(
             ],
         )
 
-    reason = "Market proxy data unavailable or stale; using conservative display-only posture."
+    reason = "Market regime signal is inconclusive with fresh proxy inputs; using conservative display-only posture."
+    operator_summary = (
+        "Market regime is currently UNKNOWN with fresh proxy inputs and inconclusive regime evidence. "
+        "Use conservative posture while waiting for a clearer regime confirmation."
+    )
     if ctx["missing_inputs"]:
         reason = (
             "Market proxy inputs incomplete: " + ", ".join(str(x) for x in ctx["missing_inputs"]) + ". "
             "Using conservative display-only posture."
+        )
+        operator_summary = (
+            "Market proxy inputs are incomplete. Use conservative posture until required inputs are restored."
         )
     return unknown_guardrail(
         market_proxies_ts=ctx["market_proxies_ts"],
@@ -255,6 +267,7 @@ def build_market_regime_guardrail_from_rotation_summary(
         proxy_lag_days=freshness.get("proxy_lag_days"),
         freshness_threshold_days=int(freshness.get("freshness_threshold_days") or 2),
         operator_action=str(freshness.get("operator_action") or "REFRESH_MARKET_PROXIES"),
+        operator_summary=operator_summary,
     ).to_dict()
 
 

@@ -806,6 +806,7 @@ def _generate_replay_alignment_context(
     portfolio_snapshot_id: str,
     multi_dim_score: Optional[object],
     now_utc: str,
+    overlays: Optional[list[SecurityIntelligenceOverlay]] = None,
 ) -> Optional[PortfolioRecommendation]:
     """Generate a REPLAY_ALIGNMENT_CONTEXT rec explaining the score components.
 
@@ -832,17 +833,44 @@ def _generate_replay_alignment_context(
             qual_score = float(getattr(comp, "weighted_score", 0.0) or 0.0)
             qual_expl = str(getattr(comp, "explanation", ""))
 
-    quality_note = (
-        "Replay quality component unavailable because replay percentile data is not present."
-        if qual_score == 0.0
-        else f"Replay quality component: {qual_score:.1f}/40. {qual_expl}"
-    )
+    replay_data_available = False
+    replay_coverage_available = False
+    replay_quality_available = False
+    if overlays is not None:
+        supported = [o for o in overlays if bool(getattr(o, "replay_supported", False))]
+        replay_data_available = len(supported) > 0
+        replay_coverage_available = replay_data_available
+        replay_quality_available = any(getattr(o, "replay_percentile", None) is not None for o in supported)
+    else:
+        replay_coverage_available = bool(cov_expl)
+        replay_quality_available = bool(qual_expl) and "unavailable" not in qual_expl.lower()
+        replay_data_available = replay_coverage_available
 
-    rationale = (
-        f"Replay alignment score: {total:.1f}/100. "
-        f"Coverage component ({cov_score:.1f}/60): {cov_expl} "
-        f"{quality_note}"
-    )
+    replay_alignment_available = replay_coverage_available and replay_quality_available
+
+    if not replay_alignment_available and not replay_coverage_available and not replay_quality_available:
+        title = "Replay alignment unavailable (no replay-supported holdings)"
+        rationale = (
+            "Replay alignment is unavailable in the current portfolio view because no holdings "
+            "are replay-supported. Coverage and quality are unavailable for this snapshot."
+        )
+        evidence_summary = "Total: unavailable | Coverage: unavailable | Quality: unavailable"
+    elif replay_coverage_available and not replay_quality_available:
+        title = f"Replay alignment partial: coverage={cov_score:.1f}/60, quality=unavailable"
+        rationale = (
+            f"Replay coverage component ({cov_score:.1f}/60): {cov_expl} "
+            "Replay quality component unavailable because replay percentile data is not present."
+        )
+        evidence_summary = f"Total: partial | Coverage: {cov_score:.1f}/60 | Quality: unavailable"
+    else:
+        quality_note = f"Replay quality component: {qual_score:.1f}/40. {qual_expl}"
+        title = f"Replay alignment: {total:.1f}/100 (coverage={cov_score:.1f}/60, quality={qual_score:.1f}/40)"
+        rationale = (
+            f"Replay alignment score: {total:.1f}/100. "
+            f"Coverage component ({cov_score:.1f}/60): {cov_expl} "
+            f"{quality_note}"
+        )
+        evidence_summary = f"Total: {total:.1f} | Coverage: {cov_score:.1f}/60 | Quality: {qual_score:.1f}/40"
 
     return PortfolioRecommendation(
         recommendation_id=f"REC-{uuid.uuid4().hex[:8].upper()}",
@@ -851,11 +879,9 @@ def _generate_replay_alignment_context(
         recommendation_type="REPLAY_ALIGNMENT_CONTEXT",
         priority=6,
         confidence="HIGH",
-        title=f"Replay alignment: {total:.1f}/100 (coverage={cov_score:.1f}/60, quality={qual_score:.1f}/40)",
+        title=title,
         rationale=rationale,
-        evidence_summary=(
-            f"Total: {total:.1f} | Coverage: {cov_score:.1f}/60 | Quality: {qual_score:.1f}/40"
-        ),
+        evidence_summary=evidence_summary,
         affected_node_key=None,
         affected_symbols=(),
         drift_pct=None,
@@ -1252,7 +1278,7 @@ def synthesize_phase_e_recommendations(
 
     # Phase 7.1 Part C — Replay alignment explainability
     replay_ctx = _generate_replay_alignment_context(
-        analysis_run_id, portfolio_snapshot_id, multi_dim_score, now_utc
+        analysis_run_id, portfolio_snapshot_id, multi_dim_score, now_utc, overlays=overlays
     )
     if replay_ctx:
         phase_e_recs.append(replay_ctx)

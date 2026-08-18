@@ -102,22 +102,33 @@ def unknown_guardrail(
     *,
     market_proxies_ts: str | None = None,
     portfolio_snapshot_ts: str | None = None,
-    reason: str = "Market proxy data unavailable or stale; using conservative display-only posture.",
+    reason: str = "Market regime signal is inconclusive; using conservative display-only posture.",
     freshness_status: str = "UNKNOWN",
     proxy_lag_days: int | None = None,
     freshness_threshold_days: int = 2,
     operator_action: str = "REFRESH_MARKET_PROXIES",
+    operator_summary: str | None = None,
 ) -> MarketRegimeGuardrail:
+    freshness = str(freshness_status or "UNKNOWN").upper()
+    if operator_summary is None:
+        if freshness == "FRESH":
+            operator_summary = (
+                "Market regime is currently UNKNOWN despite fresh inputs. "
+                "Use conservative posture: deploy cautiously, review overweights, and hold excess cash."
+            )
+        else:
+            operator_summary = (
+                "Market regime inputs are unavailable or stale. Use conservative posture: "
+                "deploy cautiously, review overweights, and hold excess cash."
+            )
+
     return MarketRegimeGuardrail(
         regime="UNKNOWN",
         severity="LOW",
         deployment_posture="CAUTION_DEPLOY",
         trim_posture="REVIEW_OVERWEIGHTS",
         cash_posture="HOLD_EXCESS",
-        operator_summary=(
-            "Market regime inputs are unavailable or stale. Use conservative posture: "
-            "deploy cautiously, review overweights, and hold excess cash."
-        ),
+        operator_summary=operator_summary,
         evidence=[reason],
         affected_symbols=[],
         stressed_sectors=[],
