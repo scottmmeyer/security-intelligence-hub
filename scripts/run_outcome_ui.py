@@ -27,6 +27,7 @@ import re
 import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
 from urllib.parse import parse_qs
 from datetime import date, datetime, timezone
@@ -60,6 +61,130 @@ _fetch_jobs: dict[str, dict] = {}
 _fetch_lock = threading.Lock()
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9./\-]{1,12}$")
+_DANELFIN_CAPTURE_ALLOWED_OPERATOR_SOURCES = {"PAIR_PAGE", "STOCK_PAGE"}
+_DANELFIN_CAPTURE_ALLOWED_METHODS = {
+    "BROWSER_CAPTURE_DANELFIN_UI",
+    "MANUAL_DANELFIN_UI",
+}
+
+
+def _capture_cors_origin(handler: http.server.BaseHTTPRequestHandler) -> str | None:
+    origin = str(handler.headers.get("Origin") or "").strip()
+    if not origin:
+        return None
+    if origin.startswith("chrome-extension://"):
+        return origin
+    if origin in {"http://127.0.0.1:8765", "http://localhost:8765"}:
+        return origin
+    return None
+
+
+def _normalize_browser_capture_payload(payload: dict[str, object]) -> dict[str, object]:
+    observations = payload.get("observations")
+    if not isinstance(observations, list) or not observations:
+        raise ValueError("observations must be a non-empty array")
+
+    dry_run_raw = payload.get("dry_run", True)
+    if isinstance(dry_run_raw, bool):
+        dry_run = dry_run_raw
+    else:
+        raise ValueError("dry_run must be boolean")
+
+    operator_source = str(payload.get("operator_source") or "PAIR_PAGE").strip().upper()
+    if operator_source not in _DANELFIN_CAPTURE_ALLOWED_OPERATOR_SOURCES:
+        raise ValueError("operator_source must be PAIR_PAGE or STOCK_PAGE")
+
+    acquisition_method = str(payload.get("acquisition_method") or "BROWSER_CAPTURE_DANELFIN_UI").strip().upper()
+    if acquisition_method not in _DANELFIN_CAPTURE_ALLOWED_METHODS:
+        raise ValueError("unsupported acquisition_method")
+
+    normalized_observations: list[dict[str, object]] = []
+    seen_symbols: set[str] = set()
+    for raw_obs in observations:
+        if not isinstance(raw_obs, dict):
+            raise ValueError("each observation must be an object")
+        symbol = str(raw_obs.get("symbol") or "").strip().upper()
+        if not symbol or not _SYMBOL_RE.match(symbol):
+            raise ValueError(f"invalid symbol: {symbol!r}")
+        if symbol in seen_symbols:
+            raise ValueError(f"duplicate symbol in request: {symbol}")
+        seen_symbols.add(symbol)
+        normalized_observations.append(
+            {
+                "symbol": symbol,
+                "danelfin_raw": raw_obs.get("danelfin_raw"),
+                "sourced_date": raw_obs.get("sourced_date"),
+                "operator_source": operator_source,
+                "acquisition_method": acquisition_method,
+            }
+        )
+
+    return {
+        "dry_run": dry_run,
+        "operator_source": operator_source,
+        "acquisition_method": acquisition_method,
+        "observations": normalized_observations,
+    }
+
+
+def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
+    import sys as _sys
+
+    if str(_REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(_REPO_ROOT))
+
+    from src.scoring.danelfin_manual_import import import_manual_danelfin_observations
+
+    normalized_payload = _normalize_browser_capture_payload(payload)
+
+    if bool(normalized_payload["dry_run"]):
+        # Safety rail for test mode: write to isolated temp signal directory only.
+        output_dir = Path(tempfile.mkdtemp(prefix="sih_danelfin_capture_dryrun_"))
+    else:
+        # Production mode writes through the canonical Danelfin signal cache path.
+        output_dir = _REPO_ROOT / "data" / "signals" / "danelfin"
+
+    summary = import_manual_danelfin_observations(
+        normalized_payload["observations"],
+        output_dir=output_dir,
+        operator_source=str(normalized_payload["operator_source"]),
+        acquisition_method=str(normalized_payload["acquisition_method"]),
+    )
+
+    rows_by_symbol: dict[str, dict[str, str]] = {}
+    latest_path = Path(summary["latest_path"])
+    if latest_path.exists():
+        with latest_path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                sym = str(row.get("symbol") or "").strip().upper()
+                if sym:
+                    rows_by_symbol[sym] = row
+
+    requested_symbols = [str(obs["symbol"]) for obs in normalized_payload["observations"]]
+    captured_rows = [
+        {
+            "symbol": sym,
+            "danelfin_raw": rows_by_symbol.get(sym, {}).get("danelfin_raw", ""),
+            "danelfin_score": rows_by_symbol.get(sym, {}).get("danelfin_score", ""),
+            "sourced_date": rows_by_symbol.get(sym, {}).get("sourced_date", ""),
+        }
+        for sym in requested_symbols
+    ]
+
+    return {
+        "status": "ok",
+        "dry_run": bool(normalized_payload["dry_run"]),
+        "output_dir": str(output_dir),
+        "operator_source": normalized_payload["operator_source"],
+        "acquisition_method": normalized_payload["acquisition_method"],
+        "applied_count": int(summary.get("applied_count") or 0),
+        "skipped_count": int(summary.get("skipped_count") or 0),
+        "applied_symbols": summary.get("applied_symbols", []),
+        "skipped": summary.get("skipped", []),
+        "captured_rows": captured_rows,
+        "latest_path": summary.get("latest_path"),
+        "provenance_path": summary.get("provenance_path"),
+    }
 
 
 def _resolve_refresh_intent(intent: str | None) -> str:
@@ -1191,6 +1316,23 @@ def _build_operator_priorities_payload(run_id: str | None = None) -> dict:
 class _Handler(http.server.SimpleHTTPRequestHandler):
     """Static file handler extended with /api/* JSON endpoints."""
 
+    def do_OPTIONS(self) -> None:  # type: ignore[override]
+        path = self.path.split("?")[0]
+        if path == "/api/danelfin/browser-capture":
+            self.send_response(204)
+            origin = _capture_cors_origin(self)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            if str(self.headers.get("Access-Control-Request-Private-Network") or "").strip().lower() == "true":
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.end_headers()
+            return
+        self.send_error(404)
+
     def do_GET(self) -> None:  # type: ignore[override]
         global _refresh_proc
         path = self.path.split("?")[0]
@@ -2027,14 +2169,43 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             existing["_updated"] = now_str
             state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
             self._json_response({"ok": True, "revoked_count": revoked_count, "symbol": symbol})
+        elif path == "/api/danelfin/browser-capture":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400)
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400)
+                return
+            try:
+                result = _run_browser_capture(payload)
+                self._json_response(result, extra_headers=self._cors_headers())
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": f"capture_failed: {exc}"}, 500, extra_headers=self._cors_headers())
         else:
             self.send_error(404)
 
-    def _json_response(self, data: dict, status: int = 200) -> None:
+    def _cors_headers(self) -> dict[str, str]:
+        origin = _capture_cors_origin(self)
+        if not origin:
+            return {}
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Vary": "Origin",
+        }
+
+    def _json_response(self, data: dict, status: int = 200, extra_headers: dict[str, str] | None = None) -> None:
         clean_data = _sanitize_for_json(data)
         body = json.dumps(clean_data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
