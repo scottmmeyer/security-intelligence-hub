@@ -1,5 +1,8 @@
 const LOCAL_CAPTURE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture";
 const LOCAL_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/queue";
+const LOCAL_DIAGNOSTIC_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue";
+const LOCAL_DIAGNOSTIC_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/pending";
+const LOCAL_DIAGNOSTIC_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-status";
 
 const PAGE_LOAD_TIMEOUT_MS = 30000;
 const MESSAGE_RETRY_COUNT = 6;
@@ -102,8 +105,54 @@ async function requestCapture(tabId, expectedSymbols) {
   );
 }
 
-async function loadCaptureQueue() {
-  const resp = await fetch(LOCAL_QUEUE_ENDPOINT, {
+function diagnosticSymbolFromUrl(urlValue) {
+  const raw = String(urlValue || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const parsed = new URL(raw);
+    const value = String(parsed.searchParams.get("danelfin_diag_symbol") || "").trim().toUpperCase();
+    if (/^[A-Z0-9./-]{1,12}$/.test(value)) {
+      return value;
+    }
+  } catch (_err) {
+    return "";
+  }
+  return "";
+}
+
+function diagnosticRunIdFromUrl(urlValue) {
+  const raw = String(urlValue || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const parsed = new URL(raw);
+    const value = String(parsed.searchParams.get("danelfin_diag_run_id") || "").trim();
+    if (value) {
+      return value;
+    }
+  } catch (_err) {
+    return "";
+  }
+  return "";
+}
+
+async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "") {
+  let endpoint = LOCAL_QUEUE_ENDPOINT;
+  if (diagnosticSymbol || diagnosticRunId) {
+    const params = new URLSearchParams();
+    if (diagnosticRunId) {
+      params.set("id", diagnosticRunId);
+    }
+    if (diagnosticSymbol) {
+      params.set("symbol", diagnosticSymbol);
+    }
+    endpoint = `${LOCAL_DIAGNOSTIC_PENDING_ENDPOINT}?${params.toString()}`;
+  }
+
+  const resp = await fetch(endpoint, {
     method: "GET",
     headers: { "Accept": "application/json" }
   });
@@ -120,13 +169,16 @@ async function loadCaptureQueue() {
   return body.jobs;
 }
 
-async function postCapture(observations, dryRun, operatorSource) {
+async function postCapture(observations, dryRun, operatorSource, diagnosticRunId = null) {
   const payload = {
     dry_run: Boolean(dryRun),
     acquisition_method: "BROWSER_CAPTURE_DANELFIN_UI",
     operator_source: operatorSource,
     observations
   };
+  if (diagnosticRunId) {
+    payload.diagnostic_run_id = String(diagnosticRunId);
+  }
 
   const resp = await fetch(LOCAL_CAPTURE_ENDPOINT, {
     method: "POST",
@@ -139,6 +191,22 @@ async function postCapture(observations, dryRun, operatorSource) {
     throw new Error(`local ingest failed: ${resp.status} ${JSON.stringify(body)}`);
   }
   return body;
+}
+
+async function postDiagnosticEvent(runId, event, payload = {}) {
+  if (!runId) {
+    return;
+  }
+  const body = {
+    diagnostic_run_id: String(runId),
+    event: String(event),
+    ...payload
+  };
+  await fetch(LOCAL_DIAGNOSTIC_STATUS_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).catch(() => {});
 }
 
 function hasSameDayConflict(body) {
@@ -157,19 +225,28 @@ chrome.action.onClicked.addListener(async () => {
   let processedJobs = 0;
   let totalJobs = 0;
   let stopReason = "completed";
+  let diagnosticRunId = "";
 
   try {
-    const captureQueue = await loadCaptureQueue();
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const activeUrl = activeTab && activeTab.url ? activeTab.url : "";
+    const diagnosticSymbol = diagnosticSymbolFromUrl(activeUrl);
+    const diagnosticRunIdHint = diagnosticRunIdFromUrl(activeUrl);
+    const captureQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint);
     totalJobs = captureQueue.length;
     if (!captureQueue.length) {
       console.info("Danelfin background capture queue is empty; nothing to do");
       return;
     }
+    diagnosticRunId = String((captureQueue[0] && captureQueue[0].diagnostic_run_id) || "").trim();
+    await postDiagnosticEvent(diagnosticRunId, "worker_started");
 
     for (const job of captureQueue) {
       const kind = String(job && job.kind ? job.kind : "").trim().toLowerCase();
       const symbols = Array.isArray(job && job.symbols) ? job.symbols.map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean) : [];
       const operatorSource = String(job && job.operator_source ? job.operator_source : (kind === "single" ? "STOCK_PAGE" : "PAIR_PAGE")).trim().toUpperCase();
+      const dryRun = Boolean(job && job.dry_run);
+      const runId = String(job && job.diagnostic_run_id ? job.diagnostic_run_id : "").trim();
       const url = String(job && job.url ? job.url : "").trim();
       if (kind !== "pair" && kind !== "single") {
         throw new Error(`invalid queue job kind: ${JSON.stringify(job)}`);
@@ -181,6 +258,8 @@ chrome.action.onClicked.addListener(async () => {
       const left = symbols[0];
       const right = symbols[1];
       const jobUrl = url || (kind === "single" ? singleUrl(left) : pairUrl(left, right));
+      await postDiagnosticEvent(runId, "worker_claimed", { url: jobUrl });
+      await postDiagnosticEvent(runId, "navigation_started", { url: jobUrl });
 
       const created = await chrome.tabs.create({
         url: jobUrl,
@@ -193,18 +272,21 @@ chrome.action.onClicked.addListener(async () => {
 
       try {
         const loadedTab = await waitForTabComplete(created.id);
+        await postDiagnosticEvent(runId, "navigation_completed", { url: String((loadedTab && loadedTab.url) || jobUrl) });
         const tabUrl = String((loadedTab && loadedTab.url) || "");
         if (!tabUrl.startsWith("https://danelfin.com/") && !tabUrl.startsWith("https://www.danelfin.com/")) {
           throw new Error(`temporary tab loaded unexpected URL: ${tabUrl || "(empty)"}`);
         }
 
+        await postDiagnosticEvent(runId, "capture_started", { url: tabUrl });
         const response = await requestCapture(created.id, symbols);
+        await postDiagnosticEvent(runId, "capture_completed", { url: tabUrl });
         if (response.capture.challenge) {
           stopReason = `provider challenge detected for ${symbols.join("/")}`;
           throw new Error(stopReason);
         }
 
-        const ingestBody = await postCapture(response.capture.observations, false, operatorSource);
+        const ingestBody = await postCapture(response.capture.observations, dryRun, operatorSource, runId || null);
         if (hasSameDayConflict(ingestBody)) {
           stopReason = `same-day conflict for ${symbols.join("/")}`;
           throw new Error(stopReason);
@@ -218,6 +300,7 @@ chrome.action.onClicked.addListener(async () => {
       await sleep(QUEUE_DELAY_MS);
     }
   } catch (err) {
+    await postDiagnosticEvent(diagnosticRunId, "error", { error: String(err && err.message ? err.message : err) });
     if (stopReason === "completed") {
       stopReason = String(err && err.message ? err.message : err);
     }

@@ -6,6 +6,7 @@ import socket
 import threading
 import urllib.error
 import urllib.request
+import urllib.parse
 from contextlib import closing
 from pathlib import Path
 
@@ -76,6 +77,8 @@ def isolated_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
     monkeypatch.setattr(run_outcome_ui, "_REPO_ROOT", repo)
     monkeypatch.setitem(run_outcome_ui._SIGNAL_FILES, "danelfin", signals_dir / "latest_danelfin.csv")
+    with run_outcome_ui._danelfin_diag_lock:
+        run_outcome_ui._danelfin_diag_runs.clear()
     return repo
 
 
@@ -106,6 +109,7 @@ def test_browser_capture_endpoint_accepts_two_observations_dry_run(isolated_repo
     assert body["applied_count"] == 2
     assert body["operator_source"] == "PAIR_PAGE"
     assert body["acquisition_method"] == "BROWSER_CAPTURE_DANELFIN_UI"
+    assert body["canonical_persistence_called"] is False
 
     rows = {row["symbol"]: row for row in body["captured_rows"]}
     assert rows["MSFT"]["danelfin_raw"] == "3"
@@ -113,18 +117,8 @@ def test_browser_capture_endpoint_accepts_two_observations_dry_run(isolated_repo
     assert rows["NVDA"]["danelfin_raw"] == "8"
     assert rows["NVDA"]["danelfin_score"] == "4.0000"
 
-    latest_path = Path(body["latest_path"])
-    assert latest_path.exists()
-    with latest_path.open("r", encoding="utf-8", newline="") as handle:
-        file_rows = {row["symbol"]: row for row in csv.DictReader(handle)}
-    assert file_rows["MSFT"]["danelfin_score"] == "1.5000"
-    assert file_rows["NVDA"]["danelfin_score"] == "4.0000"
-
-    provenance_path = Path(body["provenance_path"])
-    assert provenance_path.exists()
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    assert provenance["symbols"]["MSFT"]["acquisition_method"] == "BROWSER_CAPTURE_DANELFIN_UI"
-    assert provenance["symbols"]["MSFT"]["operator_source"] == "PAIR_PAGE"
+    assert body["latest_path"] is None
+    assert body["provenance_path"] is None
 
 
 def test_browser_capture_endpoint_accepts_production_mode_and_writes_canonical_cache(isolated_repo: Path) -> None:
@@ -150,6 +144,7 @@ def test_browser_capture_endpoint_accepts_production_mode_and_writes_canonical_c
 
     assert status == 200
     assert body["dry_run"] is False
+    assert body["canonical_persistence_called"] is True
     assert Path(body["latest_path"]).resolve() == (isolated_repo / "data" / "signals" / "danelfin" / "latest_danelfin.csv").resolve()
     assert body["applied_count"] == 2
 
@@ -284,6 +279,266 @@ def test_browser_capture_production_mode_does_not_trigger_analyze_side_effects(i
     assert status == 200
     assert body["dry_run"] is False
     assert not analysis_runs_dir.exists()
+
+
+def test_browser_capture_diagnostic_queue_endpoint_emits_one_job(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA",
+            timeout=10,
+        ) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert body["status"] == "ok"
+    assert body["diagnostic"] is True
+    assert body["dry_run"] is True
+    assert body["job_count"] == 1
+    assert body["symbols"] == ["NVDA"]
+    job = body["jobs"][0]
+    assert job["kind"] == "pair"
+    assert job["symbols"][0] == "NVDA"
+    assert job["dry_run"] is True
+    assert job["diagnostic"] is True
+    assert job["diagnostic_run_id"] == body["diagnostic_run_id"]
+
+
+def test_diagnostic_pending_queue_reuses_prepared_run_without_creating_second_run(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA&pair_symbol=ANIP",
+            timeout=10,
+        ) as resp:
+            prepared = json.loads(resp.read().decode("utf-8"))
+
+        prepared_run_id = str(prepared["diagnostic_run_id"])
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?symbol=NVDA",
+            timeout=10,
+        ) as resp:
+            pending = json.loads(resp.read().decode("utf-8"))
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?id={urllib.parse.quote(prepared_run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            pending_by_id = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert pending["status"] == "ok"
+    assert pending["diagnostic"] is True
+    assert pending["dry_run"] is True
+    assert pending["job_count"] == 1
+    assert pending["diagnostic_run_id"] == prepared_run_id
+    assert pending["jobs"][0]["diagnostic_run_id"] == prepared_run_id
+    assert pending_by_id["diagnostic_run_id"] == prepared_run_id
+
+    with run_outcome_ui._danelfin_diag_lock:
+        run_ids = list(run_outcome_ui._danelfin_diag_runs.keys())
+    assert run_ids == [prepared_run_id]
+
+
+def test_diagnostic_run_attribution_events_and_capture_update_prepared_run(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA&pair_symbol=ANIP",
+            timeout=10,
+        ) as resp:
+            prepared = json.loads(resp.read().decode("utf-8"))
+        run_id = str(prepared["diagnostic_run_id"])
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue/pending?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            fetched = json.loads(resp.read().decode("utf-8"))
+
+        assert fetched["job_count"] == 1
+        assert fetched["diagnostic_run_id"] == run_id
+
+        for event in [
+            "worker_started",
+            "worker_claimed",
+            "navigation_started",
+            "navigation_completed",
+            "capture_started",
+            "capture_completed",
+        ]:
+            status_code, _ = _post_json(
+                port,
+                "/api/danelfin/browser-capture/diagnostic-status",
+                {
+                    "diagnostic_run_id": run_id,
+                    "event": event,
+                    "url": "https://danelfin.com/stocks/nvda-vs-anip",
+                },
+            )
+            assert status_code == 200
+
+        status_code, capture_body = _post_json(
+            port,
+            "/api/danelfin/browser-capture",
+            {
+                "dry_run": True,
+                "diagnostic_run_id": run_id,
+                "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+                "operator_source": "PAIR_PAGE",
+                "observations": [
+                    {"symbol": "NVDA", "danelfin_raw": 8, "sourced_date": "2026-08-15"},
+                    {"symbol": "ANIP", "danelfin_raw": 6, "sourced_date": "2026-08-15"},
+                ],
+            },
+        )
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-status?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            status_body = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status_code == 200
+    assert capture_body["diagnostic_run_id"] == run_id
+    assert capture_body["dry_run"] is True
+    assert capture_body["canonical_persistence_called"] is False
+
+    diag = status_body["diagnostic"]
+    assert diag["diagnostic_run_id"] == run_id
+    assert diag["worker_started"]
+    assert diag["worker_claimed"]
+    assert diag["navigation_started"]
+    assert diag["navigation_completed"]
+    assert diag["capture_started"]
+    assert diag["capture_completed"]
+    assert diag["result_received"]
+    assert diag["normalized"]
+    assert diag["validation_passed"]
+
+    with run_outcome_ui._danelfin_diag_lock:
+        run_ids = list(run_outcome_ui._danelfin_diag_runs.keys())
+    assert run_ids == [run_id]
+
+
+def test_browser_capture_dry_run_never_calls_canonical_persistence(isolated_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"value": False}
+
+    def _should_not_run(*_args, **_kwargs):
+        called["value"] = True
+        raise AssertionError("canonical persistence should not be called in dry_run")
+
+    monkeypatch.setattr(
+        "src.scoring.danelfin_manual_import.import_manual_danelfin_observations",
+        _should_not_run,
+    )
+
+    server, thread, port = _start_server()
+    try:
+        status, body = _post_json(
+            port,
+            "/api/danelfin/browser-capture",
+            {
+                "dry_run": True,
+                "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+                "operator_source": "PAIR_PAGE",
+                "observations": [
+                    {"symbol": "MSFT", "danelfin_raw": 3, "sourced_date": "2026-08-15"},
+                ],
+            },
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status == 200
+    assert body["dry_run"] is True
+    assert body["canonical_persistence_called"] is False
+    assert called["value"] is False
+
+
+def test_browser_capture_diagnostic_run_id_survives_and_updates_status(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA",
+            timeout=10,
+        ) as resp:
+            queue_body = json.loads(resp.read().decode("utf-8"))
+
+        run_id = str(queue_body["diagnostic_run_id"])
+        status_code, capture_body = _post_json(
+            port,
+            "/api/danelfin/browser-capture",
+            {
+                "dry_run": True,
+                "diagnostic_run_id": run_id,
+                "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+                "operator_source": "PAIR_PAGE",
+                "observations": [
+                    {"symbol": "NVDA", "danelfin_raw": 8, "sourced_date": "2026-08-15"},
+                ],
+            },
+        )
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-status?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            status_body = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status_code == 200
+    assert capture_body["diagnostic_run_id"] == run_id
+    diag = status_body["diagnostic"]
+    assert status_body["status"] == "ok"
+    assert diag["result_received"]
+    assert diag["normalized"]
+    assert diag["validation_passed"]
+
+
+def test_browser_capture_diagnostic_status_records_terminal_error(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/diagnostic-queue?symbol=NVDA",
+            timeout=10,
+        ) as resp:
+            queue_body = json.loads(resp.read().decode("utf-8"))
+
+        run_id = str(queue_body["diagnostic_run_id"])
+        status, body = _post_json(
+            port,
+            "/api/danelfin/browser-capture/diagnostic-status",
+            {
+                "diagnostic_run_id": run_id,
+                "event": "error",
+                "error": "simulated worker failure",
+            },
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status == 200
+    assert body["status"] == "ok"
+    assert body["diagnostic"]["error"]["message"] == "simulated worker failure"
 
 
 def test_danelfin_capture_queue_endpoint_builds_deterministic_jobs(isolated_repo: Path) -> None:

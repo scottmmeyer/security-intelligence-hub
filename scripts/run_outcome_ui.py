@@ -25,10 +25,10 @@ import json
 import math
 import os
 import re
+import secrets
 import socketserver
 import subprocess
 import sys
-import tempfile
 import threading
 from urllib.parse import parse_qs
 from datetime import date, datetime, timezone
@@ -67,6 +67,209 @@ _DANELFIN_CAPTURE_ALLOWED_METHODS = {
     "BROWSER_CAPTURE_DANELFIN_UI",
     "MANUAL_DANELFIN_UI",
 }
+_DANELFIN_DIAGNOSTIC_DEFAULT_SYMBOL = "NVDA"
+_DANELFIN_DIAGNOSTIC_DEFAULT_PAIR_SYMBOL = "ANIP"
+_DANELFIN_DIAGNOSTIC_STATUS_FIELDS = {
+    "worker_started",
+    "worker_claimed",
+    "navigation_started",
+    "navigation_completed",
+    "capture_started",
+    "capture_completed",
+    "result_received",
+    "normalized",
+    "validation_passed",
+}
+
+_danelfin_diag_lock = threading.Lock()
+_danelfin_diag_runs: dict[str, dict[str, object]] = {}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record_danelfin_diag_event(
+    run_id: str,
+    event: str,
+    *,
+    error: str | None = None,
+    url: str | None = None,
+) -> dict[str, object]:
+    with _danelfin_diag_lock:
+        state = _danelfin_diag_runs.get(run_id)
+        if not isinstance(state, dict):
+            state = {
+                "diagnostic_run_id": run_id,
+                "created": None,
+                "worker_started": None,
+                "worker_claimed": None,
+                "navigation_started": None,
+                "navigation_completed": None,
+                "capture_started": None,
+                "capture_completed": None,
+                "result_received": None,
+                "normalized": None,
+                "validation_passed": None,
+                "error": None,
+            }
+            _danelfin_diag_runs[run_id] = state
+
+        timestamp = _utc_now_iso()
+        if event == "created":
+            state["created"] = timestamp
+        elif event in _DANELFIN_DIAGNOSTIC_STATUS_FIELDS:
+            state[event] = timestamp
+        elif event == "error":
+            state["error"] = {
+                "timestamp": timestamp,
+                "message": str(error or "unknown_error"),
+            }
+
+        if url:
+            state["url"] = str(url)
+        state["updated_at"] = timestamp
+        return copy.deepcopy(state)
+
+
+def _build_danelfin_diagnostic_queue_payload(symbol: str, pair_symbol: str) -> dict[str, object]:
+    primary_symbol = str(symbol or "").strip().upper() or _DANELFIN_DIAGNOSTIC_DEFAULT_SYMBOL
+    if not _SYMBOL_RE.match(primary_symbol):
+        raise ValueError(f"invalid diagnostic symbol: {primary_symbol!r}")
+
+    secondary_symbol = str(pair_symbol or "").strip().upper() or _DANELFIN_DIAGNOSTIC_DEFAULT_PAIR_SYMBOL
+    if not _SYMBOL_RE.match(secondary_symbol):
+        raise ValueError(f"invalid diagnostic pair symbol: {secondary_symbol!r}")
+    if secondary_symbol == primary_symbol:
+        secondary_symbol = "MSFT" if primary_symbol != "MSFT" else "AAPL"
+
+    run_id = f"diag-{_utc_now_iso().replace(':', '').replace('-', '').replace('.', '')}-{secrets.token_hex(4)}"
+    symbols = [primary_symbol, secondary_symbol]
+    job = {
+        "job_id": run_id,
+        "kind": "pair",
+        "symbols": symbols,
+        "url": _danelfin_capture_pair_url(symbols),
+        "operator_source": "PAIR_PAGE",
+        "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+        "diagnostic": True,
+        "dry_run": True,
+        "diagnostic_run_id": run_id,
+    }
+
+    with _danelfin_diag_lock:
+        _danelfin_diag_runs[run_id] = {
+            "diagnostic_run_id": run_id,
+            "diagnostic": True,
+            "dry_run": True,
+            "symbol": primary_symbol,
+            "symbols": symbols,
+            "job_id": run_id,
+            "url": str(job["url"]),
+            "created": _utc_now_iso(),
+            "worker_started": None,
+            "worker_claimed": None,
+            "navigation_started": None,
+            "navigation_completed": None,
+            "capture_started": None,
+            "capture_completed": None,
+            "result_received": None,
+            "normalized": None,
+            "validation_passed": None,
+            "error": None,
+            "updated_at": _utc_now_iso(),
+        }
+
+    return {
+        "status": "ok",
+        "provider": "danelfin",
+        "diagnostic": True,
+        "dry_run": True,
+        "diagnostic_run_id": run_id,
+        "symbols": [primary_symbol],
+        "jobs": [job],
+        "job_count": 1,
+        "generated_at_utc": _utc_now_iso(),
+    }
+
+
+def _danelfin_diagnostic_status(run_id: str) -> dict[str, object]:
+    requested = str(run_id or "").strip()
+    if not requested:
+        raise ValueError("diagnostic run id is required")
+    with _danelfin_diag_lock:
+        state = _danelfin_diag_runs.get(requested)
+        if not isinstance(state, dict):
+            raise KeyError(requested)
+        return copy.deepcopy(state)
+
+
+def _build_danelfin_diagnostic_queue_payload_from_state(state: dict[str, object]) -> dict[str, object]:
+    run_id = str(state.get("diagnostic_run_id") or "").strip()
+    symbols_raw = state.get("symbols")
+    symbols = [str(item).strip().upper() for item in symbols_raw] if isinstance(symbols_raw, list) else []
+    symbols = [item for item in symbols if item]
+    if not run_id or not symbols:
+        raise ValueError("diagnostic run state is incomplete")
+
+    url = str(state.get("url") or "").strip() or _danelfin_capture_pair_url(symbols)
+    job = {
+        "job_id": str(state.get("job_id") or run_id),
+        "kind": "pair",
+        "symbols": symbols,
+        "url": url,
+        "operator_source": "PAIR_PAGE",
+        "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+        "diagnostic": True,
+        "dry_run": True,
+        "diagnostic_run_id": run_id,
+    }
+
+    return {
+        "status": "ok",
+        "provider": "danelfin",
+        "diagnostic": True,
+        "dry_run": True,
+        "diagnostic_run_id": run_id,
+        "symbols": [symbols[0]],
+        "jobs": [job],
+        "job_count": 1,
+        "generated_at_utc": _utc_now_iso(),
+    }
+
+
+def _find_prepared_danelfin_diagnostic_run(symbol: str = "", run_id: str = "") -> dict[str, object] | None:
+    requested_run_id = str(run_id or "").strip()
+    requested_symbol = str(symbol or "").strip().upper()
+
+    with _danelfin_diag_lock:
+        if requested_run_id:
+            state = _danelfin_diag_runs.get(requested_run_id)
+            if isinstance(state, dict):
+                return copy.deepcopy(state)
+            return None
+
+        if requested_symbol and not _SYMBOL_RE.match(requested_symbol):
+            return None
+
+        candidates: list[dict[str, object]] = []
+        for state in _danelfin_diag_runs.values():
+            if not isinstance(state, dict):
+                continue
+            if state.get("worker_started") is not None:
+                continue
+            symbols_raw = state.get("symbols")
+            symbols = [str(item).strip().upper() for item in symbols_raw] if isinstance(symbols_raw, list) else []
+            symbols = [item for item in symbols if item]
+            if requested_symbol and (not symbols or symbols[0] != requested_symbol):
+                continue
+            candidates.append(copy.deepcopy(state))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: str(item.get("created") or ""), reverse=True)
+    return candidates[0]
 
 
 def _resolve_provider_signal_file(provider_name: str) -> Path:
@@ -234,6 +437,7 @@ def _normalize_browser_capture_payload(payload: dict[str, object]) -> dict[str, 
         "dry_run": dry_run,
         "operator_source": operator_source,
         "acquisition_method": acquisition_method,
+        "diagnostic_run_id": str(payload.get("diagnostic_run_id") or "").strip() or None,
         "observations": normalized_observations,
     }
 
@@ -244,16 +448,54 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
     if str(_REPO_ROOT) not in _sys.path:
         _sys.path.insert(0, str(_REPO_ROOT))
 
-    from src.scoring.danelfin_manual_import import import_manual_danelfin_observations
+    from src.scoring.danelfin_manual_import import import_manual_danelfin_observations, _normalize_observation
 
     normalized_payload = _normalize_browser_capture_payload(payload)
+    diagnostic_run_id = normalized_payload.get("diagnostic_run_id")
+    if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
+        _record_danelfin_diag_event(diagnostic_run_id, "result_received")
 
     if bool(normalized_payload["dry_run"]):
-        # Safety rail for test mode: write to isolated temp signal directory only.
-        output_dir = Path(tempfile.mkdtemp(prefix="sih_danelfin_capture_dryrun_"))
-    else:
-        # Production mode writes through the canonical Danelfin signal cache path.
-        output_dir = _REPO_ROOT / "data" / "signals" / "danelfin"
+        normalized_rows: list[dict[str, str]] = []
+        requested_symbols = [str(obs["symbol"]).upper() for obs in normalized_payload["observations"]]
+        for obs in normalized_payload["observations"]:
+            normalized = _normalize_observation(obs)
+            normalized_rows.append(
+                {
+                    "symbol": normalized.symbol,
+                    "danelfin_raw": str(normalized.danelfin_raw),
+                    "danelfin_score": f"{normalized.danelfin_raw / 2.0:.4f}",
+                    "sourced_date": normalized.sourced_date,
+                }
+            )
+
+        if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
+            _record_danelfin_diag_event(diagnostic_run_id, "normalized")
+            _record_danelfin_diag_event(diagnostic_run_id, "validation_passed")
+
+        return {
+            "status": "ok",
+            "dry_run": True,
+            "diagnostic_run_id": diagnostic_run_id,
+            "output_dir": None,
+            "operator_source": normalized_payload["operator_source"],
+            "acquisition_method": normalized_payload["acquisition_method"],
+            "applied_count": len(normalized_rows),
+            "skipped_count": 0,
+            "applied_symbols": requested_symbols,
+            "skipped": [],
+            "captured_rows": normalized_rows,
+            "latest_path": None,
+            "provenance_path": None,
+            "canonical_persistence_called": False,
+        }
+
+    # Production mode writes through the canonical Danelfin signal cache path.
+    output_dir = _REPO_ROOT / "data" / "signals" / "danelfin"
+
+    if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
+        _record_danelfin_diag_event(diagnostic_run_id, "normalized")
+        _record_danelfin_diag_event(diagnostic_run_id, "validation_passed")
 
     summary = import_manual_danelfin_observations(
         normalized_payload["observations"],
@@ -284,7 +526,8 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
 
     return {
         "status": "ok",
-        "dry_run": bool(normalized_payload["dry_run"]),
+        "dry_run": False,
+        "diagnostic_run_id": diagnostic_run_id,
         "output_dir": str(output_dir),
         "operator_source": normalized_payload["operator_source"],
         "acquisition_method": normalized_payload["acquisition_method"],
@@ -295,6 +538,7 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
         "captured_rows": captured_rows,
         "latest_path": summary.get("latest_path"),
         "provenance_path": summary.get("provenance_path"),
+        "canonical_persistence_called": True,
     }
 
 
@@ -2014,7 +2258,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # type: ignore[override]
         path = self.path.split("?")[0]
-        if path == "/api/danelfin/browser-capture":
+        if path in {
+            "/api/danelfin/browser-capture",
+            "/api/danelfin/browser-capture/diagnostic-status",
+        }:
             self.send_response(204)
             origin = _capture_cors_origin(self)
             if origin:
@@ -2050,6 +2297,51 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/danelfin/browser-capture/queue":
             try:
                 self._json_response(_danelfin_capture_queue_payload())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/danelfin/browser-capture/diagnostic-queue":
+            qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            symbol = str((qs.get("symbol") or [""])[0] or "").strip() or _DANELFIN_DIAGNOSTIC_DEFAULT_SYMBOL
+            pair_symbol = str((qs.get("pair_symbol") or [""])[0] or "").strip() or _DANELFIN_DIAGNOSTIC_DEFAULT_PAIR_SYMBOL
+            try:
+                self._json_response(_build_danelfin_diagnostic_queue_payload(symbol, pair_symbol))
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422)
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/danelfin/browser-capture/diagnostic-queue/pending":
+            qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            symbol = str((qs.get("symbol") or [""])[0] or "").strip() or ""
+            run_id = str((qs.get("id") or [""])[0] or "").strip() or ""
+            try:
+                state = _find_prepared_danelfin_diagnostic_run(symbol=symbol, run_id=run_id)
+                if state is None:
+                    self._json_response(
+                        {
+                            "status": "ok",
+                            "provider": "danelfin",
+                            "diagnostic": True,
+                            "dry_run": True,
+                            "diagnostic_run_id": run_id or None,
+                            "symbols": [symbol.upper()] if symbol else [],
+                            "jobs": [],
+                            "job_count": 0,
+                            "generated_at_utc": _utc_now_iso(),
+                        }
+                    )
+                else:
+                    self._json_response(_build_danelfin_diagnostic_queue_payload_from_state(state))
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/danelfin/browser-capture/diagnostic-status":
+            qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            run_id = str((qs.get("id") or [""])[0] or "").strip()
+            try:
+                self._json_response({"status": "ok", "diagnostic": _danelfin_diagnostic_status(run_id)})
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422)
+            except KeyError:
+                self._json_response({"error": "diagnostic run not found"}, 404)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
         elif path == "/api/refresh-transparency":
@@ -3002,6 +3294,34 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": str(exc)}, 422, extra_headers=self._cors_headers())
             except Exception as exc:
                 self._json_response({"error": f"capture_failed: {exc}"}, 500, extra_headers=self._cors_headers())
+        elif path == "/api/danelfin/browser-capture/diagnostic-status":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400, extra_headers=self._cors_headers())
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400, extra_headers=self._cors_headers())
+                return
+
+            run_id = str(payload.get("diagnostic_run_id") or "").strip()
+            event = str(payload.get("event") or "").strip()
+            if not run_id or not event:
+                self._json_response({"error": "diagnostic_run_id and event are required"}, 422, extra_headers=self._cors_headers())
+                return
+
+            try:
+                state = _record_danelfin_diag_event(
+                    run_id,
+                    event,
+                    error=str(payload.get("error") or "").strip() or None,
+                    url=str(payload.get("url") or "").strip() or None,
+                )
+                self._json_response({"status": "ok", "diagnostic": state}, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
         else:
             self.send_error(404)
 
