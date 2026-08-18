@@ -36,6 +36,10 @@ const EXPECTED_SERIES_TYPES = [
 const state = {
   replayInputs: [],
   replaySeries: [],
+  replaySeriesLoad: { status: "AVAILABLE", message: "" },
+  replayInputsLoad: { status: "AVAILABLE", message: "" },
+  replayAvailabilityLoad: { status: "AVAILABLE", message: "" },
+  replayMatrixLoad: { status: "AVAILABLE", message: "" },
   replayAvailability: [],
   replayMatrix: [],
   analyticalUniverse: [],
@@ -96,6 +100,27 @@ async function fetchText(path) {
     throw new Error(`Failed to load ${path}: HTTP ${response.status}`);
   }
   return response.text();
+}
+
+async function fetchTextStatus(path) {
+  try {
+    const text = await fetchText(path);
+    return { status: "AVAILABLE", text, message: "" };
+  } catch (error) {
+    const msg = String(error && error.message ? error.message : error || "");
+    if (msg.includes("HTTP 404")) {
+      return {
+        status: "UNAVAILABLE",
+        text: "",
+        message: `${path} is missing (HTTP 404). Historical replay panels are unavailable, but current-state panels remain available.`,
+      };
+    }
+    return {
+      status: "ERROR",
+      text: "",
+      message: `Replay performance series could not be loaded: ${msg}`,
+    };
+  }
 }
 
 function countRegistryEntries(yamlText, keyName) {
@@ -526,6 +551,152 @@ function drawGovernedPlaceholder(message) {
   drawPlaceholder(ctx, canvas.width, canvas.height, message);
 }
 
+function _renderReplayUnavailableState(reason, details) {
+  const payload = details || {};
+  const replayMetaNode = document.getElementById("replayMeta");
+  const stockCoverageNode = document.getElementById("stockCoverageMeta");
+  const returnComparisonNode = document.getElementById("returnComparisonTable");
+  const explainerNode = document.getElementById("forwardBacktestExplainer");
+
+  const message = payload.message || "Replay context unavailable for the selected view.";
+  setStatus(message, true);
+  drawGovernedPlaceholder(message);
+
+  if (replayMetaNode) {
+    replayMetaNode.textContent = JSON.stringify(
+      {
+        replay_panel_status: reason,
+        ...payload,
+      },
+      null,
+      2,
+    );
+  }
+  if (stockCoverageNode) {
+    stockCoverageNode.textContent = "Stock coverage unavailable: replay evidence summary is unavailable for the selected replay context.";
+  }
+  if (returnComparisonNode) {
+    returnComparisonNode.innerHTML = "<p>Return comparison unavailable — replay evidence summary not available.</p>";
+  }
+  if (explainerNode) {
+    explainerNode.style.display = "none";
+  }
+}
+
+function _renderDecisionReadiness(payload) {
+  const summaryEl = document.getElementById("decisionReadinessSummary");
+  const pillsEl = document.getElementById("decisionReadinessPills");
+  if (!summaryEl || !pillsEl) return;
+
+  const readiness = payload && payload.decision_readiness ? payload.decision_readiness : null;
+  if (!readiness) {
+    summaryEl.textContent = "Decision readiness unavailable.";
+    pillsEl.innerHTML = '<span class="refresh-insight-pill">No readiness payload available.</span>';
+    return;
+  }
+
+  const classification = String(readiness.classification || "UNKNOWN");
+  const pct = Number(readiness.core_fresh_pct);
+  const stale = Number(readiness.stale_or_missing || 0);
+  summaryEl.textContent = `Classification: ${classification} · Core freshness: ${Number.isFinite(pct) ? pct.toFixed(1) : "0.0"}% · Stale/missing: ${stale}`;
+  pillsEl.innerHTML = [
+    `<span class="refresh-insight-pill"><span class="universe-tag">Status</span>${_ovEscHtml(classification)}</span>`,
+    `<span class="refresh-insight-pill"><span class="universe-tag">Freshness</span>${Number.isFinite(pct) ? pct.toFixed(1) : "0.0"}%</span>`,
+    `<span class="refresh-insight-pill"><span class="universe-tag">Stale/Missing</span>${stale}</span>`,
+  ].join("");
+}
+
+function _renderCandidateReadiness(payload) {
+  const grid = document.getElementById("candidateReadinessGrid");
+  if (!grid) return;
+  const readiness = payload && payload.readiness ? payload.readiness : null;
+  if (!readiness || typeof readiness !== "object") {
+    grid.innerHTML = '<div class="candidate-metric-card">Candidate readiness unavailable.</div>';
+    return;
+  }
+
+  const keys = ["research_universe", "cw_das", "ucf", "recommendations", "cra"];
+  grid.innerHTML = keys.map((key) => {
+    const metric = readiness[key] || {};
+    const status = String(metric.status || "UNKNOWN");
+    const fresh = Number(metric.core_fresh || 0);
+    const total = Number(metric.total || 0);
+    const pct = Number(metric.core_fresh_pct || 0);
+    return `<div class="candidate-metric-card">
+      <div class="candidate-metric-label">${_ovEscHtml(key.replaceAll("_", " ").toUpperCase())}</div>
+      <div class="candidate-metric-value">${_ovEscHtml(status)}</div>
+      <div class="candidate-metric-sub">Fresh: ${fresh}/${total} · ${Number.isFinite(pct) ? pct.toFixed(1) : "0.0"}%</div>
+    </div>`;
+  }).join("");
+}
+
+function _renderRecommendationFreshness(payload) {
+  const filterEl = document.getElementById("recommendationFreshnessFilters");
+  const bodyEl = document.getElementById("recommendationFreshnessBody");
+  if (!filterEl || !bodyEl) return;
+
+  const rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+  const freshCount = rows.filter((row) => String(row.freshness || "").toUpperCase() === "FRESH").length;
+  const staleCount = rows.length - freshCount;
+
+  filterEl.innerHTML = [
+    `<span class="refresh-insight-pill"><span class="universe-tag">Rows</span>${rows.length}</span>`,
+    `<span class="refresh-insight-pill"><span class="universe-tag">Fresh</span>${freshCount}</span>`,
+    `<span class="refresh-insight-pill"><span class="universe-tag">Stale</span>${staleCount}</span>`,
+  ].join("");
+
+  if (!rows.length) {
+    bodyEl.innerHTML = '<tr><td colspan="7" style="color: var(--muted);">No recommendation freshness rows available.</td></tr>';
+    return;
+  }
+
+  const providerCell = (cell) => {
+    const source = cell && typeof cell === "object" ? cell : {};
+    const stateText = String(source.state || "missing").toUpperCase();
+    const dateText = String(source.date || "NA");
+    return `${_ovEscHtml(stateText)} (${_ovEscHtml(dateText)})`;
+  };
+
+  bodyEl.innerHTML = rows.slice(0, 200).map((row) => `
+    <tr>
+      <td>${_ovEscHtml(String(row.symbol || "—"))}</td>
+      <td>${providerCell(row.zacks)}</td>
+      <td>${providerCell(row.danelfin)}</td>
+      <td>${providerCell(row.yahoo)}</td>
+      <td>${providerCell(row.ess)}</td>
+      <td>${providerCell(row.fmp)}</td>
+      <td>${_ovEscHtml(String(row.freshness || "UNKNOWN"))}</td>
+    </tr>
+  `).join("");
+}
+
+function _renderRefreshTransparencyUnavailable(message) {
+  const summaryEl = document.getElementById("decisionReadinessSummary");
+  const pillsEl = document.getElementById("decisionReadinessPills");
+  const gridEl = document.getElementById("candidateReadinessGrid");
+  const filterEl = document.getElementById("recommendationFreshnessFilters");
+  const bodyEl = document.getElementById("recommendationFreshnessBody");
+
+  if (summaryEl) summaryEl.textContent = message;
+  if (pillsEl) pillsEl.innerHTML = `<span class="refresh-insight-pill">${_ovEscHtml(message)}</span>`;
+  if (gridEl) gridEl.innerHTML = `<div class="candidate-metric-card">${_ovEscHtml(message)}</div>`;
+  if (filterEl) filterEl.innerHTML = "";
+  if (bodyEl) bodyEl.innerHTML = `<tr><td colspan="7" style="color: var(--muted);">${_ovEscHtml(message)}</td></tr>`;
+}
+
+function loadRefreshTransparencyPanels() {
+  fetch("/api/refresh-transparency", { cache: "no-store" })
+    .then((r) => r.ok ? r.json() : Promise.reject(r.status))
+    .then((payload) => {
+      _renderDecisionReadiness(payload);
+      _renderCandidateReadiness(payload);
+      _renderRecommendationFreshness(payload);
+    })
+    .catch(() => {
+      _renderRefreshTransparencyUnavailable("Refresh transparency unavailable.");
+    });
+}
+
 async function tryLoadReplayMetadata(replayId) {
   if (!replayId) return null;
   // Phase A: history is now snapshot_date-partitioned; try new path, fall back to legacy.
@@ -802,15 +973,64 @@ async function render() {
     ...availabilitySummaryLines(),
   ].join("\n");
 
+  const freshnessMeta = document.getElementById("snapshotFreshnessMeta");
+  if (freshnessMeta) {
+    const meta = state.snapshotMetadata;
+    freshnessMeta.textContent = meta
+      ? JSON.stringify(
+          {
+            snapshot_date: meta.snapshot_date,
+            generated_at_utc: meta.generated_at_utc,
+            freshness_status: meta.freshness_status,
+            run_id: meta.run_id,
+          },
+          null,
+          2,
+        )
+      : "current_snapshot_metadata.json not found";
+  }
+
+  if (state.replaySeriesLoad.status !== "AVAILABLE") {
+    _renderReplayUnavailableState(state.replaySeriesLoad.status, {
+      selected_filters: filters,
+      replay_series_path: DATA_PATHS.replaySeries,
+      message: state.replaySeriesLoad.message,
+    });
+    return;
+  }
+
+  if (state.replayInputsLoad.status !== "AVAILABLE") {
+    _renderReplayUnavailableState(state.replayInputsLoad.status, {
+      selected_filters: filters,
+      replay_inputs_path: DATA_PATHS.replayInputs,
+      message: state.replayInputsLoad.message,
+    });
+    return;
+  }
+
+  if (state.replayAvailabilityLoad.status !== "AVAILABLE") {
+    _renderReplayUnavailableState(state.replayAvailabilityLoad.status, {
+      selected_filters: filters,
+      replay_availability_path: DATA_PATHS.replayAvailability,
+      message: state.replayAvailabilityLoad.message,
+    });
+    return;
+  }
+
+  if (state.replayMatrixLoad.status !== "AVAILABLE") {
+    _renderReplayUnavailableState(state.replayMatrixLoad.status, {
+      selected_filters: filters,
+      replay_matrix_path: DATA_PATHS.replayMatrix,
+      message: state.replayMatrixLoad.message,
+    });
+    return;
+  }
+
   if (!availability) {
-    const message = "Replay availability governance mismatch: no availability row exists for selected category.";
-    setStatus(message, true);
-    drawGovernedPlaceholder(message);
-    replayMetaNode.textContent = JSON.stringify(
-      { selected_filters: filters, message },
-      null,
-      2,
-    );
+    _renderReplayUnavailableState("UNAVAILABLE", {
+      selected_filters: filters,
+      message: "Replay availability governance mismatch: no availability row exists for selected category.",
+    });
     return;
   }
 
@@ -819,34 +1039,25 @@ async function render() {
   const replayGenerated = parseBoolText(availability.replay_generated);
 
   if (!replayGenerated || ["NOT_GENERATED", "MISSING_MAPPING", "MISSING_MARKET_DATA", "BLOCKED"].includes(replayStatus)) {
-    const message = [
-      `Replay unavailable for ${filters.geography} ${filters.marketCap} ${filters.industry}.`,
-      `Status: ${replayStatus}.`,
-      missingDependencies ? `Missing dependencies: ${missingDependencies}` : "Missing dependencies: none reported.",
-    ].join(" ");
-    setStatus(message, true);
-    drawGovernedPlaceholder(message);
-    replayMetaNode.textContent = JSON.stringify(
-      {
-        selected_filters: filters,
-        availability,
-        replay_matrix_row: replayMatrixRow || "not generated",
-      },
-      null,
-      2,
-    );
+    _renderReplayUnavailableState("UNAVAILABLE", {
+      selected_filters: filters,
+      availability,
+      replay_matrix_row: replayMatrixRow || "not generated",
+      message: [
+        `Replay unavailable for ${filters.geography} ${filters.marketCap} ${filters.industry}.`,
+        `Status: ${replayStatus}.`,
+        missingDependencies ? `Missing dependencies: ${missingDependencies}` : "Missing dependencies: none reported.",
+      ].join(" "),
+    });
     return;
   }
 
   if (!replayMatrixRow) {
-    const message = "Replay/UI mismatch: availability indicates generated replay but replay_matrix has no matching row.";
-    setStatus(message, true);
-    drawGovernedPlaceholder(message);
-    replayMetaNode.textContent = JSON.stringify(
-      { selected_filters: filters, availability, message },
-      null,
-      2,
-    );
+    _renderReplayUnavailableState("ERROR", {
+      selected_filters: filters,
+      availability,
+      message: "Replay/UI mismatch: availability indicates generated replay but replay_matrix has no matching row.",
+    });
     return;
   }
 
@@ -907,32 +1118,16 @@ async function render() {
     2,
   );
 
-  // Phase H: update freshness panel
-  const freshnessMeta = document.getElementById("snapshotFreshnessMeta");
-  if (freshnessMeta) {
-    const meta = state.snapshotMetadata;
-    freshnessMeta.textContent = meta
-      ? JSON.stringify(
-          {
-            snapshot_date: meta.snapshot_date,
-            generated_at_utc: meta.generated_at_utc,
-            freshness_status: meta.freshness_status,
-            run_id: meta.run_id,
-          },
-          null,
-          2,
-        )
-      : "current_snapshot_metadata.json not found";
-  }
-
   const hasSeries = seriesRows.length > 0;
   if (!hasSeries) {
-    const message = [
-      "Replay generated but performance series rows are empty for selected category.",
-      missingDependencies ? `Missing dependencies: ${missingDependencies}` : "",
-    ].join(" ").trim();
-    setStatus(message, true);
-    drawGovernedPlaceholder(message);
+    _renderReplayUnavailableState("UNAVAILABLE", {
+      selected_filters: filters,
+      replay_id: replayId,
+      message: [
+        "Replay generated but performance series rows are empty for selected category.",
+        missingDependencies ? `Missing dependencies: ${missingDependencies}` : "",
+      ].join(" ").trim(),
+    });
     return;
   }
 
@@ -954,24 +1149,49 @@ async function render() {
 
 async function initialize() {
   try {
-    const [seriesText, inputsText, availabilityText, matrixText, universeText, benchmarkYaml, vehicleYaml, snapshotMetaText] = await Promise.all([
-      fetchText(DATA_PATHS.replaySeries),
-      fetchText(DATA_PATHS.replayInputs),
-      fetchText(DATA_PATHS.replayAvailability).catch(() => ""),
-      fetchText(DATA_PATHS.replayMatrix).catch(() => ""),
-      fetchText(DATA_PATHS.analyticalUniverse),
-      fetchText(DATA_PATHS.benchmarkRegistry),
-      fetchText(DATA_PATHS.vehicleRegistry),
+    const [
+      seriesResult,
+      inputsResult,
+      availabilityResult,
+      matrixResult,
+      universeResult,
+      benchmarkResult,
+      vehicleResult,
+      snapshotMetaText,
+    ] = await Promise.all([
+      fetchTextStatus(DATA_PATHS.replaySeries),
+      fetchTextStatus(DATA_PATHS.replayInputs),
+      fetchTextStatus(DATA_PATHS.replayAvailability),
+      fetchTextStatus(DATA_PATHS.replayMatrix),
+      fetchTextStatus(DATA_PATHS.analyticalUniverse),
+      fetchTextStatus(DATA_PATHS.benchmarkRegistry),
+      fetchTextStatus(DATA_PATHS.vehicleRegistry),
       fetchText(DATA_PATHS.snapshotMetadata).catch(() => ""),
     ]);
 
-    state.replaySeries = parseCsv(seriesText);
-    state.replayInputs = parseCsv(inputsText);
-    state.replayAvailability = parseCsv(availabilityText);
-    state.replayMatrix = parseCsv(matrixText);
-    state.analyticalUniverse = parseCsv(universeText);
-    state.benchmarkRegistryText = benchmarkYaml;
-    state.vehicleRegistryText = vehicleYaml;
+    state.replaySeriesLoad = {
+      status: seriesResult.status,
+      message: seriesResult.message,
+    };
+    state.replayInputsLoad = {
+      status: inputsResult.status,
+      message: inputsResult.message,
+    };
+    state.replayAvailabilityLoad = {
+      status: availabilityResult.status,
+      message: availabilityResult.message,
+    };
+    state.replayMatrixLoad = {
+      status: matrixResult.status,
+      message: matrixResult.message,
+    };
+    state.replaySeries = parseCsv(seriesResult.text || "");
+    state.replayInputs = parseCsv(inputsResult.text || "");
+    state.replayAvailability = parseCsv(availabilityResult.text || "");
+    state.replayMatrix = parseCsv(matrixResult.text || "");
+    state.analyticalUniverse = parseCsv(universeResult.text || "");
+    state.benchmarkRegistryText = benchmarkResult.text || "";
+    state.vehicleRegistryText = vehicleResult.text || "";
     state.snapshotMetadata = snapshotMetaText ? (() => { try { return JSON.parse(snapshotMetaText); } catch { return null; } })() : null;
 
     // Dynamically populate industry dropdown from available replay data
@@ -1035,6 +1255,16 @@ async function initialize() {
       });
     });
 
+    loadRefreshTransparencyPanels();
+    setTimeout(() => {
+      loadLatestPortfolioActionPanel();
+    }, 0);
+    setTimeout(() => {
+      const panel = document.getElementById("portfolioActionPanel");
+      if (panel && String(panel.textContent || "").includes("Loading latest portfolio action plan...")) {
+        loadLatestPortfolioActionPanel();
+      }
+    }, 1200);
     await render();
   } catch (error) {
     setStatus(`Failed to load UI data inputs: ${error.message}`, true);
@@ -1044,6 +1274,16 @@ async function initialize() {
       null,
       2,
     );
+    loadRefreshTransparencyPanels();
+    setTimeout(() => {
+      loadLatestPortfolioActionPanel();
+    }, 0);
+    setTimeout(() => {
+      const panel = document.getElementById("portfolioActionPanel");
+      if (panel && String(panel.textContent || "").includes("Loading latest portfolio action plan...")) {
+        loadLatestPortfolioActionPanel();
+      }
+    }, 1200);
   }
 }
 
@@ -1772,9 +2012,16 @@ function _renderLatestPortfolioActionPanel(data) {
   </div>`;
 }
 
-async function loadLatestPortfolioActionPanel() {
+async function loadLatestPortfolioActionPanel(attempt = 0) {
   const el = document.getElementById("portfolioActionPanel");
-  if (!el) return;
+  if (!el) {
+    if (attempt < 20) {
+      setTimeout(() => {
+        loadLatestPortfolioActionPanel(attempt + 1);
+      }, 100);
+    }
+    return;
+  }
   try {
     const runsResp = await fetch("/api/portfolio/runs", { cache: "no-store" });
     if (!runsResp.ok) throw new Error(`HTTP ${runsResp.status}`);
@@ -1804,21 +2051,25 @@ function loadSignalStatus() {
         .catch(() => null),
     ]))
     .then(([data, runtime]) => {
+      const refreshRunning = Boolean(runtime && runtime.running);
       const progress = (runtime && runtime.provider_progress) ? runtime.provider_progress : {};
       ["zacks", "danelfin", "yahoo"].forEach((provider) => {
         if (!data[provider] || !progress[provider]) return;
         const p = progress[provider];
-        data[provider].completed_count = p.completed_count;
-        data[provider].planned_total_count = p.planned_total_count;
-        data[provider].progress_pct = p.progress_pct;
-        data[provider].progress_label = p.progress_label;
-        data[provider].is_complete = p.is_complete;
+        data[provider].refresh_progress = {
+          active: refreshRunning,
+          completed_count: p.completed_count,
+          planned_total_count: p.planned_total_count,
+          progress_pct: p.progress_pct,
+          progress_label: p.progress_label,
+          is_complete: p.is_complete,
+        };
       });
       _renderSignalPills(data);
       _renderHoldingsCoverage(data.portfolio_holdings_coverage || null);
       _renderRefreshModeDefinition();
       loadRefreshRuntimeStatus();
-      if (data._running) {
+      if (refreshRunning) {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
         if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
@@ -1978,21 +2229,23 @@ function _renderSignalPills(data) {
       UNKNOWN:       "no data",
     }[badgeState] || "unknown";
 
-    // Stable refresh progress line (REFRESH-PROGRESS-STABLE-DENOMINATOR-01)
-    let progressHtml = "";
-    const completedCount = Number(info.completed_count ?? info.with_data_count ?? 0);
-    const plannedRaw = info.planned_total_count;
-    const plannedCount = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
-    if (["zacks", "danelfin", "yahoo"].includes(key)) {
-      if (plannedCount != null && Number.isFinite(plannedCount) && plannedCount >= 0) {
-        const progressCompleted = Math.min(completedCount, plannedCount);
-        const progressPct = info.progress_pct != null
-          ? Number(info.progress_pct)
-          : (plannedCount > 0 ? (progressCompleted / plannedCount) * 100.0 : 100.0);
+    let refreshProgressHtml = "";
+    const refreshProgress = info.refresh_progress && typeof info.refresh_progress === "object"
+      ? info.refresh_progress
+      : null;
+    if (refreshProgress && refreshProgress.active) {
+      const completed = Number(refreshProgress.completed_count || 0);
+      const plannedRaw = refreshProgress.planned_total_count;
+      const planned = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
+      if (planned != null && Number.isFinite(planned) && planned >= 0) {
+        const shownCompleted = Math.min(completed, planned);
+        const progressPct = refreshProgress.progress_pct != null
+          ? Number(refreshProgress.progress_pct)
+          : (planned > 0 ? (shownCompleted / planned) * 100.0 : 100.0);
         const pctLabel = Number.isFinite(progressPct) ? progressPct.toFixed(1) : "0.0";
-        progressHtml = `<span class="pill-coverage">${progressCompleted}/${plannedCount} rows · ${pctLabel}%</span>`;
+        refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} rows · ${pctLabel}%</span>`;
       } else {
-        progressHtml = `<span class="pill-coverage">${completedCount} rows processed</span>`;
+        refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${completed} rows processed</span>`;
       }
     }
 
@@ -2000,7 +2253,13 @@ function _renderSignalPills(data) {
     let coverageHtml = "";
     if (info.attempted_count != null) {
       const covPct = info.coverage_pct != null ? info.coverage_pct.toFixed(1) : "—";
-      coverageHtml = `<span class="pill-coverage">Today written rows: ${info.with_data_count}/${info.attempted_count} · ${covPct}%</span>`;
+      coverageHtml = `<span class="pill-coverage">Provider today rows: ${info.with_data_count}/${info.attempted_count} · ${covPct}%</span>`;
+    }
+
+    let canonicalCoverageHtml = "";
+    const holdingsInfo = holdingsProviders[key] || null;
+    if (holdingsInfo && ["zacks", "danelfin", "yahoo"].includes(key)) {
+      canonicalCoverageHtml = `<span class="pill-coverage">Current holdings: ${holdingsInfo.covered_within_threshold}/${holdingsInfo.applicable_holdings} within threshold · stale ${holdingsInfo.stale} · missing ${holdingsInfo.missing} · failed ${holdingsInfo.failed}</span>`;
     }
 
     // Degraded fields warning
@@ -2021,12 +2280,11 @@ function _renderSignalPills(data) {
     }
 
     let holdingsHtml = "";
-    const holdingsInfo = holdingsProviders[key] || null;
     if (holdingsInfo && holdingsInfo.status && holdingsInfo.status !== "COMPLIANT") {
       holdingsHtml = `<span class="pill-degraded">Holdings coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
     }
 
-    const extraLines = [progressHtml, coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
+    const extraLines = [canonicalCoverageHtml, refreshProgressHtml, coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
 
     return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
@@ -2073,7 +2331,11 @@ function _renderHoldingsCoverage(coverage) {
   const runId = coverage.run_id || "—";
   const baseline = coverage.active_holdings_baseline != null ? coverage.active_holdings_baseline : "—";
   const threshold = coverage.threshold_days != null ? coverage.threshold_days : 2;
-  summaryEl.textContent = `Baseline: ${runId} · Active holdings: ${baseline} · Threshold: ${threshold}d`;
+  const applicableTotals = Object.values(coverage.providers || {})
+    .map((provider) => Number(provider && provider.applicable_holdings != null ? provider.applicable_holdings : 0))
+    .filter((value) => Number.isFinite(value));
+  const providerApplicable = applicableTotals.length ? Math.max(...applicableTotals) : 0;
+  summaryEl.textContent = `Baseline: ${runId} · Active equity holdings: ${baseline} · Provider-applicable holdings: ${providerApplicable} · Threshold: ${threshold}d`;
 
   const providers = ["zacks", "danelfin", "yahoo"];
   const labels = { zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };

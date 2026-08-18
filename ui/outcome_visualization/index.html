@@ -1240,9 +1240,9 @@
       </section>
     </div>
 
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=14"></script>
     <script>
-      document.addEventListener("DOMContentLoaded", function () {
+      function bootstrapOutcomeVisualizationPage() {
         document.getElementById("lookupInput").addEventListener("keydown", function (e) {
           if (e.key === "Enter") lookupSymbol();
         });
@@ -1261,7 +1261,13 @@
         _renderRefreshModeDefinition();
         loadRefreshRuntimeStatus();
         loadLatestPortfolioActionPanel();
-      });
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bootstrapOutcomeVisualizationPage, { once: true });
+      } else {
+        bootstrapOutcomeVisualizationPage();
+      }
     </script>
   </body>
 </html>

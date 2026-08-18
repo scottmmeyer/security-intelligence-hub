@@ -268,3 +268,58 @@ def test_ui_and_refresh_share_same_active_holdings_baseline(tmp_path, monkeypatc
     status = outcome_ui._signal_status()
 
     assert len(rs._load_portfolio_equity_holdings()) == status["portfolio_holdings_coverage"]["active_holdings_baseline"]
+
+
+def test_signal_status_uses_existing_yahoo_supplemental_fallback_path(tmp_path, monkeypatch) -> None:
+    root = tmp_path
+    analysis_runs = root / "data" / "portfolio_ingestion" / "analysis_runs"
+    _write_csv(
+        analysis_runs / "PAR-20260612-BASE" / "holdings.csv",
+        ["symbol", "asset_class", "security_type", "operational_state"],
+        [
+            {"symbol": "AAPL", "asset_class": "EQUITIES", "security_type": "Common Stock", "operational_state": "ACTIVE_POSITION"},
+        ],
+    )
+    _write_csv(root / "data" / "current" / "base_equity_universe.csv", ["symbol"], [{"symbol": "AAPL"}])
+
+    signals_root = root / "data" / "signals"
+    zacks = signals_root / "zacks" / "latest_zacks.csv"
+    danelfin = signals_root / "danelfin" / "latest_danelfin.csv"
+    yahoo_missing_primary = signals_root / "yahoo" / "latest_yahoo_supplemental.csv"
+    yahoo_fallback = signals_root / "yahoo" / "2026-08-17_yahoo_supplemental.csv"
+
+    today = date.today().isoformat()
+    _write_csv(
+        zacks,
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [{"symbol": "AAPL", "zacks_rank": "1", "zacks_score": "5", "abr": "", "price_target": "", "eps_growth": "", "sourced_date": today}],
+    )
+    _write_csv(
+        danelfin,
+        ["symbol", "danelfin_raw", "danelfin_score", "sourced_date"],
+        [{"symbol": "AAPL", "danelfin_raw": "8", "danelfin_score": "4.0", "sourced_date": today}],
+    )
+    _write_csv(
+        yahoo_fallback,
+        ["symbol", "price_target", "abr", "analyst_count", "eps_growth_5yr", "current_price", "upside_pct", "sourced_date"],
+        [{"symbol": "AAPL", "price_target": "200", "abr": "1.2", "analyst_count": "30", "eps_growth_5yr": "12", "current_price": "180", "upside_pct": "11", "sourced_date": today}],
+    )
+
+    monkeypatch.setattr(outcome_ui, "_REPO_ROOT", root)
+    monkeypatch.setattr(
+        outcome_ui,
+        "_SIGNAL_FILES",
+        {
+            "zacks": zacks,
+            "danelfin": danelfin,
+            "yahoo": yahoo_missing_primary,
+        },
+    )
+    monkeypatch.setattr(outcome_ui, "_ESS_SIGNAL_SNAPSHOT", root / "missing_ess.csv")
+    monkeypatch.setattr(outcome_ui, "_ESS_COVERAGE_WARNING", root / "missing_ess_warning.json")
+
+    status = outcome_ui._signal_status()
+
+    assert status["yahoo"]["exists"] is True
+    assert status["yahoo"]["sourced_date"] == today
+    assert status["yahoo"]["source_path"].endswith("2026-08-17_yahoo_supplemental.csv")

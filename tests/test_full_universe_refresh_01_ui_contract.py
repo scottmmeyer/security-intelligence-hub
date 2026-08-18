@@ -17,10 +17,11 @@ def test_outcome_visualization_refresh_labels_and_payload_contract() -> None:
     assert 'source: "outcome_visualization"' in app_js
     assert "window.confirm(\"This will refresh approximately 2,473 research-universe symbols. Historical snapshots and trend history will be retained." in app_js
     assert "_refreshModeLabel(mode)" in app_js
-    assert "completed_count ?? info.with_data_count" in app_js
-    assert "planned_total_count" in app_js
-    assert "rows processed" in app_js
-    assert "Today written rows:" in app_js
+    assert "Current holdings:" in app_js
+    assert "Active refresh progress:" in app_js
+    assert "Provider today rows:" in app_js
+    assert "Active equity holdings:" in app_js
+    assert "Provider-applicable holdings:" in app_js
     assert "holdings_plus_buy_candidates" in app_js
     assert "plus mandatory dependencies and market-regime proxies" in app_js
     assert "plus mandatory provider dependencies and market-regime proxy symbols" in app_js

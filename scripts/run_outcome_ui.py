@@ -68,6 +68,33 @@ _DANELFIN_CAPTURE_ALLOWED_METHODS = {
 }
 
 
+def _resolve_provider_signal_file(provider_name: str) -> Path:
+    configured = _SIGNAL_FILES.get(provider_name)
+    if configured is None:
+        return _REPO_ROOT / "data" / "signals" / provider_name / f"latest_{provider_name}.csv"
+    if provider_name != "yahoo" or configured.exists():
+        return configured
+
+    candidates = [
+        configured.parent / "latest_yahoo_supplemental.csv",
+        configured.parent / "latest_yahoo.csv",
+        configured.parent / "yahoo_supplemental.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    dated_candidates = sorted(
+        configured.parent.glob("*_yahoo_supplemental.csv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if dated_candidates:
+        return dated_candidates[0]
+
+    return configured
+
+
 def _danelfin_capture_pair_url(symbols: list[str]) -> str:
     if len(symbols) < 2:
         symbol = symbols[0].lower()
@@ -466,6 +493,17 @@ def _sourced_date(csv_path: Path) -> str | None:
     return None
 
 
+def _iso_age_days(value: str | None, *, today: date | None = None) -> int | None:
+    if not value:
+        return None
+    today = today or date.today()
+    try:
+        sourced = datetime.strptime(str(value), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (today - sourced).days
+
+
 def _count_research_universe_rows() -> int | None:
     csv_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
     if not csv_path.exists():
@@ -852,14 +890,23 @@ def _do_fetch_scores(symbol: str) -> None:
 
 def _signal_status() -> dict:
     today = date.today().isoformat()
+    freshness_threshold_days = 2
     result: dict[str, dict] = {}
-    for name, path in _SIGNAL_FILES.items():
+    resolved_signal_files: dict[str, Path] = {}
+    for name in _SIGNAL_FILES.keys():
+        resolved_signal_files[name] = _resolve_provider_signal_file(name)
+
+    for name, path in resolved_signal_files.items():
         sd = _sourced_date(path)
         entry: dict = {
             "sourced_date": sd,
-            "stale": sd != today,
+            "stale": True,
             "exists": path.exists(),
+            "source_path": str(path),
         }
+        age_days = _iso_age_days(sd)
+        entry["age_days"] = age_days
+        entry["threshold_days"] = freshness_threshold_days
 
         # Provider row-level coverage metrics for current sourced_date.
         _PRIMARY_FIELDS: dict[str, list[str]] = {
@@ -875,21 +922,21 @@ def _signal_status() -> dict:
         primary_fields = _PRIMARY_FIELDS.get(name, [])
         all_fields = _ALL_SCORE_FIELDS.get(name, [])
 
-        if path.exists() and sd == today:
+        if path.exists() and sd:
             try:
-                today_rows: list[dict] = []
+                source_rows: list[dict] = []
                 with path.open("r", encoding="utf-8", newline="") as fh:
                     for row in csv.DictReader(fh):
-                        if str(row.get("sourced_date", "")).strip() == today:
-                            today_rows.append(row)
-                attempted = len(today_rows)
+                        if str(row.get("sourced_date", "")).strip() == sd:
+                            source_rows.append(row)
+                attempted = len(source_rows)
                 with_data = sum(
-                    1 for r in today_rows if any(r.get(f, "").strip() for f in primary_fields)
+                    1 for r in source_rows if any(r.get(f, "").strip() for f in primary_fields)
                 ) if primary_fields else attempted
                 coverage_pct = round(with_data / attempted * 100, 1) if attempted else 0.0
                 field_coverage: dict[str, float] = {}
                 for field in all_fields:
-                    n = sum(1 for r in today_rows if r.get(field, "").strip())
+                    n = sum(1 for r in source_rows if r.get(field, "").strip())
                     field_coverage[field] = round(n / attempted * 100, 1) if attempted else 0.0
                 degraded = [f for f in primary_fields if field_coverage.get(f, 100) == 0.0]
                 zero_fields = [f for f in all_fields if field_coverage.get(f, 100) == 0.0]
@@ -900,12 +947,20 @@ def _signal_status() -> dict:
                 entry["primary_field_coverage"] = {f: field_coverage[f] for f in primary_fields}
                 entry["degraded_fields"] = degraded
                 entry["zero_coverage_fields"] = zero_fields
-                entry["badge_state"] = "FRESH_PARTIAL" if coverage_pct < 95.0 or degraded else "FRESH"
+                is_within_threshold = age_days is not None and age_days <= freshness_threshold_days
+                entry["stale"] = not is_within_threshold
+                if is_within_threshold:
+                    entry["badge_state"] = "FRESH_PARTIAL" if coverage_pct < 95.0 or degraded else "FRESH"
+                else:
+                    entry["badge_state"] = "STALE"
             except Exception:
-                entry["badge_state"] = "FRESH"
-        elif sd == today:
-            entry["badge_state"] = "FRESH"
+                entry["stale"] = False if age_days is not None and age_days <= freshness_threshold_days else True
+                entry["badge_state"] = "FRESH" if entry["stale"] is False else "STALE"
+        elif sd:
+            entry["stale"] = False if age_days is not None and age_days <= freshness_threshold_days else True
+            entry["badge_state"] = "FRESH" if entry["stale"] is False else "STALE"
         else:
+            entry["stale"] = True
             entry["badge_state"] = "STALE"
 
         result[name] = entry
@@ -913,7 +968,24 @@ def _signal_status() -> dict:
     try:
         if str(_REPO_ROOT) not in sys.path:
             sys.path.insert(0, str(_REPO_ROOT))
-        from src.portfolio.holdings_coverage import summarize_holdings_coverage
+        from src.portfolio.holdings_coverage import load_active_holdings_baseline, summarize_holdings_coverage
+
+        # Evaluate provider coverage relative to the active portfolio run snapshot date,
+        # so current-holdings freshness reflects canonical run context, not wall-clock drift.
+        holdings_reference_date = date.today()
+        analysis_runs_root = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+        baseline = load_active_holdings_baseline(analysis_runs_root)
+        if baseline is not None:
+            run_metadata_path = analysis_runs_root / baseline.run_id / "run_metadata.json"
+            if run_metadata_path.exists():
+                try:
+                    run_metadata = json.loads(run_metadata_path.read_text(encoding="utf-8"))
+                    snapshot_date_raw = str(run_metadata.get("snapshot_date") or "").strip()
+                    snapshot_date = datetime.strptime(snapshot_date_raw, "%Y-%m-%d").date() if snapshot_date_raw else None
+                    if snapshot_date is not None:
+                        holdings_reference_date = snapshot_date
+                except Exception:
+                    pass
 
         holdings_providers: dict[str, dict] = {}
         holdings_run_id: str | None = None
@@ -921,15 +993,17 @@ def _signal_status() -> dict:
         for provider_name in ("zacks", "danelfin", "yahoo"):
             summary = summarize_holdings_coverage(
                 provider=provider_name,
-                latest_csv=_SIGNAL_FILES[provider_name],
-                analysis_runs_root=_REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs",
+                latest_csv=resolved_signal_files[provider_name],
+                analysis_runs_root=analysis_runs_root,
                 base_universe_csv=_REPO_ROOT / "data" / "current" / "base_equity_universe.csv",
                 threshold_days=2,
+                today=holdings_reference_date,
             )
             holdings_run_id = holdings_run_id or str(summary.get("run_id") or "") or None
             holdings_baseline = max(holdings_baseline, int(summary.get("active_holdings_baseline") or 0))
             holdings_providers[provider_name] = summary
             if provider_name in result:
+                result[provider_name]["source_path"] = str(resolved_signal_files[provider_name])
                 result[provider_name]["holdings_status"] = summary.get("status")
                 result[provider_name]["holdings_applicable"] = summary.get("applicable_holdings")
                 result[provider_name]["holdings_covered_today"] = summary.get("covered_today")

@@ -1,0 +1,335 @@
+from __future__ import annotations
+
+import json
+import re
+import socket
+import threading
+from contextlib import closing, contextmanager
+from functools import partial
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import sync_playwright
+
+from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CHROME_EXECUTABLE = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+
+def _free_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _base_refresh_transparency_payload() -> dict:
+    return {
+        "decision_readiness": {
+            "classification": "MEDIUM",
+            "core_fresh_pct": 92.6,
+            "stale_or_missing": 4,
+            "has_provider_failures": False,
+        },
+        "readiness": {
+            "research_universe": {"status": "MEDIUM", "core_fresh": 50, "total": 54, "core_fresh_pct": 92.6},
+            "cw_das": {"status": "MEDIUM", "core_fresh": 50, "total": 54, "core_fresh_pct": 92.6},
+            "ucf": {"status": "MEDIUM", "core_fresh": 50, "total": 54, "core_fresh_pct": 92.6},
+            "recommendations": {"status": "MEDIUM", "core_fresh": 50, "total": 54, "core_fresh_pct": 92.6},
+            "cra": {"status": "MEDIUM", "core_fresh": 50, "total": 54, "core_fresh_pct": 92.6},
+        },
+        "rows": [
+            {
+                "symbol": "AAPL",
+                "zacks": {"state": "fresh", "date": "2026-08-17"},
+                "danelfin": {"state": "fresh", "date": "2026-08-15"},
+                "yahoo": {"state": "fresh", "date": "2026-08-17"},
+                "ess": {"state": "fresh", "date": "2026-08-17"},
+                "fmp": {"state": "missing", "date": "NA"},
+                "freshness": "FRESH",
+            }
+        ],
+    }
+
+
+def _base_signal_status_payload() -> dict:
+    return {
+        "zacks": {
+            "sourced_date": "2026-08-17",
+            "badge_state": "FRESH",
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "coverage_pct": 100.0,
+        },
+        "danelfin": {
+            "sourced_date": "2026-08-15",
+            "badge_state": "STALE",
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "coverage_pct": 100.0,
+        },
+        "yahoo": {
+            "sourced_date": "2026-08-17",
+            "badge_state": "FRESH",
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "coverage_pct": 100.0,
+        },
+        "ess": {
+            "sourced_date": "2026-08-17",
+            "badge_state": "FRESH",
+            "coverage_warning_count": 0,
+            "coverage_warning_examples": [],
+        },
+        "portfolio_holdings_coverage": {
+            "run_id": "PAR-20260817-40E00509",
+            "active_holdings_baseline": 67,
+            "threshold_days": 2,
+            "providers": {
+                "zacks": {
+                    "status": "COMPLIANT",
+                    "applicable_holdings": 54,
+                    "covered_today": 0,
+                    "covered_within_threshold": 54,
+                    "stale": 0,
+                    "missing": 0,
+                    "not_applicable": 13,
+                    "failed": 0,
+                },
+                "danelfin": {
+                    "status": "COMPLIANT",
+                    "applicable_holdings": 54,
+                    "covered_today": 0,
+                    "covered_within_threshold": 54,
+                    "stale": 0,
+                    "missing": 0,
+                    "not_applicable": 13,
+                    "failed": 0,
+                },
+                "yahoo": {
+                    "status": "COMPLIANT",
+                    "applicable_holdings": 54,
+                    "covered_today": 0,
+                    "covered_within_threshold": 54,
+                    "stale": 0,
+                    "missing": 0,
+                    "not_applicable": 13,
+                    "failed": 0,
+                },
+            },
+        },
+    }
+
+
+def _base_refresh_status_payload(running: bool) -> dict:
+    return {
+        "running": running,
+        "provider_progress": {
+            "zacks": {
+                "completed_count": 0,
+                "planned_total_count": 54,
+                "progress_pct": 0.0,
+                "progress_label": "0/54",
+                "is_complete": False,
+            },
+            "danelfin": {
+                "completed_count": 0,
+                "planned_total_count": 54,
+                "progress_pct": 0.0,
+                "progress_label": "0/54",
+                "is_complete": False,
+            },
+            "yahoo": {
+                "completed_count": 0,
+                "planned_total_count": 54,
+                "progress_pct": 0.0,
+                "progress_label": "0/54",
+                "is_complete": False,
+            },
+        },
+        "scope_summary": {},
+    }
+
+
+def _base_routes(*, replay_series_status: int, refresh_running: bool, refresh_completed_count: int = 0) -> list[tuple[str, object, int, str]]:
+    refresh_status = _base_refresh_status_payload(refresh_running)
+    for provider in ("zacks", "danelfin", "yahoo"):
+        refresh_status["provider_progress"][provider]["completed_count"] = refresh_completed_count
+        refresh_status["provider_progress"][provider]["progress_label"] = f"{refresh_completed_count}/54"
+        refresh_status["provider_progress"][provider]["progress_pct"] = round((refresh_completed_count / 54) * 100.0, 1)
+
+    return [
+        (r".*/data/current/replay_performance_series\.csv$", "", replay_series_status, "text/csv"),
+        (r".*/data/current/replay_inputs\.csv$", "replay_id,filter_geography,filter_market_cap_bucket,filter_industry,top_n,selected_symbols\nR1,US,LARGE,ALL,20,AAPL|MSFT\n", 200, "text/csv"),
+        (r".*/data/current/replay_availability\.csv$", "geography,market_cap_bucket,industry,replay_generated,replay_status,benchmark_available,vehicle_available,stock_replay_available,top_n_available,missing_dependencies\nUS,LARGE,ALL,true,READY,true,true,true,true,\n", 200, "text/csv"),
+        (r".*/data/current/replay_matrix\.csv$", "replay_id,geography,market_cap_bucket,industry,replay_metadata_path,replay_evidence_summary_path\nR1,US,LARGE,ALL,,\n", 200, "text/csv"),
+        (r".*/data/current/analytical_universe\.csv$", "symbol,filter_industry,filter_geography,filter_market_cap_bucket,top_n\nAAPL,ALL,US,LARGE,20\n", 200, "text/csv"),
+        (r".*/config/benchmark_category_registry\.yaml$", "benchmarks:\n  - benchmark_id: BM1\n    name: Benchmark One\n", 200, "text/yaml"),
+        (r".*/config/investable_vehicle_registry\.yaml$", "vehicles:\n  - vehicle_id: V1\n    name: Vehicle One\n", 200, "text/yaml"),
+        (r".*/data/current/current_snapshot_metadata\.json$", json.dumps({"snapshot_date": "2026-08-17", "generated_at_utc": "2026-08-17T00:00:00Z", "freshness_status": "FRESH", "run_id": "PAR-20260817-40E00509"}), 200, "application/json"),
+        (r".*/api/signal-status$", _base_signal_status_payload(), 200, "application/json"),
+        (r".*/api/signal-refresh/status$", refresh_status, 200, "application/json"),
+        (r".*/api/refresh-transparency$", _base_refresh_transparency_payload(), 200, "application/json"),
+        (r".*/api/portfolio/runs$", {"portfolios": [{"run_id": "PAR-20260817-40E00509", "status": "COMPLETE", "snapshot_date": "2026-08-17", "holding_count": 77}]}, 200, "application/json"),
+        (r".*/api/portfolio/runs/PAR-20260817-40E00509$", {"run_id": "PAR-20260817-40E00509", "alignment": []}, 200, "application/json"),
+    ]
+
+
+@contextmanager
+def _serve_outcome_page(route_specs: list[tuple[str, object, int, str]]):
+    if not CHROME_EXECUTABLE.exists():
+        pytest.skip("Google Chrome is not installed at the expected path for browser validation")
+
+    port = _free_port()
+    server = _ThreadingTCPServer(("127.0.0.1", port), partial(_Handler, directory=str(REPO_ROOT)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                executable_path=str(CHROME_EXECUTABLE),
+                args=["--disable-dev-shm-usage"],
+            )
+            context = browser.new_context()
+            try:
+                page = context.new_page()
+
+                for pattern, payload, status, content_type in route_specs:
+                    def _handler(route, request, _payload=payload, _status=status, _content_type=content_type):
+                        body = _payload
+                        if isinstance(_payload, (dict, list)):
+                            body = json.dumps(_payload)
+                        route.fulfill(status=_status, content_type=_content_type, body=body)
+
+                    page.route(re.compile(pattern), _handler)
+
+                page.goto(
+                    f"http://127.0.0.1:{port}/ui/outcome_visualization/index.html?validation=outcome-runtime-readpath-fix",
+                    wait_until="domcontentloaded",
+                )
+                page.wait_for_function(
+                    """
+                    () => {
+                      const readiness = document.getElementById('decisionReadinessSummary');
+                      const holdings = document.getElementById('holdingsCoverageSummary');
+                      const recBody = document.getElementById('recommendationFreshnessBody');
+                      return readiness && !readiness.innerText.includes('Loading')
+                        && holdings && !holdings.innerText.includes('Loading')
+                        && recBody && !recBody.innerText.includes('Loading');
+                    }
+                    """,
+                    timeout=20000,
+                )
+                page.wait_for_function(
+                    """
+                    () => {
+                      const op = document.getElementById('portfolioActionPanel');
+                      return op && !op.innerText.includes('Loading latest portfolio action plan...');
+                    }
+                    """,
+                    timeout=20000,
+                )
+                yield page
+            finally:
+                context.close()
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_replay_series_404_does_not_trigger_page_wide_failure() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False)) as page:
+        status_text = page.locator("#statusBox").inner_text()
+        replay_meta = page.locator("#replayMeta").inner_text()
+        body = page.locator("body").inner_text()
+
+        assert "replay_performance_series.csv is missing (HTTP 404)" in status_text
+        assert "replay_panel_status" in replay_meta
+        assert "UNAVAILABLE" in replay_meta
+        assert "Failed to load UI data inputs" not in body
+        assert "Classification:" in page.locator("#decisionReadinessSummary").inner_text()
+        assert "Candidate readiness unavailable" not in page.locator("#candidateReadinessGrid").inner_text()
+        assert "No recommendation freshness rows available" not in page.locator("#recommendationFreshnessBody").inner_text()
+        assert "Loading latest portfolio action plan" not in page.locator("#portfolioActionPanel").inner_text()
+        assert "with 0 points" not in status_text
+
+
+def test_provider_cards_keep_canonical_coverage_when_refresh_not_running() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False, refresh_completed_count=0)) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        assert "Current holdings: 54/54 within threshold" in signal_text
+        assert "Active refresh progress:" not in signal_text
+
+
+def test_danelfin_uses_canonical_holdings_coverage_not_refresh_progress() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False, refresh_completed_count=0)) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        holdings_text = page.locator("#holdingsCoveragePills").inner_text()
+
+        assert "Danelfin" in signal_text
+        assert "Current holdings: 54/54 within threshold" in signal_text
+        assert "stale 0" in signal_text
+        assert "missing 0" in signal_text
+        assert "failed 0" in signal_text
+        assert "Active refresh progress:" not in signal_text
+
+        assert "Applicable: 54" in holdings_text
+        assert "Within threshold: 54" in holdings_text
+        assert "Stale: 0" in holdings_text
+        assert "Missing: 0" in holdings_text
+        assert "Failed: 0" in holdings_text
+
+
+def test_active_refresh_progress_displays_separately_from_canonical_coverage() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=True, refresh_completed_count=10)) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        assert "Current holdings: 54/54 within threshold" in signal_text
+        assert "Active refresh progress: 10/54 rows" in signal_text
+
+
+def test_holdings_summary_label_is_explicit_about_equity_scope() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False)) as page:
+        summary = page.locator("#holdingsCoverageSummary").inner_text()
+        assert "Active equity holdings: 67" in summary
+        assert "Provider-applicable holdings: 54" in summary
+
+
+def test_operator_panel_renders_success_payload_on_initialization() -> None:
+    with _serve_outcome_page(_base_routes(replay_series_status=404, refresh_running=False)) as page:
+        panel = page.locator("#portfolioActionPanel").inner_text()
+        assert "Loading latest portfolio action plan" not in panel
+        assert "WHAT MATTERS RIGHT NOW" in panel
+
+
+def test_operator_panel_renders_explicit_empty_state_when_no_runs_exist() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    routes = [
+        (r".*/api/portfolio/runs$", {"portfolios": []}, 200, "application/json")
+        if pattern == r".*/api/portfolio/runs$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+    with _serve_outcome_page(routes) as page:
+        panel = page.locator("#portfolioActionPanel").inner_text()
+        assert "Loading latest portfolio action plan" not in panel
+        assert "No completed portfolio analysis runs available." in panel
+
+
+def test_operator_panel_renders_explicit_error_state_when_runs_endpoint_fails() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    routes = [
+        (r".*/api/portfolio/runs$", {"error": "unavailable"}, 503, "application/json")
+        if pattern == r".*/api/portfolio/runs$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+    with _serve_outcome_page(routes) as page:
+        panel = page.locator("#portfolioActionPanel").inner_text()
+        assert "Loading latest portfolio action plan" not in panel
+        assert "Operator action plan unavailable" in panel
+        assert "HTTP 503" in panel
