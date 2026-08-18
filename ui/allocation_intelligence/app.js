@@ -65,7 +65,7 @@ function parseCsv(text) {
 
 async function fetchText(url) {
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return null;
     return await r.text();
   } catch { return null; }
@@ -73,10 +73,16 @@ async function fetchText(url) {
 
 async function fetchJson(url) {
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
+}
+
+function normalizePortfolioRuns(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.portfolios)) return payload.portfolios;
+  return [];
 }
 
 function toggleCard(bodyId, btnId) {
@@ -373,17 +379,67 @@ function renderRecalcPanel(manifest, snapshots) {
     "hierarchy_sums", "policy_bounds", "tactical_overflow", "overlay_staleness",
     "recalculation_churn", "evidence_alignment", "concentration_ceilings", "lineage_completeness",
   ];
+
+  function deriveValidatorStatuses(latestSnapshot, validatorNames) {
+    const fallback = {};
+    for (const name of validatorNames) {
+      fallback[name] = {
+        status: "NOT_EVALUATED",
+        message: "Validator evidence unavailable in snapshot artifact.",
+      };
+    }
+
+    if (!latestSnapshot || typeof latestSnapshot !== "object") {
+      return fallback;
+    }
+
+    const candidates = [
+      latestSnapshot.validator_results,
+      latestSnapshot.validation_results,
+      latestSnapshot.validators,
+      latestSnapshot.validationResults,
+      latestSnapshot.validatorResults,
+    ];
+    const validatorSource = candidates.find(v => v && typeof v === "object" && !Array.isArray(v));
+    if (!validatorSource) {
+      return fallback;
+    }
+
+    const resolved = { ...fallback };
+    for (const name of validatorNames) {
+      const raw = validatorSource[name];
+      if (Array.isArray(raw)) {
+        resolved[name] = raw.length
+          ? { status: "FAIL", message: raw.join(" | ") }
+          : { status: "PASS", message: "" };
+      } else if (typeof raw === "boolean") {
+        resolved[name] = raw
+          ? { status: "PASS", message: "" }
+          : { status: "FAIL", message: "Validator reported failure." };
+      } else if (raw && typeof raw === "object") {
+        const statusText = String(raw.status || raw.result || raw.outcome || "").toUpperCase();
+        const details = raw.message || raw.details || raw.note || raw.reason || "";
+        if (statusText === "PASS" || statusText === "OK") {
+          resolved[name] = { status: "PASS", message: String(details || "") };
+        } else if (statusText) {
+          resolved[name] = { status: statusText, message: String(details || "") };
+        }
+      }
+    }
+    return resolved;
+  }
+
   if (validatorEl) {
-    // We can't re-run validators client-side; show PASS for all if latest snapshot is valid
-    const isValid = snapshots.length === 0 || (snapshots[snapshots.length - 1].total_allocation_valid);
+    const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null;
+    const validatorStatuses = deriveValidatorStatuses(latestSnapshot, VALIDATORS);
     validatorEl.innerHTML = VALIDATORS.map(v => `
       <div class="validator-item">
-        <span class="validator-icon">${isValid ? "✓" : "✗"}</span>
+        <span class="validator-icon">${validatorStatuses[v].status === "PASS" ? "✓" : validatorStatuses[v].status === "NOT_EVALUATED" ? "—" : "✗"}</span>
         <div>
           <div class="validator-name">${v.replace(/_/g, " ")}</div>
-          <div class="validator-errors">${isValid ? "" : "See CLI output for details."}</div>
+          <div class="validator-errors">${validatorStatuses[v].message || ""}</div>
         </div>
-        <span class="badge ${isValid ? "pass" : "fail"}" style="margin-left:auto;">${isValid ? "PASS" : "FAIL"}</span>
+        <span class="badge ${validatorStatuses[v].status === "PASS" ? "pass" : validatorStatuses[v].status === "NOT_EVALUATED" ? "advisory" : "fail"}" style="margin-left:auto;">${validatorStatuses[v].status === "PASS" ? "PASS" : validatorStatuses[v].status === "NOT_EVALUATED" ? "NOT EVALUATED" : validatorStatuses[v].status}</span>
       </div>`).join("");
   }
 
@@ -539,9 +595,13 @@ async function renderPortfolioCompliance(policy) {
   // Load latest PAR run to get actual allocation
   let actualByNode = {};
   try {
-    const runs = await fetchJson("/api/portfolio/runs");
-    if (runs && runs.length) {
-      const latestRunId = runs[runs.length - 1].run_id;
+    const runsPayload = await fetchJson("/api/portfolio/runs");
+    const runs = normalizePortfolioRuns(runsPayload)
+      .filter(r => r && typeof r === "object" && r.run_id);
+    const completedRuns = runs.filter(r => String(r.status || "").toUpperCase() === "COMPLETE");
+    const candidates = completedRuns.length ? completedRuns : runs;
+    if (candidates.length) {
+      const latestRunId = candidates[candidates.length - 1].run_id;
       const par = await fetchJson(`/api/portfolio/runs/${latestRunId}`);
       const alignment = par?.alignment || [];
       for (const row of alignment) {

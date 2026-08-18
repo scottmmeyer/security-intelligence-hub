@@ -1717,6 +1717,62 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     self._json_response(result)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/cpv/latest":
+            run_id = _latest_completed_run_id()
+            if not run_id:
+                self._json_response({
+                    "status": "unavailable",
+                    "reason": "latest_run_missing",
+                    "message": "No completed portfolio analysis run is available.",
+                    "run_id": None,
+                }, 404)
+                return
+
+            compliance_path = (
+                _REPO_ROOT
+                / "data"
+                / "portfolio_ingestion"
+                / "analysis_runs"
+                / run_id
+                / "compliance.json"
+            )
+            if not compliance_path.exists():
+                self._json_response({
+                    "status": "unavailable",
+                    "reason": "compliance_artifact_missing",
+                    "message": "Compliance artifact is unavailable for the latest completed run.",
+                    "run_id": run_id,
+                }, 404)
+                return
+
+            try:
+                payload = json.loads(compliance_path.read_text(encoding="utf-8"))
+                self._json_response(payload)
+            except Exception as exc:
+                self._json_response({
+                    "status": "unavailable",
+                    "reason": "compliance_artifact_invalid",
+                    "message": f"Compliance artifact could not be loaded: {exc}",
+                    "run_id": run_id,
+                }, 500)
+        elif path == "/api/drift/summary":
+            try:
+                import sys as _sys
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.portfolio.drift_analyzer import compute_drift_summary
+
+                self._json_response(compute_drift_summary(_REPO_ROOT))
+            except Exception:
+                self._json_response({
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "current_date": None,
+                    "prior_date": None,
+                    "dates_available": 0,
+                    "current_overall_status": "UNKNOWN",
+                    "current_compliance_score": None,
+                    "cpv_trend": [],
+                })
         elif path == "/api/operator/tax-state":
             state_path = _REPO_ROOT / "data" / "operator" / "portfolio_alignment_state.json"
             if state_path.exists():
@@ -2142,6 +2198,21 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": "not found", "endpoint": path}, 404)
                 return
             self._json_response(payload)
+        elif path in {"/ui/allocation_intelligence", "/ui/allocation_intelligence/", "/ui/allocation_intelligence/index.html"}:
+            index_path = _REPO_ROOT / "ui" / "allocation_intelligence" / "index.html"
+            if not index_path.exists():
+                self._json_response({"error": "allocation intelligence index not found"}, 404)
+                return
+            body = index_path.read_text(encoding="utf-8").replace(
+                '<script src="app.js"></script>',
+                '<script src="app.js?v=allocation-readpath-20260817b"></script>',
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
         else:
             super().do_GET()
 
