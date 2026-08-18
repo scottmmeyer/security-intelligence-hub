@@ -1809,30 +1809,6 @@ def ensure_signals_fresh_with_report(
         if provider_name not in provider_set:
             runtime_status["providers"][provider_name]["state"] = "SKIPPED"
 
-    def _snapshot_report() -> dict[str, object]:
-        return {
-            "triggered": triggered,
-            "providers": provider_report,
-            "refresh_intent": resolved_mode,
-            "scope_summary": scope_summary,
-            "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
-            "market_proxy_replay_publish": replay_publish_status,
-            "market_regime_proxy_history_fetch": dedicated_history_status,
-            "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
-            "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
-            "smart": bool(smart),
-            "dry_run": bool(dry_run),
-            "runtime_status": runtime_status,
-            "runtime_sec": round(time.perf_counter() - t0, 4),
-        }
-
-    def _persist_snapshot() -> None:
-        if report_path is None:
-            return
-        _write_json_atomic(report_path, _snapshot_report())
-
-    _persist_snapshot()
-
     replay_publish_status: dict[str, Any] = {
         "attempted": False,
         "status": "disabled",
@@ -1875,6 +1851,30 @@ def ensure_signals_fresh_with_report(
         "warnings": [],
         "transaction_id": None,
     }
+
+    def _snapshot_report() -> dict[str, object]:
+        return {
+            "triggered": triggered,
+            "providers": provider_report,
+            "refresh_intent": resolved_mode,
+            "scope_summary": scope_summary,
+            "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
+            "market_proxy_replay_publish": replay_publish_status,
+            "market_regime_proxy_history_fetch": dedicated_history_status,
+            "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
+            "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
+            "smart": bool(smart),
+            "dry_run": bool(dry_run),
+            "runtime_status": runtime_status,
+            "runtime_sec": round(time.perf_counter() - t0, 4),
+        }
+
+    def _persist_snapshot() -> None:
+        if report_path is None:
+            return
+        _write_json_atomic(report_path, _snapshot_report())
+
+    _persist_snapshot()
 
     if resolved_mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
         # Targeted path only: fetch four proxy symbols + build dedicated artifacts.

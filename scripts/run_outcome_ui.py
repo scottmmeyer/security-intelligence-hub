@@ -471,10 +471,8 @@ def _refresh_status_payload(running: bool) -> dict:
     effective_running = bool(running)
     status_source = "process_local_state"
     if isinstance(shared_runtime, dict):
-        shared_running = bool(shared_runtime.get("running"))
-        if shared_running or not effective_running:
-            effective_running = shared_running
-            status_source = "shared_runtime_artifact"
+        effective_running = bool(shared_runtime.get("running"))
+        status_source = "shared_runtime_artifact"
 
     if not effective_running and _refresh_proc is not None:
         exit_code = _refresh_proc.poll()

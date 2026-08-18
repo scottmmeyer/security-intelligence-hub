@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -302,3 +303,53 @@ def test_provider_metrics_missing_write_counts_as_true_error(tmp_path, monkeypat
     assert metrics["missing_written_count"] == 1
     assert metrics["true_error_count"] == 1
     assert metrics["failed"] == 1
+
+
+def test_runtime_status_startup_snapshot_does_not_raise_nameerror(tmp_path, monkeypatch):
+    report_path = tmp_path / "current" / "last_signal_refresh_report.json"
+    writes: list[dict[str, object]] = []
+    original_write = rs._write_json_atomic
+
+    def _capture_write(path: Path, payload: dict[str, object]) -> None:
+        writes.append(json.loads(json.dumps(payload)))
+        original_write(path, payload)
+
+    monkeypatch.setattr(rs, "_write_json_atomic", _capture_write)
+    monkeypatch.setattr(
+        rs,
+        "_build_refresh_scope",
+        lambda refresh_mode: {
+            "scope_summary": {
+                "portfolio_holdings_count": 0,
+                "buy_candidate_count": 0,
+                "mandatory_dependency_count": 0,
+                "market_proxy_count": 0,
+                "deduped_symbol_count": 0,
+                "full_universe_count": 0,
+            },
+            "planned_symbol_samples": {},
+            "planned_symbols": {"provider_symbols": {"zacks": [], "yahoo": [], "danelfin": []}},
+            "buy_candidate_cap": 50,
+        },
+    )
+
+    report = rs.ensure_signals_fresh_with_report(
+        providers=[],
+        dry_run=True,
+        verbose=False,
+        refresh_mode=rs.REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
+        report_path=report_path,
+    )
+
+    assert writes
+    startup_snapshot = writes[0]
+    assert "runtime_status" in startup_snapshot
+    assert startup_snapshot["runtime_status"]["running"] is True
+    assert startup_snapshot["market_proxy_replay_publish"]["attempted"] is False
+    assert startup_snapshot["market_proxy_replay_publish"]["status"] == "disabled"
+
+    assert report_path.exists()
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+    assert saved["runtime_status"]["running"] is False
+    assert saved["market_proxy_replay_publish"]["attempted"] is False
+    assert report["market_proxy_replay_publish"]["status"] == "disabled"

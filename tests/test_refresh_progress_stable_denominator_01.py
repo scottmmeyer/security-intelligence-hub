@@ -178,7 +178,7 @@ def test_signal_refresh_status_exposes_provider_progress_contract() -> None:
         thread.join(timeout=2)
 
 
-def test_execution_state_marks_terminal_errors_and_handoff_to_fmp() -> None:
+def test_execution_state_marks_terminal_errors_and_handoff_to_fmp(tmp_path) -> None:
     class _Proc:
         def poll(self):
             return None
@@ -214,12 +214,20 @@ def test_execution_state_marks_terminal_errors_and_handoff_to_fmp() -> None:
         "ess": {},
     }
 
+    isolated_report_path = tmp_path / "nonexistent_refresh_status_artifact.json"
+
     with patch("scripts.run_outcome_ui._refresh_proc", _Proc()), patch(
         "scripts.run_outcome_ui._signal_status",
         return_value=signal_payload,
     ), patch(
         "scripts.run_outcome_ui._refresh_provider_planned_totals",
         {"zacks": 63, "yahoo": 63, "danelfin": 63},
+    ), patch(
+        "scripts.run_outcome_ui._REFRESH_REPORT_PATH",
+        isolated_report_path,
+    ), patch(
+        "scripts.run_outcome_ui._refresh_last_report",
+        None,
     ), patch(
         "scripts.run_outcome_ui._refresh_resolved_intent",
         "holdings_plus_buy_candidates",
@@ -237,7 +245,7 @@ def test_execution_state_marks_terminal_errors_and_handoff_to_fmp() -> None:
     assert payload["current_stage_provider"] == "fmp"
 
 
-def test_execution_state_queued_running_and_complete_classification() -> None:
+def test_execution_state_queued_running_and_complete_classification(tmp_path) -> None:
     class _Proc:
         def poll(self):
             return None
@@ -273,12 +281,20 @@ def test_execution_state_queued_running_and_complete_classification() -> None:
         "ess": {},
     }
 
+    isolated_report_path = tmp_path / "nonexistent_refresh_status_artifact.json"
+
     with patch("scripts.run_outcome_ui._refresh_proc", _Proc()), patch(
         "scripts.run_outcome_ui._signal_status",
         return_value=signal_payload,
     ), patch(
         "scripts.run_outcome_ui._refresh_provider_planned_totals",
         {"zacks": 63, "yahoo": 63, "danelfin": 63},
+    ), patch(
+        "scripts.run_outcome_ui._REFRESH_REPORT_PATH",
+        isolated_report_path,
+    ), patch(
+        "scripts.run_outcome_ui._refresh_last_report",
+        None,
     ), patch(
         "scripts.run_outcome_ui._refresh_resolved_intent",
         "holdings_plus_buy_candidates",
@@ -405,6 +421,94 @@ def test_shared_runtime_dead_pid_is_not_reported_as_live_running(tmp_path) -> No
     assert payload["running"] is False
     assert payload["stale_pid_detected"] is True
     assert payload["provider_execution"]["danelfin"]["state"] != "RUNNING"
+
+
+def test_running_precedence_case_a_shared_terminal_beats_stale_local_running(tmp_path) -> None:
+    shared_path = tmp_path / "data" / "current" / "last_signal_refresh_report.json"
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    shared_path.write_text(
+        json.dumps(
+            {
+                "runtime_status": {
+                    "job_id": "job-case-a",
+                    "pid": 12345,
+                    "running": False,
+                    "started_at": "2026-08-18T15:35:55+00:00",
+                    "completed_at": "2026-08-18T15:40:55+00:00",
+                    "current_stage": None,
+                    "current_stage_provider": None,
+                    "providers": {},
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("scripts.run_outcome_ui._REFRESH_REPORT_PATH", shared_path), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch("scripts.run_outcome_ui._refresh_last_report", None):
+        payload = outcome_ui._refresh_status_payload(running=True)
+
+    assert payload["running"] is False
+    assert payload["status_source"] == "shared_runtime_artifact"
+
+
+def test_running_precedence_case_b_shared_live_beats_local_idle(tmp_path) -> None:
+    shared_path = tmp_path / "data" / "current" / "last_signal_refresh_report.json"
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    shared_path.write_text(
+        json.dumps(
+            {
+                "runtime_status": {
+                    "job_id": "job-case-b",
+                    "pid": 24680,
+                    "running": True,
+                    "started_at": "2026-08-18T15:35:55+00:00",
+                    "current_stage": "ZACKS",
+                    "current_stage_provider": "zacks",
+                    "providers": {},
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("scripts.run_outcome_ui._REFRESH_REPORT_PATH", shared_path), patch(
+        "scripts.run_outcome_ui._pid_is_alive", return_value=True
+    ), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch("scripts.run_outcome_ui._refresh_last_report", None):
+        payload = outcome_ui._refresh_status_payload(running=False)
+
+    assert payload["running"] is True
+    assert payload["status_source"] == "shared_runtime_artifact"
+
+
+def test_running_precedence_case_c_unusable_shared_runtime_falls_back_to_local(tmp_path) -> None:
+    shared_path = tmp_path / "data" / "current" / "last_signal_refresh_report.json"
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    shared_path.write_text(
+        json.dumps(
+            {
+                "runtime_status": ["invalid"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("scripts.run_outcome_ui._REFRESH_REPORT_PATH", shared_path), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch("scripts.run_outcome_ui._refresh_last_report", None):
+        payload = outcome_ui._refresh_status_payload(running=True)
+
+    assert payload["running"] is True
+    assert payload["status_source"] == "process_local_state"
 
 
 def test_no_shared_runtime_artifact_falls_back_to_local_inference() -> None:
