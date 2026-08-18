@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "SIH Danelfin Background Capture POC",
+  "version": "0.1.0",
+  "description": "Creates an inactive Danelfin tab, reads rendered AI scores, and posts dry-run observations to local SIH.",
+  "action": {
+    "default_title": "Run Danelfin POC (MSFT/NVDA)"
+  },
+  "permissions": [
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://danelfin.com/*",
+    "https://www.danelfin.com/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://danelfin.com/*",
+        "https://www.danelfin.com/*"
+      ],
+      "js": [
+        "parser.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
