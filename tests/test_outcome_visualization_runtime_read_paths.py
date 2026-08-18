@@ -295,6 +295,178 @@ def test_active_refresh_progress_displays_separately_from_canonical_coverage() -
         assert "Active refresh progress: 10/54 rows" in signal_text
 
 
+def test_refresh_observability_shows_current_stage_queue_and_fmp_visibility() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=True)
+    refresh_payload = {
+        "running": True,
+        "resolved_intent": "holdings_plus_buy_candidates",
+        "scope_summary": {
+            "portfolio_holdings_count": 67,
+            "buy_candidate_count": 0,
+            "mandatory_dependency_count": 0,
+            "market_proxy_count": 9,
+            "deduped_symbol_count": 76,
+        },
+        "scope_formula": "Planned refresh scope: 67 holdings + 0 buy candidates + 0 required dependencies + 9 market proxies = 76 symbols",
+        "provider_progress": {
+            "zacks": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "yahoo": {
+                "completed_count": 43,
+                "planned_total_count": 63,
+                "progress_pct": 68.3,
+                "progress_label": "43/63",
+                "is_complete": False,
+            },
+            "danelfin": {
+                "completed_count": 0,
+                "planned_total_count": 63,
+                "progress_pct": 0.0,
+                "progress_label": "0/63",
+                "is_complete": False,
+            },
+        },
+        "started_at_utc": "2026-08-18T15:35:55.000000+00:00",
+        "completed_at_utc": None,
+    }
+
+    routes = [
+        (r".*/api/signal-refresh/status$", refresh_payload, 200, "application/json")
+        if pattern == r".*/api/signal-refresh/status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        runtime_summary = page.locator("#refreshActiveStateSummary").inner_text()
+        runtime_details = page.locator("#refreshActiveStateDetails").inner_text()
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        refresh_msg = page.locator("#signalRefreshMsg").inner_text()
+
+        assert "Current stage: YAHOO (RUNNING)" in runtime_summary
+        assert "ZACKSCOMPLETE 63/63" in runtime_details
+        assert "YAHOORUNNING 43/63" in runtime_details
+        assert "DANELFINQUEUED 0/63" in runtime_details
+        assert "FMPQUEUED —/—" in runtime_details
+
+        assert "Refresh state: COMPLETE" in signal_text
+        assert "Refresh state: RUNNING" in signal_text
+        assert "Refresh state: QUEUED" in signal_text
+        assert "current stage: YAHOO" in refresh_msg
+
+
+def test_refresh_observability_marks_running_zero_progress_provider() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=True)
+    refresh_payload = {
+        "running": True,
+        "resolved_intent": "holdings_plus_buy_candidates",
+        "scope_summary": {
+            "portfolio_holdings_count": 67,
+            "buy_candidate_count": 0,
+            "mandatory_dependency_count": 0,
+            "market_proxy_count": 9,
+            "deduped_symbol_count": 76,
+        },
+        "provider_progress": {
+            "zacks": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "yahoo": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "danelfin": {
+                "completed_count": 0,
+                "planned_total_count": 63,
+                "progress_pct": 0.0,
+                "progress_label": "0/63",
+                "is_complete": False,
+            },
+        },
+        "started_at_utc": "2026-08-18T15:35:55.000000+00:00",
+        "completed_at_utc": None,
+    }
+
+    routes = [
+        (r".*/api/signal-refresh/status$", refresh_payload, 200, "application/json")
+        if pattern == r".*/api/signal-refresh/status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        runtime_summary = page.locator("#refreshActiveStateSummary").inner_text()
+        runtime_details = page.locator("#refreshActiveStateDetails").inner_text()
+        signal_text = page.locator("#signalStatusPills").inner_text()
+
+        assert "Current stage: DANELFIN (RUNNING)" in runtime_summary
+        assert "DANELFINRUNNING 0/63" in runtime_details
+        assert "Active refresh progress: 0/63 rows" in signal_text
+
+
+def test_refresh_observability_no_active_refresh_state() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    refresh_payload = {
+        "running": False,
+        "resolved_intent": "holdings_plus_buy_candidates",
+        "scope_summary": {
+            "portfolio_holdings_count": 67,
+            "buy_candidate_count": 0,
+            "mandatory_dependency_count": 0,
+            "market_proxy_count": 9,
+            "deduped_symbol_count": 76,
+        },
+        "provider_progress": {
+            "zacks": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "yahoo": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "danelfin": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+        },
+        "started_at_utc": "2026-08-18T15:35:55.000000+00:00",
+        "completed_at_utc": "2026-08-18T16:35:55.000000+00:00",
+    }
+
+    routes = [
+        (r".*/api/signal-refresh/status$", refresh_payload, 200, "application/json")
+        if pattern == r".*/api/signal-refresh/status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        runtime_summary = page.locator("#refreshActiveStateSummary").inner_text()
+        assert runtime_summary == "No active refresh job."
+
+
 def test_recommendation_freshness_ess_labels_distinguish_no_score_and_missing() -> None:
     routes = _base_routes(replay_series_status=404, refresh_running=False)
     updated_payload = _base_refresh_transparency_payload()

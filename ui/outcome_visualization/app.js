@@ -47,6 +47,7 @@ const state = {
   vehicleRegistryText: "",
   snapshotMetadata: null,
   renderEpoch: 0,
+  refreshRuntimeTracker: {},
 };
 
 function parseCsvLine(line) {
@@ -2093,9 +2094,11 @@ function loadSignalStatus() {
     .then(([data, runtime]) => {
       const refreshRunning = Boolean(runtime && runtime.running);
       const progress = (runtime && runtime.provider_progress) ? runtime.provider_progress : {};
+      const runtimeView = _deriveRefreshRuntimeView(runtime);
       ["zacks", "danelfin", "yahoo"].forEach((provider) => {
         if (!data[provider] || !progress[provider]) return;
         const p = progress[provider];
+        const derived = runtimeView.providers[provider] || {};
         data[provider].refresh_progress = {
           active: refreshRunning,
           completed_count: p.completed_count,
@@ -2103,6 +2106,12 @@ function loadSignalStatus() {
           progress_pct: p.progress_pct,
           progress_label: p.progress_label,
           is_complete: p.is_complete,
+          state: derived.state || "UNKNOWN",
+          last_activity_at: derived.last_activity_at || "",
+          stage_elapsed_seconds: derived.stage_elapsed_seconds,
+          no_recent_progress_signal: Boolean(
+            refreshRunning && derived.state === "RUNNING" && !derived.last_activity_at,
+          ),
         };
       });
       _renderSignalPills(data);
@@ -2113,7 +2122,17 @@ function loadSignalStatus() {
         const btn = document.getElementById("signalRefreshBtn");
         const msg = document.getElementById("signalRefreshMsg");
         if (btn) { btn.disabled = true; btn.textContent = "Refreshing\u2026"; }
-        if (msg) { msg.style.display = ""; msg.textContent = "Refresh in progress (smart mode \u2014 mandatory holdings included). Danelfin: ~60\u201390 min, Yahoo: ~15 min. Runs in background."; }
+        if (msg) {
+          const currentProvider = String(runtimeView.current_provider || "").toUpperCase() || "UNKNOWN";
+          const stageSummary = runtimeView.provider_order
+            .map((provider) => {
+              const item = runtimeView.providers[provider] || {};
+              return `${String(provider).toUpperCase()}: ${String(item.state || "UNKNOWN").toUpperCase()} ${_refreshProgressCompact(item)}`;
+            })
+            .join(" | ");
+          msg.style.display = "";
+          msg.textContent = `Refresh in progress — current stage: ${currentProvider}. ${stageSummary}`;
+        }
         _startRefreshPoll();
       }
     })
@@ -2190,6 +2209,190 @@ function _scopeFormulaFromSummary(summary, intent) {
   return "Planned refresh scope: based on selected refresh intent";
 }
 
+function _refreshProviderOrder(intent) {
+  const mode = String(intent || "").toLowerCase();
+  if (mode === "prepare_portfolio_review" || mode === "market_regime_proxy_only") {
+    return [];
+  }
+  return ["zacks", "yahoo", "danelfin", "fmp"];
+}
+
+function _refreshProviderParticipates(intent, provider) {
+  return _refreshProviderOrder(intent).includes(provider);
+}
+
+function _asFiniteNumber(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _isoNow() {
+  return new Date().toISOString();
+}
+
+function _elapsedSecondsFromIso(isoText) {
+  if (!isoText) return null;
+  const ms = Date.parse(String(isoText));
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(Math.floor((Date.now() - ms) / 1000), 0);
+}
+
+function _formatElapsed(seconds) {
+  if (!Number.isFinite(seconds) || seconds == null) return "n/a";
+  const s = Math.max(0, Number(seconds));
+  if (s < 60) return `${s}s`;
+  const mins = Math.floor(s / 60);
+  const rem = s % 60;
+  if (mins < 60) return `${mins}m ${rem}s`;
+  const hours = Math.floor(mins / 60);
+  const minsRem = mins % 60;
+  return `${hours}h ${minsRem}m`;
+}
+
+function _refreshProgressCompact(providerRuntime) {
+  const completed = _asFiniteNumber(providerRuntime.completed_count);
+  const planned = _asFiniteNumber(providerRuntime.planned_total_count);
+  if (planned == null) return "—/—";
+  return `${completed == null ? 0 : completed}/${planned}`;
+}
+
+function _deriveRefreshRuntimeView(runtime) {
+  const payload = runtime && typeof runtime === "object" ? runtime : {};
+  const running = Boolean(payload.running);
+  const intent = String(payload.resolved_intent || payload.requested_intent || _selectedRefreshMode() || "portfolio_signals");
+  const order = _refreshProviderOrder(intent);
+  const progress = payload.provider_progress && typeof payload.provider_progress === "object"
+    ? payload.provider_progress
+    : {};
+  const tracker = state.refreshRuntimeTracker || {};
+  const nowMs = Date.now();
+
+  const providerStateMap = {};
+  order.forEach((provider) => {
+    const p = progress[provider] && typeof progress[provider] === "object" ? progress[provider] : {};
+    const planned = _asFiniteNumber(p.planned_total_count);
+    const completed = _asFiniteNumber(p.completed_count);
+    const isComplete = Boolean(p.is_complete) || (planned != null && completed != null && completed >= planned);
+
+    if (completed != null) {
+      const prev = tracker[provider] || {};
+      const prevCompleted = _asFiniteNumber(prev.last_completed_count);
+      const lastChangeMs = (prevCompleted == null || prevCompleted !== completed)
+        ? nowMs
+        : (_asFiniteNumber(prev.last_change_ms) || nowMs);
+      tracker[provider] = {
+        last_completed_count: completed,
+        last_change_ms: lastChangeMs,
+      };
+    }
+
+    providerStateMap[provider] = {
+      provider,
+      planned_total_count: planned,
+      completed_count: completed,
+      is_complete: isComplete,
+      state: "UNKNOWN",
+      started_at: "",
+      completed_at: "",
+      last_activity_at: "",
+      failed: null,
+      queue_position: order.indexOf(provider) + 1,
+      stage_elapsed_seconds: null,
+    };
+  });
+  state.refreshRuntimeTracker = tracker;
+
+  let currentProvider = "";
+  if (running) {
+    for (const provider of order) {
+      const item = providerStateMap[provider];
+      if (!item || item.is_complete) continue;
+      currentProvider = provider;
+      break;
+    }
+    if (!currentProvider && order.length > 0) {
+      currentProvider = order[order.length - 1];
+    }
+  }
+
+  const lastReportProviders = payload.last_report && payload.last_report.providers && typeof payload.last_report.providers === "object"
+    ? payload.last_report.providers
+    : {};
+
+  order.forEach((provider) => {
+    const item = providerStateMap[provider];
+    if (!item) return;
+    const inScope = _refreshProviderParticipates(intent, provider);
+    if (!inScope) {
+      item.state = "NOT_APPLICABLE";
+      return;
+    }
+
+    if (running) {
+      if (item.is_complete) {
+        item.state = "COMPLETE";
+      } else if (provider === currentProvider) {
+        item.state = "RUNNING";
+        if (provider === order[0]) {
+          item.started_at = String(payload.started_at_utc || "");
+        }
+      } else {
+        item.state = "QUEUED";
+      }
+    } else {
+      const report = lastReportProviders[provider] && typeof lastReportProviders[provider] === "object"
+        ? lastReportProviders[provider]
+        : null;
+      if (report) {
+        const failed = _asFiniteNumber(report.failed);
+        const submitted = _asFiniteNumber(report.submitted_count != null ? report.submitted_count : report.submitted);
+        item.failed = failed;
+        if (failed != null && failed > 0) {
+          item.state = "FAILED";
+        } else if (submitted != null && submitted > 0) {
+          item.state = "COMPLETE";
+        } else {
+          item.state = "SKIPPED";
+        }
+      } else if (item.is_complete) {
+        item.state = "COMPLETE";
+      } else {
+        item.state = "UNKNOWN";
+      }
+      item.completed_at = String(payload.completed_at_utc || "");
+    }
+
+    const tracked = tracker[provider] || {};
+    const changeMs = _asFiniteNumber(tracked.last_change_ms);
+    if (changeMs != null) {
+      item.last_activity_at = new Date(changeMs).toISOString();
+    }
+    const stageAnchor = item.started_at || String(payload.started_at_utc || "");
+    if (item.state === "RUNNING") {
+      item.stage_elapsed_seconds = _elapsedSecondsFromIso(stageAnchor);
+    }
+  });
+
+  const jobElapsedSeconds = _elapsedSecondsFromIso(String(payload.started_at_utc || ""));
+  const currentStage = currentProvider ? `provider_refresh_${currentProvider}` : "";
+
+  return {
+    running,
+    intent,
+    provider_order: order,
+    providers: providerStateMap,
+    current_provider: currentProvider,
+    current_stage: currentStage,
+    current_stage_started_at: (providerStateMap[currentProvider] || {}).started_at || "",
+    current_stage_elapsed_seconds: (providerStateMap[currentProvider] || {}).stage_elapsed_seconds,
+    refresh_job_started_at: String(payload.started_at_utc || ""),
+    refresh_job_completed_at: String(payload.completed_at_utc || ""),
+    refresh_job_elapsed_seconds: jobElapsedSeconds,
+    last_progress_at: _isoNow(),
+  };
+}
+
 function loadRefreshRuntimeStatus() {
   fetch("/api/signal-refresh/status", { cache: "no-store" })
     .then(r => r.ok ? r.json() : Promise.reject())
@@ -2200,14 +2403,34 @@ function loadRefreshRuntimeStatus() {
       const intent = String(data.resolved_intent || _selectedRefreshMode() || "portfolio_signals");
       const scopeSummary = data.scope_summary || {};
       const scopeFormula = data.scope_formula || _scopeFormulaFromSummary(scopeSummary, intent);
+      const runtimeView = _deriveRefreshRuntimeView(data);
+      const currentProvider = String(runtimeView.current_provider || "").toUpperCase() || "UNKNOWN";
+      const currentState = runtimeView.current_provider
+        ? String((runtimeView.providers[runtimeView.current_provider] || {}).state || "UNKNOWN").toUpperCase()
+        : "UNKNOWN";
+      const stageElapsed = _formatElapsed(runtimeView.current_stage_elapsed_seconds);
 
       if (activeSummary) {
         activeSummary.textContent = data.running
-          ? `Refreshing (${_refreshModeLabel(intent)})`
+          ? `Refreshing (${_refreshModeLabel(intent)}) · Current stage: ${currentProvider} (${currentState})`
           : "No active refresh job.";
       }
       if (activeDetails) {
-        activeDetails.innerHTML = `<span class="refresh-insight-pill">${_ovEscHtml(scopeFormula)}</span>`;
+        const providerPills = runtimeView.provider_order.map((provider) => {
+          const item = runtimeView.providers[provider] || {};
+          const providerLabel = String(provider).toUpperCase();
+          const stateLabel = String(item.state || "UNKNOWN").toUpperCase();
+          const progress = _refreshProgressCompact(item);
+          const noActivity = data.running && stateLabel === "RUNNING" && !item.last_activity_at
+            ? " · no progress signal yet"
+            : "";
+          return `<span class="refresh-insight-pill"><span class="universe-tag">${providerLabel}</span>${stateLabel} ${progress}${noActivity}</span>`;
+        });
+        activeDetails.innerHTML = [
+          `<span class="refresh-insight-pill">${_ovEscHtml(scopeFormula)}</span>`,
+          `<span class="refresh-insight-pill"><span class="universe-tag">Stage</span>${_ovEscHtml(currentProvider)} · ${_ovEscHtml(currentState)} · ${_ovEscHtml(stageElapsed)}</span>`,
+          ...providerPills,
+        ].join("");
       }
       if (completionBanner) {
         if (data.running) {
@@ -2270,10 +2493,13 @@ function _renderSignalPills(data) {
     }[badgeState] || "unknown";
 
     let refreshProgressHtml = "";
+    let refreshStateHtml = "";
     const refreshProgress = info.refresh_progress && typeof info.refresh_progress === "object"
       ? info.refresh_progress
       : null;
     if (refreshProgress && refreshProgress.active) {
+      const refreshState = String(refreshProgress.state || "UNKNOWN").toUpperCase();
+      refreshStateHtml = `<span class="pill-coverage">Refresh state: ${refreshState}</span>`;
       const completed = Number(refreshProgress.completed_count || 0);
       const plannedRaw = refreshProgress.planned_total_count;
       const planned = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
@@ -2286,6 +2512,9 @@ function _renderSignalPills(data) {
         refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} rows · ${pctLabel}%</span>`;
       } else {
         refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${completed} rows processed</span>`;
+      }
+      if (refreshProgress.no_recent_progress_signal) {
+        refreshProgressHtml += " <span class=\"pill-degraded-advisory\">RUNNING — no progress signal yet</span>";
       }
     }
 
@@ -2324,7 +2553,7 @@ function _renderSignalPills(data) {
       holdingsHtml = `<span class="pill-degraded">Holdings coverage: ${String(holdingsInfo.status).toLowerCase().replaceAll("_", " ")}</span>`;
     }
 
-    const extraLines = [canonicalCoverageHtml, refreshProgressHtml, coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
+    const extraLines = [canonicalCoverageHtml, refreshStateHtml, refreshProgressHtml, coverageHtml, degradedHtml, warningHtml, holdingsHtml].filter(Boolean).join(" ");
 
     return `<div class="signal-pill ${badgeState === 'FRESH_PARTIAL' ? 'signal-pill-partial' : ''}">
       <span class="dot ${dotCls}"></span>
