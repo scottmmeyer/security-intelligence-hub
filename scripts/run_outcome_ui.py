@@ -16,6 +16,7 @@ API endpoints:
 from __future__ import annotations
 
 import argparse
+import copy
 import concurrent.futures
 import csv
 import http.server
@@ -404,10 +405,78 @@ def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> st
     return "Planned refresh scope: based on selected refresh intent"
 
 
+def _pid_is_alive(pid_value: object) -> bool:
+    try:
+        pid = int(pid_value)
+    except Exception:
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _load_refresh_report_artifact() -> dict[str, object] | None:
+    if not _REFRESH_REPORT_PATH.exists():
+        return None
+    try:
+        raw = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
+
+
+def _shared_runtime_state() -> dict[str, object] | None:
+    artifact = _load_refresh_report_artifact()
+    if not isinstance(artifact, dict):
+        return None
+    runtime = artifact.get("runtime_status")
+    if not isinstance(runtime, dict):
+        return None
+    snapshot = copy.deepcopy(runtime)
+    running = bool(snapshot.get("running"))
+    if running and not _pid_is_alive(snapshot.get("pid")):
+        snapshot["running"] = False
+        if not snapshot.get("completed_at"):
+            snapshot["completed_at"] = datetime.now(timezone.utc).isoformat()
+        providers = snapshot.get("providers")
+        if isinstance(providers, dict):
+            for provider_info in providers.values():
+                if not isinstance(provider_info, dict):
+                    continue
+                state = str(provider_info.get("state") or "").upper()
+                if state in {"RUNNING", "QUEUED"}:
+                    provider_info["state"] = "STALE"
+                    if not provider_info.get("completed_at"):
+                        provider_info["completed_at"] = snapshot.get("completed_at")
+        snapshot["stale_pid"] = True
+    return snapshot
+
+
 def _refresh_status_payload(running: bool) -> dict:
     global _refresh_last_report, _refresh_last_exit_code, _refresh_completed_at_utc
+    global _refresh_started_at_utc
 
-    if not running and _refresh_proc is not None:
+    shared_artifact = _load_refresh_report_artifact() or {}
+    shared_runtime = _shared_runtime_state()
+    effective_running = bool(running)
+    status_source = "process_local_state"
+    if isinstance(shared_runtime, dict):
+        shared_running = bool(shared_runtime.get("running"))
+        if shared_running or not effective_running:
+            effective_running = shared_running
+            status_source = "shared_runtime_artifact"
+
+    if not effective_running and _refresh_proc is not None:
         exit_code = _refresh_proc.poll()
         if exit_code is not None:
             _refresh_last_exit_code = int(exit_code)
@@ -417,6 +486,11 @@ def _refresh_status_payload(running: bool) -> dict:
                     _refresh_last_report = json.loads(_REFRESH_REPORT_PATH.read_text(encoding="utf-8"))
                 except Exception:
                     _refresh_last_report = None
+
+    if _refresh_last_report is None and isinstance(shared_artifact, dict):
+        _refresh_last_report = {
+            k: v for k, v in shared_artifact.items() if k != "runtime_status"
+        }
 
     signal_data = _signal_status()
     provider_progress: dict[str, dict] = {}
@@ -446,6 +520,158 @@ def _refresh_status_payload(running: bool) -> dict:
             "is_complete": is_complete,
         }
 
+    provider_order = ["zacks", "yahoo", "danelfin", "fmp"]
+    provider_execution: dict[str, dict] = {}
+    last_report_providers = {}
+    if isinstance(_refresh_last_report, dict):
+        maybe_providers = _refresh_last_report.get("providers")
+        if isinstance(maybe_providers, dict):
+            last_report_providers = maybe_providers
+
+    for provider in provider_order:
+        planned = _refresh_provider_planned_totals.get(provider)
+        if planned is None and provider in provider_progress:
+            planned = provider_progress[provider].get("planned_total_count")
+
+        attempted_count = None
+        success_count = None
+        failed_count = None
+        report_state = None
+
+        info = signal_data.get(provider)
+        if isinstance(info, dict):
+            if info.get("attempted_count") is not None:
+                attempted_count = int(info.get("attempted_count") or 0)
+            if info.get("with_data_count") is not None:
+                success_count = int(info.get("with_data_count") or 0)
+
+        report = last_report_providers.get(provider)
+        if isinstance(report, dict):
+            if report.get("attempted_count") is not None:
+                attempted_count = int(report.get("attempted_count") or 0)
+            elif report.get("submitted_count") is not None:
+                attempted_count = int(report.get("submitted_count") or 0)
+
+            if report.get("primary_data_count") is not None:
+                success_count = int(report.get("primary_data_count") or 0)
+
+            if report.get("failed") is not None:
+                failed_count = int(report.get("failed") or 0)
+
+            report_state = str(report.get("state") or "").strip().upper() or None
+
+        if provider in ("zacks", "danelfin", "yahoo") and attempted_count is not None and success_count is not None and failed_count is None:
+            # Execution attempts can terminate without primary data; keep that separate from holdings coverage.
+            failed_count = max(attempted_count - success_count, 0)
+
+        provider_execution[provider] = {
+            "provider": provider,
+            "planned_count": planned,
+            "attempted_count": attempted_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "state": "UNKNOWN",
+            "started_at": _refresh_started_at_utc if effective_running else None,
+            "completed_at": _refresh_completed_at_utc if not effective_running else None,
+            "report_state": report_state,
+        }
+
+    for provider in provider_order:
+        item = provider_execution[provider]
+        report = last_report_providers.get(provider)
+        report_triggered = isinstance(report, dict) and bool(report.get("triggered"))
+
+        if not effective_running:
+            if isinstance(report, dict):
+                attempted = item.get("attempted_count")
+                success = item.get("success_count")
+                failed = item.get("failed_count")
+                if failed is not None and failed > 0:
+                    item["state"] = "FAILED"
+                elif attempted is not None and attempted > 0 and success is not None and success < attempted:
+                    item["state"] = "COMPLETE_WITH_ERRORS"
+                elif attempted is not None and attempted > 0:
+                    item["state"] = "COMPLETE"
+                elif report_triggered:
+                    item["state"] = "COMPLETE"
+                else:
+                    item["state"] = "SKIPPED"
+            else:
+                item["state"] = "UNKNOWN"
+            continue
+
+        # Running states: determine terminal by attempted/planned, not success-only progress.
+        planned = item.get("planned_count")
+        attempted = item.get("attempted_count")
+        success = item.get("success_count")
+        failed = item.get("failed_count")
+        if planned is not None and attempted is not None and attempted >= int(planned):
+            if failed is not None and failed > 0:
+                item["state"] = "COMPLETE_WITH_ERRORS"
+            elif success is not None and int(planned) > 0 and success < int(planned):
+                item["state"] = "COMPLETE_WITH_ERRORS"
+            else:
+                item["state"] = "COMPLETE"
+        else:
+            item["state"] = "QUEUED"
+
+    current_stage_provider = None
+    if effective_running:
+        for provider in ("zacks", "yahoo", "danelfin"):
+            if provider_execution[provider].get("state") in {"COMPLETE", "COMPLETE_WITH_ERRORS", "FAILED", "SKIPPED"}:
+                continue
+            current_stage_provider = provider
+            provider_execution[provider]["state"] = "RUNNING"
+            break
+
+        if current_stage_provider is None:
+            # Core providers are terminal; while process is still alive, the tail stage is FMP.
+            current_stage_provider = "fmp"
+            provider_execution["fmp"]["state"] = "RUNNING"
+
+        for provider in provider_order:
+            if provider == current_stage_provider:
+                continue
+            if provider_execution[provider].get("state") == "QUEUED":
+                continue
+            # Keep terminal states intact.
+
+    current_stage = f"provider_refresh_{current_stage_provider}" if current_stage_provider else ""
+    current_stage_started_at = _refresh_started_at_utc if current_stage_provider else None
+
+    if isinstance(shared_runtime, dict):
+        providers = shared_runtime.get("providers")
+        if isinstance(providers, dict):
+            for provider in provider_order:
+                shared_provider = providers.get(provider)
+                if not isinstance(shared_provider, dict):
+                    continue
+                target = provider_execution.get(provider)
+                if not isinstance(target, dict):
+                    continue
+                target["state"] = str(shared_provider.get("state") or target.get("state") or "UNKNOWN").upper()
+                target["planned_count"] = shared_provider.get("planned", target.get("planned_count"))
+                target["attempted_count"] = shared_provider.get("attempted", target.get("attempted_count"))
+                target["success_count"] = shared_provider.get("success", target.get("success_count"))
+                target["failed_count"] = shared_provider.get("failed", target.get("failed_count"))
+                target["started_at"] = shared_provider.get("started_at", target.get("started_at"))
+                target["completed_at"] = shared_provider.get("completed_at", target.get("completed_at"))
+
+        shared_stage_provider = str(shared_runtime.get("current_stage_provider") or "").strip().lower()
+        if shared_stage_provider in provider_order:
+            current_stage_provider = shared_stage_provider
+            current_stage = f"provider_refresh_{shared_stage_provider}"
+            current_stage_started_at = str((providers.get(shared_stage_provider) or {}).get("started_at") or "") if isinstance(providers, dict) else None
+        elif not bool(shared_runtime.get("running")):
+            current_stage_provider = None
+            current_stage = ""
+            current_stage_started_at = None
+
+        if _refresh_started_at_utc is None:
+            _refresh_started_at_utc = str(shared_runtime.get("started_at") or "") or None
+        if not effective_running and _refresh_completed_at_utc is None:
+            _refresh_completed_at_utc = str(shared_runtime.get("completed_at") or "") or None
+
     scope_formula = _refresh_scope_formula(_refresh_scope_summary if isinstance(_refresh_scope_summary, dict) else {}, _refresh_resolved_intent)
     replay_publish = None
     dedicated_proxy_history = None
@@ -455,7 +681,7 @@ def _refresh_status_payload(running: bool) -> dict:
         dedicated_proxy_history = _refresh_last_report.get("market_regime_proxy_history_fetch")
         dedicated_proxy_build = _refresh_last_report.get("market_regime_proxy_artifact_build")
     return {
-        "running": running,
+        "running": effective_running,
         "last_report": _refresh_last_report,
         "market_proxy_replay_publish": replay_publish,
         "market_regime_proxy_history_fetch": dedicated_proxy_history,
@@ -467,8 +693,14 @@ def _refresh_status_payload(running: bool) -> dict:
         "planned_symbol_samples": _refresh_scope_samples or {},
         "scope_formula": scope_formula,
         "provider_progress": provider_progress,
+        "provider_execution": provider_execution,
+        "current_stage": current_stage,
+        "current_stage_provider": current_stage_provider,
+        "current_stage_started_at": current_stage_started_at,
         "started_at_utc": _refresh_started_at_utc,
         "completed_at_utc": _refresh_completed_at_utc,
+        "status_source": status_source,
+        "stale_pid_detected": bool(shared_runtime.get("stale_pid")) if isinstance(shared_runtime, dict) else False,
     }
 
 

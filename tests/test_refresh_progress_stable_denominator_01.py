@@ -178,6 +178,292 @@ def test_signal_refresh_status_exposes_provider_progress_contract() -> None:
         thread.join(timeout=2)
 
 
+def test_execution_state_marks_terminal_errors_and_handoff_to_fmp() -> None:
+    class _Proc:
+        def poll(self):
+            return None
+
+    signal_payload = {
+        "zacks": {
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "completed_count": 63,
+            "planned_total_count": 63,
+            "progress_pct": 100.0,
+            "progress_label": "63/63",
+            "is_complete": True,
+        },
+        "yahoo": {
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "completed_count": 63,
+            "planned_total_count": 63,
+            "progress_pct": 100.0,
+            "progress_label": "63/63",
+            "is_complete": True,
+        },
+        "danelfin": {
+            "attempted_count": 63,
+            "with_data_count": 0,
+            "completed_count": 0,
+            "planned_total_count": 63,
+            "progress_pct": 0.0,
+            "progress_label": "0/63",
+            "is_complete": False,
+        },
+        "ess": {},
+    }
+
+    with patch("scripts.run_outcome_ui._refresh_proc", _Proc()), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value=signal_payload,
+    ), patch(
+        "scripts.run_outcome_ui._refresh_provider_planned_totals",
+        {"zacks": 63, "yahoo": 63, "danelfin": 63},
+    ), patch(
+        "scripts.run_outcome_ui._refresh_resolved_intent",
+        "holdings_plus_buy_candidates",
+    ), patch(
+        "scripts.run_outcome_ui._refresh_started_at_utc",
+        "2026-08-18T15:35:55.000000+00:00",
+    ):
+        payload = outcome_ui._refresh_status_payload(running=True)
+
+    assert payload["provider_progress"]["danelfin"]["progress_label"] == "0/63"
+    assert payload["provider_execution"]["danelfin"]["attempted_count"] == 63
+    assert payload["provider_execution"]["danelfin"]["success_count"] == 0
+    assert payload["provider_execution"]["danelfin"]["state"] == "COMPLETE_WITH_ERRORS"
+    assert payload["provider_execution"]["fmp"]["state"] == "RUNNING"
+    assert payload["current_stage_provider"] == "fmp"
+
+
+def test_execution_state_queued_running_and_complete_classification() -> None:
+    class _Proc:
+        def poll(self):
+            return None
+
+    signal_payload = {
+        "zacks": {
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "completed_count": 63,
+            "planned_total_count": 63,
+            "progress_pct": 100.0,
+            "progress_label": "63/63",
+            "is_complete": True,
+        },
+        "yahoo": {
+            "attempted_count": 10,
+            "with_data_count": 10,
+            "completed_count": 10,
+            "planned_total_count": 63,
+            "progress_pct": 15.9,
+            "progress_label": "10/63",
+            "is_complete": False,
+        },
+        "danelfin": {
+            "attempted_count": 0,
+            "with_data_count": 0,
+            "completed_count": 0,
+            "planned_total_count": 63,
+            "progress_pct": 0.0,
+            "progress_label": "0/63",
+            "is_complete": False,
+        },
+        "ess": {},
+    }
+
+    with patch("scripts.run_outcome_ui._refresh_proc", _Proc()), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value=signal_payload,
+    ), patch(
+        "scripts.run_outcome_ui._refresh_provider_planned_totals",
+        {"zacks": 63, "yahoo": 63, "danelfin": 63},
+    ), patch(
+        "scripts.run_outcome_ui._refresh_resolved_intent",
+        "holdings_plus_buy_candidates",
+    ):
+        payload = outcome_ui._refresh_status_payload(running=True)
+
+    assert payload["provider_execution"]["zacks"]["state"] == "COMPLETE"
+    assert payload["provider_execution"]["yahoo"]["state"] == "RUNNING"
+    assert payload["provider_execution"]["danelfin"]["state"] == "QUEUED"
+    assert payload["current_stage_provider"] == "yahoo"
+
+
+def test_shared_runtime_state_drives_cross_process_current_stage_and_provider_states(tmp_path) -> None:
+    shared_path = tmp_path / "data" / "current" / "last_signal_refresh_report.json"
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    shared_path.write_text(
+        json.dumps(
+            {
+                "providers": {},
+                "runtime_status": {
+                    "job_id": "job-123",
+                    "pid": 83633,
+                    "mode": "holdings_plus_buy_candidates",
+                    "running": True,
+                    "started_at": "2026-08-18T15:35:55+00:00",
+                    "current_stage": "FMP",
+                    "current_stage_provider": "fmp",
+                    "providers": {
+                        "zacks": {
+                            "state": "COMPLETE",
+                            "planned": 63,
+                            "attempted": 63,
+                            "success": 63,
+                            "failed": 0,
+                        },
+                        "yahoo": {
+                            "state": "COMPLETE",
+                            "planned": 63,
+                            "attempted": 63,
+                            "success": 63,
+                            "failed": 0,
+                        },
+                        "danelfin": {
+                            "state": "COMPLETE_WITH_ERRORS",
+                            "planned": 63,
+                            "attempted": 63,
+                            "success": 0,
+                            "failed": 63,
+                        },
+                        "fmp": {
+                            "state": "RUNNING",
+                            "planned": None,
+                            "attempted": None,
+                            "success": None,
+                            "failed": None,
+                        },
+                    },
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("scripts.run_outcome_ui._REFRESH_REPORT_PATH", shared_path), patch(
+        "scripts.run_outcome_ui._pid_is_alive", return_value=True
+    ), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch("scripts.run_outcome_ui._refresh_last_report", None):
+        payload = outcome_ui._refresh_status_payload(running=False)
+
+    assert payload["running"] is True
+    assert payload["current_stage_provider"] == "fmp"
+    assert payload["current_stage"] == "provider_refresh_fmp"
+    assert payload["provider_execution"]["zacks"]["state"] == "COMPLETE"
+    assert payload["provider_execution"]["yahoo"]["state"] == "COMPLETE"
+    assert payload["provider_execution"]["danelfin"]["state"] == "COMPLETE_WITH_ERRORS"
+    assert payload["provider_execution"]["danelfin"]["attempted_count"] == 63
+    assert payload["provider_execution"]["danelfin"]["success_count"] == 0
+    assert payload["provider_execution"]["fmp"]["state"] == "RUNNING"
+    assert payload["status_source"] == "shared_runtime_artifact"
+
+
+def test_shared_runtime_dead_pid_is_not_reported_as_live_running(tmp_path) -> None:
+    shared_path = tmp_path / "data" / "current" / "last_signal_refresh_report.json"
+    shared_path.parent.mkdir(parents=True, exist_ok=True)
+    shared_path.write_text(
+        json.dumps(
+            {
+                "providers": {},
+                "runtime_status": {
+                    "job_id": "job-dead",
+                    "pid": 999999,
+                    "mode": "holdings_plus_buy_candidates",
+                    "running": True,
+                    "started_at": "2026-08-18T15:35:55+00:00",
+                    "current_stage": "DANELFIN",
+                    "current_stage_provider": "danelfin",
+                    "providers": {
+                        "danelfin": {
+                            "state": "RUNNING",
+                            "planned": 63,
+                            "attempted": 63,
+                            "success": 0,
+                            "failed": 63,
+                        }
+                    },
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("scripts.run_outcome_ui._REFRESH_REPORT_PATH", shared_path), patch(
+        "scripts.run_outcome_ui._pid_is_alive", return_value=False
+    ), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch("scripts.run_outcome_ui._refresh_last_report", None):
+        payload = outcome_ui._refresh_status_payload(running=False)
+
+    assert payload["running"] is False
+    assert payload["stale_pid_detected"] is True
+    assert payload["provider_execution"]["danelfin"]["state"] != "RUNNING"
+
+
+def test_no_shared_runtime_artifact_falls_back_to_local_inference() -> None:
+    class _Proc:
+        def poll(self):
+            return None
+
+    signal_payload = {
+        "zacks": {
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "completed_count": 63,
+            "planned_total_count": 63,
+            "progress_pct": 100.0,
+            "progress_label": "63/63",
+            "is_complete": True,
+        },
+        "yahoo": {
+            "attempted_count": 63,
+            "with_data_count": 63,
+            "completed_count": 63,
+            "planned_total_count": 63,
+            "progress_pct": 100.0,
+            "progress_label": "63/63",
+            "is_complete": True,
+        },
+        "danelfin": {
+            "attempted_count": 63,
+            "with_data_count": 0,
+            "completed_count": 0,
+            "planned_total_count": 63,
+            "progress_pct": 0.0,
+            "progress_label": "0/63",
+            "is_complete": False,
+        },
+        "ess": {},
+    }
+
+    with patch("scripts.run_outcome_ui._refresh_proc", _Proc()), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value=signal_payload,
+    ), patch(
+        "scripts.run_outcome_ui._REFRESH_REPORT_PATH",
+        Path("/tmp/nonexistent_refresh_status_artifact.json"),
+    ), patch(
+        "scripts.run_outcome_ui._refresh_provider_planned_totals",
+        {"zacks": 63, "yahoo": 63, "danelfin": 63},
+    ), patch(
+        "scripts.run_outcome_ui._refresh_resolved_intent",
+        "holdings_plus_buy_candidates",
+    ):
+        payload = outcome_ui._refresh_status_payload(running=True)
+
+    assert payload["status_source"] == "process_local_state"
+    assert payload["current_stage_provider"] == "fmp"
+    assert payload["provider_execution"]["danelfin"]["state"] in {"COMPLETE_WITH_ERRORS", "FAILED"}
+    assert payload["provider_execution"]["fmp"]["state"] == "RUNNING"
+
+
 def test_provider_health_metrics_preserved() -> None:
     fake_report = {
         "refresh_date": "2026-07-09",

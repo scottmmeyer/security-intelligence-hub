@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -129,6 +130,28 @@ _PROVIDER_STATUS_FIELDS: tuple[str, ...] = (
     "error_code",
     "reason",
 )
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as handle:
+        tmp_path = Path(handle.name)
+        json.dump(payload, handle, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp_path.replace(path)
+
+
+def _provider_terminal_state_from_metrics(metrics: dict[str, object], *, triggered: bool) -> str:
+    attempted = int(metrics.get("attempted_count") or metrics.get("submitted_count") or metrics.get("submitted") or 0)
+    failed = int(metrics.get("failed") or 0)
+    if attempted <= 0 and not triggered:
+        return "SKIPPED"
+    if failed > 0:
+        return "COMPLETE_WITH_ERRORS"
+    if attempted > 0:
+        return "COMPLETE"
+    return "SKIPPED"
 
 
 # ---------------------------------------------------------------------------
@@ -1721,6 +1744,7 @@ def ensure_signals_fresh_with_report(
     verbose: bool = True,
     refresh_mode: str = REFRESH_MODE_STALE_ONLY,
     smart: bool = False,
+    report_path: Path | None = None,
 ) -> dict[str, object]:
     """Check freshness and fetch stale/coverage-degraded providers with report."""
     resolved_mode = _normalize_refresh_mode(refresh_mode)
@@ -1730,6 +1754,84 @@ def ensure_signals_fresh_with_report(
     t0 = time.perf_counter()
     provider_set = {p.lower() for p in providers}
     scope_summary = scope_plan.get("scope_summary") or {}
+    started_at_utc = datetime.now(timezone.utc).isoformat()
+    provider_symbols = ((scope_plan.get("planned_symbols") or {}).get("provider_symbols") or {}) if isinstance(scope_plan, dict) else {}
+
+    runtime_status: dict[str, object] = {
+        "job_id": f"signal_refresh_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}_{os.getpid()}",
+        "pid": os.getpid(),
+        "mode": resolved_mode,
+        "running": True,
+        "started_at": started_at_utc,
+        "completed_at": None,
+        "current_stage": None,
+        "current_stage_provider": None,
+        "providers": {
+            "zacks": {
+                "state": "QUEUED",
+                "planned": len(list(provider_symbols.get("zacks") or [])),
+                "attempted": None,
+                "success": None,
+                "failed": None,
+                "started_at": None,
+                "completed_at": None,
+            },
+            "yahoo": {
+                "state": "QUEUED",
+                "planned": len(list(provider_symbols.get("yahoo") or [])),
+                "attempted": None,
+                "success": None,
+                "failed": None,
+                "started_at": None,
+                "completed_at": None,
+            },
+            "danelfin": {
+                "state": "QUEUED",
+                "planned": len(list(provider_symbols.get("danelfin") or [])),
+                "attempted": None,
+                "success": None,
+                "failed": None,
+                "started_at": None,
+                "completed_at": None,
+            },
+            "fmp": {
+                "state": "QUEUED" if "fmp" in provider_set else "SKIPPED",
+                "planned": None,
+                "attempted": None,
+                "success": None,
+                "failed": None,
+                "started_at": None,
+                "completed_at": None,
+            },
+        },
+    }
+    for provider_name in ("zacks", "yahoo", "danelfin"):
+        if provider_name not in provider_set:
+            runtime_status["providers"][provider_name]["state"] = "SKIPPED"
+
+    def _snapshot_report() -> dict[str, object]:
+        return {
+            "triggered": triggered,
+            "providers": provider_report,
+            "refresh_intent": resolved_mode,
+            "scope_summary": scope_summary,
+            "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
+            "market_proxy_replay_publish": replay_publish_status,
+            "market_regime_proxy_history_fetch": dedicated_history_status,
+            "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
+            "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
+            "smart": bool(smart),
+            "dry_run": bool(dry_run),
+            "runtime_status": runtime_status,
+            "runtime_sec": round(time.perf_counter() - t0, 4),
+        }
+
+    def _persist_snapshot() -> None:
+        if report_path is None:
+            return
+        _write_json_atomic(report_path, _snapshot_report())
+
+    _persist_snapshot()
 
     replay_publish_status: dict[str, Any] = {
         "attempted": False,
@@ -1798,22 +1900,19 @@ def ensure_signals_fresh_with_report(
                     "Dedicated proxy artifact build skipped because dedicated history fetch failed validation."
                 ]
 
-        return {
-            "triggered": triggered,
-            "providers": provider_report,
-            "refresh_intent": resolved_mode,
-            "scope_summary": scope_summary,
-            "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
-            "market_proxy_replay_publish": replay_publish_status,
-            "market_regime_proxy_history_fetch": dedicated_history_status,
-            "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
-            "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
-            "smart": bool(smart),
-            "dry_run": bool(dry_run),
-            "runtime_sec": round(time.perf_counter() - t0, 4),
-        }
+        runtime_status["running"] = False
+        runtime_status["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["current_stage"] = None
+        runtime_status["current_stage_provider"] = None
+        _persist_snapshot()
+        return _snapshot_report()
 
     if "zacks" in provider_set:
+        runtime_status["current_stage"] = "ZACKS"
+        runtime_status["current_stage_provider"] = "zacks"
+        runtime_status["providers"]["zacks"]["state"] = "RUNNING"
+        runtime_status["providers"]["zacks"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
         z = _refresh_zacks(
             dry_run=dry_run,
             verbose=verbose,
@@ -1824,7 +1923,18 @@ def ensure_signals_fresh_with_report(
         z_triggered, z_metrics = z
         triggered["zacks"] = bool(z_triggered)
         provider_report["zacks"] = {"triggered": bool(z_triggered), **z_metrics}
+        runtime_status["providers"]["zacks"]["attempted"] = int(z_metrics.get("attempted_count") or z_metrics.get("submitted_count") or 0)
+        runtime_status["providers"]["zacks"]["success"] = int(z_metrics.get("primary_data_count") or 0)
+        runtime_status["providers"]["zacks"]["failed"] = int(z_metrics.get("failed") or 0)
+        runtime_status["providers"]["zacks"]["state"] = _provider_terminal_state_from_metrics(z_metrics, triggered=bool(z_triggered))
+        runtime_status["providers"]["zacks"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
     if "yahoo" in provider_set:
+        runtime_status["current_stage"] = "YAHOO"
+        runtime_status["current_stage_provider"] = "yahoo"
+        runtime_status["providers"]["yahoo"]["state"] = "RUNNING"
+        runtime_status["providers"]["yahoo"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
         y = _refresh_yahoo(
             dry_run=dry_run,
             verbose=verbose,
@@ -1835,7 +1945,18 @@ def ensure_signals_fresh_with_report(
         y_triggered, y_metrics = y
         triggered["yahoo"] = bool(y_triggered)
         provider_report["yahoo"] = {"triggered": bool(y_triggered), **y_metrics}
+        runtime_status["providers"]["yahoo"]["attempted"] = int(y_metrics.get("attempted_count") or y_metrics.get("submitted_count") or 0)
+        runtime_status["providers"]["yahoo"]["success"] = int(y_metrics.get("primary_data_count") or 0)
+        runtime_status["providers"]["yahoo"]["failed"] = int(y_metrics.get("failed") or 0)
+        runtime_status["providers"]["yahoo"]["state"] = _provider_terminal_state_from_metrics(y_metrics, triggered=bool(y_triggered))
+        runtime_status["providers"]["yahoo"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
     if "danelfin" in provider_set:
+        runtime_status["current_stage"] = "DANELFIN"
+        runtime_status["current_stage_provider"] = "danelfin"
+        runtime_status["providers"]["danelfin"]["state"] = "RUNNING"
+        runtime_status["providers"]["danelfin"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
         d = _refresh_danelfin(
             dry_run=dry_run,
             verbose=verbose,
@@ -1846,8 +1967,19 @@ def ensure_signals_fresh_with_report(
         d_triggered, d_metrics = d
         triggered["danelfin"] = bool(d_triggered)
         provider_report["danelfin"] = {"triggered": bool(d_triggered), **d_metrics}
+        runtime_status["providers"]["danelfin"]["attempted"] = int(d_metrics.get("attempted_count") or d_metrics.get("submitted_count") or 0)
+        runtime_status["providers"]["danelfin"]["success"] = int(d_metrics.get("primary_data_count") or 0)
+        runtime_status["providers"]["danelfin"]["failed"] = int(d_metrics.get("failed") or 0)
+        runtime_status["providers"]["danelfin"]["state"] = _provider_terminal_state_from_metrics(d_metrics, triggered=bool(d_triggered))
+        runtime_status["providers"]["danelfin"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
     if "fmp" in provider_set:
         f_t0 = time.perf_counter()
+        runtime_status["current_stage"] = "FMP"
+        runtime_status["current_stage_provider"] = "fmp"
+        runtime_status["providers"]["fmp"]["state"] = "RUNNING"
+        runtime_status["providers"]["fmp"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
         f_triggered = _refresh_fmp(dry_run=dry_run, verbose=verbose, mode="daily")
         triggered["fmp"] = bool(f_triggered)
         provider_report["fmp"] = {
@@ -1862,6 +1994,12 @@ def ensure_signals_fresh_with_report(
             "failed": 0,
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
         }
+        runtime_status["providers"]["fmp"]["attempted"] = int(provider_report["fmp"].get("attempted_count") or 0)
+        runtime_status["providers"]["fmp"]["success"] = int(provider_report["fmp"].get("primary_data_count") or 0)
+        runtime_status["providers"]["fmp"]["failed"] = int(provider_report["fmp"].get("failed") or 0)
+        runtime_status["providers"]["fmp"]["state"] = "COMPLETE" if bool(f_triggered) else "SKIPPED"
+        runtime_status["providers"]["fmp"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
 
     market_proxy_count = int(scope_summary.get("market_proxy_count") or 0)
     if market_proxy_count > 0:
@@ -1877,20 +2015,13 @@ def ensure_signals_fresh_with_report(
             dedicated_proxy_build_status["status"] = "skipped_fresh"
             dedicated_proxy_build_status["reason"] = "market_regime_proxy_artifacts_fresh"
 
-    return {
-        "triggered": triggered,
-        "providers": provider_report,
-        "refresh_intent": resolved_mode,
-        "scope_summary": scope_summary,
-        "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
-        "market_proxy_replay_publish": replay_publish_status,
-        "market_regime_proxy_history_fetch": dedicated_history_status,
-        "market_regime_proxy_artifact_build": dedicated_proxy_build_status,
-        "buy_candidate_cap": int(scope_plan.get("buy_candidate_cap") or 50),
-        "smart": bool(smart),
-        "dry_run": bool(dry_run),
-        "runtime_sec": round(time.perf_counter() - t0, 4),
-    }
+    runtime_status["running"] = False
+    runtime_status["completed_at"] = datetime.now(timezone.utc).isoformat()
+    runtime_status["current_stage"] = None
+    runtime_status["current_stage_provider"] = None
+    _persist_snapshot()
+
+    return _snapshot_report()
 
 
 # ---------------------------------------------------------------------------
@@ -1942,12 +2073,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    report_path = Path(args.report_path) if args.report_path else None
+
     report = ensure_signals_fresh_with_report(
         providers=args.providers,
         dry_run=args.dry_run,
         verbose=not args.quiet,
         refresh_mode=args.refresh_mode,
         smart=args.smart,
+        report_path=report_path,
     )
 
     results = report.get("triggered") or {}
@@ -1959,7 +2093,5 @@ if __name__ == "__main__":
     else:
         print("\n[refresh_signals] All signal caches are current.")
 
-    if args.report_path:
-        report_path = Path(args.report_path)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if report_path is not None:
+        _write_json_atomic(report_path, report)

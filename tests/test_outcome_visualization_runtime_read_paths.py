@@ -331,6 +331,42 @@ def test_refresh_observability_shows_current_stage_queue_and_fmp_visibility() ->
                 "is_complete": False,
             },
         },
+        "provider_execution": {
+            "zacks": {
+                "provider": "zacks",
+                "planned_count": 63,
+                "attempted_count": 63,
+                "success_count": 63,
+                "failed_count": 0,
+                "state": "COMPLETE",
+            },
+            "yahoo": {
+                "provider": "yahoo",
+                "planned_count": 63,
+                "attempted_count": 43,
+                "success_count": 43,
+                "failed_count": 0,
+                "state": "RUNNING",
+            },
+            "danelfin": {
+                "provider": "danelfin",
+                "planned_count": 63,
+                "attempted_count": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "state": "QUEUED",
+            },
+            "fmp": {
+                "provider": "fmp",
+                "planned_count": None,
+                "attempted_count": None,
+                "success_count": None,
+                "failed_count": None,
+                "state": "QUEUED",
+            },
+        },
+        "current_stage": "provider_refresh_yahoo",
+        "current_stage_provider": "yahoo",
         "started_at_utc": "2026-08-18T15:35:55.000000+00:00",
         "completed_at_utc": None,
     }
@@ -353,14 +389,17 @@ def test_refresh_observability_shows_current_stage_queue_and_fmp_visibility() ->
         assert "YAHOORUNNING 43/63" in runtime_details
         assert "DANELFINQUEUED 0/63" in runtime_details
         assert "FMPQUEUED —/—" in runtime_details
+        assert "success 63" in runtime_details
+        assert "success 43" in runtime_details
 
         assert "Refresh state: COMPLETE" in signal_text
         assert "Refresh state: RUNNING" in signal_text
         assert "Refresh state: QUEUED" in signal_text
         assert "current stage: YAHOO" in refresh_msg
+        assert "Execution: attempted 63 · success 63 · failed 0" in signal_text
 
 
-def test_refresh_observability_marks_running_zero_progress_provider() -> None:
+def test_refresh_observability_marks_terminal_danelfin_and_fmp_running() -> None:
     routes = _base_routes(replay_series_status=404, refresh_running=True)
     refresh_payload = {
         "running": True,
@@ -395,6 +434,42 @@ def test_refresh_observability_marks_running_zero_progress_provider() -> None:
                 "is_complete": False,
             },
         },
+        "provider_execution": {
+            "zacks": {
+                "provider": "zacks",
+                "planned_count": 63,
+                "attempted_count": 63,
+                "success_count": 63,
+                "failed_count": 0,
+                "state": "COMPLETE",
+            },
+            "yahoo": {
+                "provider": "yahoo",
+                "planned_count": 63,
+                "attempted_count": 63,
+                "success_count": 63,
+                "failed_count": 0,
+                "state": "COMPLETE",
+            },
+            "danelfin": {
+                "provider": "danelfin",
+                "planned_count": 63,
+                "attempted_count": 63,
+                "success_count": 0,
+                "failed_count": 63,
+                "state": "COMPLETE_WITH_ERRORS",
+            },
+            "fmp": {
+                "provider": "fmp",
+                "planned_count": None,
+                "attempted_count": None,
+                "success_count": None,
+                "failed_count": None,
+                "state": "RUNNING",
+            },
+        },
+        "current_stage": "provider_refresh_fmp",
+        "current_stage_provider": "fmp",
         "started_at_utc": "2026-08-18T15:35:55.000000+00:00",
         "completed_at_utc": None,
     }
@@ -411,9 +486,12 @@ def test_refresh_observability_marks_running_zero_progress_provider() -> None:
         runtime_details = page.locator("#refreshActiveStateDetails").inner_text()
         signal_text = page.locator("#signalStatusPills").inner_text()
 
-        assert "Current stage: DANELFIN (RUNNING)" in runtime_summary
-        assert "DANELFINRUNNING 0/63" in runtime_details
+        assert "Current stage: FMP (RUNNING)" in runtime_summary
+        assert "DANELFINCOMPLETE_WITH_ERRORS 63/63" in runtime_details
+        assert "FMPRUNNING —/—" in runtime_details
         assert "Active refresh progress: 0/63 rows" in signal_text
+        assert "Refresh state: COMPLETE_WITH_ERRORS" in signal_text
+        assert "Execution: attempted 63 · success 0 · failed 63" in signal_text
 
 
 def test_refresh_observability_no_active_refresh_state() -> None:

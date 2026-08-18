@@ -2107,6 +2107,9 @@ function loadSignalStatus() {
           progress_label: p.progress_label,
           is_complete: p.is_complete,
           state: derived.state || "UNKNOWN",
+          attempted_count: derived.attempted_count,
+          success_count: derived.success_count,
+          failed_count: derived.failed,
           last_activity_at: derived.last_activity_at || "",
           stage_elapsed_seconds: derived.stage_elapsed_seconds,
           no_recent_progress_signal: Boolean(
@@ -2251,8 +2254,11 @@ function _formatElapsed(seconds) {
 }
 
 function _refreshProgressCompact(providerRuntime) {
-  const completed = _asFiniteNumber(providerRuntime.completed_count);
-  const planned = _asFiniteNumber(providerRuntime.planned_total_count);
+  const attempted = _asFiniteNumber(providerRuntime.attempted_count);
+  const completed = attempted != null ? attempted : _asFiniteNumber(providerRuntime.completed_count);
+  const planned = _asFiniteNumber(
+    providerRuntime.planned_count != null ? providerRuntime.planned_count : providerRuntime.planned_total_count,
+  );
   if (planned == null) return "—/—";
   return `${completed == null ? 0 : completed}/${planned}`;
 }
@@ -2265,56 +2271,59 @@ function _deriveRefreshRuntimeView(runtime) {
   const progress = payload.provider_progress && typeof payload.provider_progress === "object"
     ? payload.provider_progress
     : {};
+  const execution = payload.provider_execution && typeof payload.provider_execution === "object"
+    ? payload.provider_execution
+    : {};
   const tracker = state.refreshRuntimeTracker || {};
   const nowMs = Date.now();
 
   const providerStateMap = {};
   order.forEach((provider) => {
     const p = progress[provider] && typeof progress[provider] === "object" ? progress[provider] : {};
-    const planned = _asFiniteNumber(p.planned_total_count);
-    const completed = _asFiniteNumber(p.completed_count);
-    const isComplete = Boolean(p.is_complete) || (planned != null && completed != null && completed >= planned);
+    const e = execution[provider] && typeof execution[provider] === "object" ? execution[provider] : {};
+    const plannedCount = _asFiniteNumber(e.planned_count != null ? e.planned_count : p.planned_total_count);
+    const completedCount = _asFiniteNumber(p.completed_count);
+    const attemptedCount = _asFiniteNumber(e.attempted_count);
+    const successCount = _asFiniteNumber(e.success_count);
+    const failedCount = _asFiniteNumber(e.failed_count);
+    const executionState = String(e.state || "").toUpperCase();
+    const inferredTerminal = plannedCount != null && attemptedCount != null && attemptedCount >= plannedCount;
+    const isTerminal = ["COMPLETE", "FAILED", "COMPLETE_WITH_ERRORS", "SKIPPED"].includes(executionState) || inferredTerminal;
 
-    if (completed != null) {
+    if (completedCount != null) {
       const prev = tracker[provider] || {};
       const prevCompleted = _asFiniteNumber(prev.last_completed_count);
-      const lastChangeMs = (prevCompleted == null || prevCompleted !== completed)
+      const lastChangeMs = (prevCompleted == null || prevCompleted !== completedCount)
         ? nowMs
         : (_asFiniteNumber(prev.last_change_ms) || nowMs);
       tracker[provider] = {
-        last_completed_count: completed,
+        last_completed_count: completedCount,
         last_change_ms: lastChangeMs,
       };
     }
 
     providerStateMap[provider] = {
       provider,
-      planned_total_count: planned,
-      completed_count: completed,
-      is_complete: isComplete,
-      state: "UNKNOWN",
-      started_at: "",
-      completed_at: "",
+      planned_total_count: _asFiniteNumber(p.planned_total_count),
+      completed_count: completedCount,
+      is_complete: Boolean(p.is_complete),
+      planned_count: plannedCount,
+      attempted_count: attemptedCount,
+      success_count: successCount,
+      failed: failedCount,
+      state: executionState || "UNKNOWN",
+      started_at: String(e.started_at || ""),
+      completed_at: String(e.completed_at || ""),
       last_activity_at: "",
-      failed: null,
       queue_position: order.indexOf(provider) + 1,
+      is_terminal: isTerminal,
       stage_elapsed_seconds: null,
     };
   });
   state.refreshRuntimeTracker = tracker;
 
-  let currentProvider = "";
-  if (running) {
-    for (const provider of order) {
-      const item = providerStateMap[provider];
-      if (!item || item.is_complete) continue;
-      currentProvider = provider;
-      break;
-    }
-    if (!currentProvider && order.length > 0) {
-      currentProvider = order[order.length - 1];
-    }
-  }
+  const currentProviderFromPayload = String(payload.current_stage_provider || "").toLowerCase();
+  let currentProvider = order.includes(currentProviderFromPayload) ? currentProviderFromPayload : "";
 
   const lastReportProviders = payload.last_report && payload.last_report.providers && typeof payload.last_report.providers === "object"
     ? payload.last_report.providers
@@ -2326,41 +2335,67 @@ function _deriveRefreshRuntimeView(runtime) {
     const inScope = _refreshProviderParticipates(intent, provider);
     if (!inScope) {
       item.state = "NOT_APPLICABLE";
+      item.is_terminal = true;
       return;
     }
 
-    if (running) {
-      if (item.is_complete) {
-        item.state = "COMPLETE";
-      } else if (provider === currentProvider) {
-        item.state = "RUNNING";
-        if (provider === order[0]) {
-          item.started_at = String(payload.started_at_utc || "");
+    if (running && item.state === "RUNNING" && !currentProvider) {
+      currentProvider = provider;
+    }
+
+    if (!item.state || item.state === "UNKNOWN") {
+      if (running) {
+        if (item.is_terminal) {
+          item.state = (item.failed != null && item.failed > 0) ? "COMPLETE_WITH_ERRORS" : "COMPLETE";
+        } else {
+          item.state = "QUEUED";
         }
       } else {
-        item.state = "QUEUED";
-      }
-    } else {
-      const report = lastReportProviders[provider] && typeof lastReportProviders[provider] === "object"
-        ? lastReportProviders[provider]
-        : null;
-      if (report) {
-        const failed = _asFiniteNumber(report.failed);
-        const submitted = _asFiniteNumber(report.submitted_count != null ? report.submitted_count : report.submitted);
-        item.failed = failed;
-        if (failed != null && failed > 0) {
-          item.state = "FAILED";
-        } else if (submitted != null && submitted > 0) {
+        const report = lastReportProviders[provider] && typeof lastReportProviders[provider] === "object"
+          ? lastReportProviders[provider]
+          : null;
+        if (report) {
+          const failed = _asFiniteNumber(report.failed);
+          const submitted = _asFiniteNumber(report.submitted_count != null ? report.submitted_count : report.submitted);
+          item.failed = failed;
+          if (failed != null && failed > 0) {
+            item.state = "FAILED";
+          } else if (submitted != null && submitted > 0) {
+            item.state = "COMPLETE";
+          } else {
+            item.state = "SKIPPED";
+          }
+        } else if (item.is_terminal) {
           item.state = "COMPLETE";
         } else {
-          item.state = "SKIPPED";
+          item.state = "UNKNOWN";
         }
-      } else if (item.is_complete) {
-        item.state = "COMPLETE";
-      } else {
-        item.state = "UNKNOWN";
       }
-      item.completed_at = String(payload.completed_at_utc || "");
+    }
+  });
+
+  if (running && !currentProvider) {
+    for (const provider of order) {
+      const item = providerStateMap[provider] || {};
+      if (item.state === "QUEUED" || item.state === "UNKNOWN") {
+        currentProvider = provider;
+        break;
+      }
+    }
+  }
+
+  if (running && currentProvider) {
+    const activeItem = providerStateMap[currentProvider] || {};
+    if (activeItem.state === "QUEUED" || activeItem.state === "UNKNOWN") {
+      activeItem.state = "RUNNING";
+    }
+  }
+
+  order.forEach((provider) => {
+    const item = providerStateMap[provider];
+    if (!item) return;
+    if (!running) {
+      item.completed_at = String(payload.completed_at_utc || item.completed_at || "");
     }
 
     const tracked = tracker[provider] || {};
@@ -2368,14 +2403,15 @@ function _deriveRefreshRuntimeView(runtime) {
     if (changeMs != null) {
       item.last_activity_at = new Date(changeMs).toISOString();
     }
-    const stageAnchor = item.started_at || String(payload.started_at_utc || "");
+    const stageAnchor = item.started_at || String(payload.current_stage_started_at || payload.started_at_utc || "");
     if (item.state === "RUNNING") {
       item.stage_elapsed_seconds = _elapsedSecondsFromIso(stageAnchor);
     }
   });
 
+  const currentStageFromPayload = String(payload.current_stage || "").trim();
+  const currentStage = currentStageFromPayload || (currentProvider ? `provider_refresh_${currentProvider}` : "");
   const jobElapsedSeconds = _elapsedSecondsFromIso(String(payload.started_at_utc || ""));
-  const currentStage = currentProvider ? `provider_refresh_${currentProvider}` : "";
 
   return {
     running,
@@ -2384,7 +2420,7 @@ function _deriveRefreshRuntimeView(runtime) {
     providers: providerStateMap,
     current_provider: currentProvider,
     current_stage: currentStage,
-    current_stage_started_at: (providerStateMap[currentProvider] || {}).started_at || "",
+    current_stage_started_at: String(payload.current_stage_started_at || (providerStateMap[currentProvider] || {}).started_at || ""),
     current_stage_elapsed_seconds: (providerStateMap[currentProvider] || {}).stage_elapsed_seconds,
     refresh_job_started_at: String(payload.started_at_utc || ""),
     refresh_job_completed_at: String(payload.completed_at_utc || ""),
@@ -2424,7 +2460,10 @@ function loadRefreshRuntimeStatus() {
           const noActivity = data.running && stateLabel === "RUNNING" && !item.last_activity_at
             ? " · no progress signal yet"
             : "";
-          return `<span class="refresh-insight-pill"><span class="universe-tag">${providerLabel}</span>${stateLabel} ${progress}${noActivity}</span>`;
+          const attemptSummary = (item.attempted_count != null || item.success_count != null)
+            ? ` · success ${item.success_count == null ? 0 : item.success_count}`
+            : "";
+          return `<span class="refresh-insight-pill"><span class="universe-tag">${providerLabel}</span>${stateLabel} ${progress}${attemptSummary}${noActivity}</span>`;
         });
         activeDetails.innerHTML = [
           `<span class="refresh-insight-pill">${_ovEscHtml(scopeFormula)}</span>`,
@@ -2500,6 +2539,15 @@ function _renderSignalPills(data) {
     if (refreshProgress && refreshProgress.active) {
       const refreshState = String(refreshProgress.state || "UNKNOWN").toUpperCase();
       refreshStateHtml = `<span class="pill-coverage">Refresh state: ${refreshState}</span>`;
+      const attemptedExec = _asFiniteNumber(refreshProgress.attempted_count);
+      const successExec = _asFiniteNumber(refreshProgress.success_count);
+      const failedExec = _asFiniteNumber(refreshProgress.failed_count);
+      if (attemptedExec != null || successExec != null || failedExec != null) {
+        const attemptedLabel = attemptedExec == null ? "—" : attemptedExec;
+        const successLabel = successExec == null ? "—" : successExec;
+        const failedLabel = failedExec == null ? "—" : failedExec;
+        refreshStateHtml += ` <span class="pill-coverage">Execution: attempted ${attemptedLabel} · success ${successLabel} · failed ${failedLabel}</span>`;
+      }
       const completed = Number(refreshProgress.completed_count || 0);
       const plannedRaw = refreshProgress.planned_total_count;
       const planned = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
