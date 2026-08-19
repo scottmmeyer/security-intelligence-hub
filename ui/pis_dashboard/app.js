@@ -2599,7 +2599,9 @@ function initialize() {
   initializeDashboardShell();
 
   runSectionTask("inventory", () => requestJson("/api/pis/snapshots"), (snapshotsPayload) => {
-    const snapshots = Array.isArray(snapshotsPayload.snapshots) ? snapshotsPayload.snapshots : [];
+    const snapshots = Array.isArray(snapshotsPayload)
+      ? snapshotsPayload
+      : (Array.isArray(snapshotsPayload.snapshots) ? snapshotsPayload.snapshots : []);
     executiveState.snapshots = snapshots;
     renderExecutiveCards();
     if (!snapshots.length) {

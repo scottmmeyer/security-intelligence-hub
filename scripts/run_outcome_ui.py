@@ -2465,15 +2465,15 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
     if path == "/api/pis/health":
         return pis_snapshot_history_health()
     if path == "/api/pis/governance/latest":
-        return pis_governance_latest(repo_root=_REPO_ROOT)
+        return pis_governance_latest()
     if path == "/api/pis/governance-summary":
-        return pis_governance_summary(repo_root=_REPO_ROOT)
+        return pis_governance_summary()
     if path == "/api/pis/canonical/latest":
-        return pis_canonical_latest(repo_root=_REPO_ROOT)
+        return pis_canonical_latest()
     if path == "/api/pis/canonical/history":
-        return pis_canonical_history(repo_root=_REPO_ROOT)
+        return pis_canonical_history()
     if path == "/api/pis/canonical-summary":
-        return pis_canonical_summary(repo_root=_REPO_ROOT)
+        return pis_canonical_summary()
     if path == "/api/pis/changes/latest":
         return pis_changes_latest(repo_root=_REPO_ROOT)
     if path == "/api/pis/change-summary":

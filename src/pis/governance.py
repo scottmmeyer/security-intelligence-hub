@@ -94,7 +94,8 @@ def evaluate_snapshot_governance(
     warning_flag = False
 
     account_name = str(snapshot_row.get("account_name", ""))
-    scope_has_expected = _contains_all_tokens(account_name, config.expected_account_scope_tokens)
+    # A snapshot is in-scope when account_name matches any approved account class.
+    scope_has_expected = _contains_any_token(account_name, config.expected_account_scope_tokens)
     scope_has_disallowed = _contains_any_token(account_name, config.disallowed_account_scope_tokens)
 
     scope_valid = scope_has_expected and not scope_has_disallowed
