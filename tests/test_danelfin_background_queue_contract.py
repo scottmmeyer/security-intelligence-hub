@@ -17,13 +17,17 @@ def test_queue_includes_required_pairs_in_order() -> None:
     assert 'const LOCAL_DIAGNOSTIC_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/pending";' in src
     assert 'const LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/claim";' in src
     assert 'const LOCAL_DIAGNOSTIC_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-status";' in src
+    assert 'const LOCAL_PRODUCTION_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/pending";' in src
+    assert 'const LOCAL_PRODUCTION_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/claim";' in src
+    assert 'const LOCAL_PRODUCTION_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-status";' in src
     assert 'async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "", queueMode = "auto")' in src
     assert 'if (mode === "diagnostic") {' in src
+    assert 'if (mode === "production") {' in src
     assert 'endpoint = params.toString()' in src
     assert 'LOCAL_DIAGNOSTIC_PENDING_ENDPOINT;' in src
-    assert "async function claimDiagnosticRun(diagnosticRunId, workerId)" in src
-    assert "const pendingQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint, queueMode);" in src
-    assert "const captureQueue = await claimDiagnosticRun(diagnosticRunId, workerId);" in src
+    assert "LOCAL_PRODUCTION_PENDING_ENDPOINT" in src
+    assert "async function claimCaptureRun(runIdHint, workerId, queueMode = \"diagnostic\")" in src
+    assert "captureQueue = await claimCaptureRun(diagnosticRunId, workerId, claimMode);" in src
     assert "if (!captureQueue.length)" in src
     assert 'if (!body || body.status !== "ok" || !Array.isArray(body.jobs))' in src
     assert 'for (const job of captureQueue)' in src
@@ -72,8 +76,10 @@ def test_queue_has_alarm_based_auto_trigger() -> None:
     assert "chrome.runtime.onInstalled.addListener(() => {" in src
     assert "chrome.runtime.onStartup.addListener(() => {" in src
     assert "chrome.alarms.onAlarm.addListener(async (alarm) => {" in src
-    assert "await runCaptureWorker(\"alarm_poll\", \"\", \"\", \"diagnostic\");" in src
+    assert "await runCaptureWorker(\"alarm_poll\", \"\", \"\", \"alarm_auto\");" in src
     assert "await runCaptureWorker(\"alarm_poll\");" not in src
+    assert 'pendingQueue = await loadCaptureQueue("", "", "diagnostic");' in src
+    assert 'pendingQueue = await loadCaptureQueue("", "", "production");' in src
 
 
 def test_queue_supports_diagnostic_symbol_opt_in_and_event_posting() -> None:
@@ -81,12 +87,19 @@ def test_queue_supports_diagnostic_symbol_opt_in_and_event_posting() -> None:
     assert "danelfin_diag_symbol" in src
     assert "danelfin_diag_run_id" in src
     assert "LOCAL_DIAGNOSTIC_PENDING_ENDPOINT" in src
-    assert "await postDiagnosticEvent(diagnosticRunId, \"worker_started\", {" in src
-    assert "await postDiagnosticEvent(runId, \"worker_claimed\"" in src
-    assert "await postDiagnosticEvent(runId, \"navigation_started\"" in src
-    assert "await postDiagnosticEvent(runId, \"navigation_completed\"" in src
-    assert "await postDiagnosticEvent(runId, \"capture_started\"" in src
-    assert "await postDiagnosticEvent(runId, \"capture_completed\"" in src
+    assert "await postRunEvent(diagnosticRunId, \"worker_started\", {" in src
+    assert "await postRunEvent(runId, \"worker_claimed\"" in src
+    assert "await postRunEvent(runId, \"navigation_started\"" in src
+    assert "await postRunEvent(runId, \"navigation_completed\"" in src
+    assert "await postRunEvent(runId, \"capture_started\"" in src
+    assert "await postRunEvent(runId, \"capture_completed\"" in src
+
+
+def test_production_job_contract_is_explicit() -> None:
+    src = _source()
+    assert "mode === \"production\"" in src
+    assert "production job must run in non-dry mode" in src
+    assert "payload.run_id = String(diagnosticRunId);" in src
 
 
 def test_manual_click_path_preserves_existing_queue_mode_resolution() -> None:

@@ -1134,8 +1134,22 @@ def _compute_provider_metrics(
     skipped_checkpoint = int((fetch_stats or {}).get("skipped_checkpoint", 0))
     skipped_already_covered = int((fetch_stats or {}).get("skipped_already_covered", 0))
     retried_failed_checkpoint = int((fetch_stats or {}).get("retried_failed_checkpoint", 0))
-    requested_count = int((fetch_stats or {}).get("requested", submitted) or submitted)
-    attempted_count = int((fetch_stats or {}).get("attempted", submitted) or submitted)
+    # Preserve explicit zero: only use compatibility fallback when key is genuinely missing.
+    # Lines below check membership, not truthiness, to avoid treating 0 as "missing".
+    fetch_dict = fetch_stats or {}
+    requested_count = int(fetch_dict["requested"] if "requested" in fetch_dict else submitted)
+    attempted_count = int(fetch_dict["attempted"] if "attempted" in fetch_dict else submitted)
+    requests_attempted = int(fetch_dict["requests_attempted"] if "requests_attempted" in fetch_dict else attempted_count)
+    requests_success = int((fetch_stats or {}).get("requests_success", 0) or 0)
+    requests_blocked = int((fetch_stats or {}).get("requests_blocked", 0) or 0)
+    requests_no_primary_fields = int((fetch_stats or {}).get("requests_no_primary_fields", 0) or 0)
+    requests_network_error = int((fetch_stats or {}).get("requests_network_error", 0) or 0)
+    browser_fallback_requested = int((fetch_stats or {}).get("browser_fallback_requested", 0) or 0)
+    browser_jobs_prepared = int((fetch_stats or {}).get("browser_jobs_prepared", 0) or 0)
+    browser_jobs_claimed = int((fetch_stats or {}).get("browser_jobs_claimed", 0) or 0)
+    browser_jobs_completed = int((fetch_stats or {}).get("browser_jobs_completed", 0) or 0)
+    browser_jobs_failed = int((fetch_stats or {}).get("browser_jobs_failed", 0) or 0)
+    browser_primary_fields_success = int((fetch_stats or {}).get("browser_primary_fields_success", 0) or 0)
     return {
         "provider": provider,
         "mode": mode,
@@ -1154,6 +1168,17 @@ def _compute_provider_metrics(
         "pending_count": 0,
         "requested_count": requested_count,
         "attempted_count": attempted_count,
+        "requests_attempted": requests_attempted,
+        "requests_success": requests_success,
+        "requests_blocked": requests_blocked,
+        "requests_no_primary_fields": requests_no_primary_fields,
+        "requests_network_error": requests_network_error,
+        "browser_fallback_requested": browser_fallback_requested,
+        "browser_jobs_prepared": browser_jobs_prepared,
+        "browser_jobs_claimed": browser_jobs_claimed,
+        "browser_jobs_completed": browser_jobs_completed,
+        "browser_jobs_failed": browser_jobs_failed,
+        "browser_primary_fields_success": browser_primary_fields_success,
         "submitted": submitted,
         "skipped_checkpoint": skipped_checkpoint,
         "skipped_already_covered": skipped_already_covered,

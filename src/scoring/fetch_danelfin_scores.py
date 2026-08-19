@@ -28,15 +28,28 @@ import csv
 import re
 import random
 import time
+import json
 from datetime import date
 from pathlib import Path
 from typing import Iterable
+from dataclasses import dataclass
+import urllib.parse
+import urllib.request
+import urllib.error
 
 import requests
 
 _DEFAULT_DELAY_MIN = 4.5
 _DEFAULT_DELAY_MAX = 7.0
 _REQUEST_TIMEOUT = 20
+_BROWSER_FALLBACK_TIMEOUT_SEC = 150
+_BROWSER_FALLBACK_POLL_SEC = 2.0
+
+_FETCH_STATUS_SUCCESS = "SUCCESS"
+_FETCH_STATUS_BLOCKED = "BLOCKED_403_OR_CHALLENGE"
+_FETCH_STATUS_NO_PRIMARY = "NO_PRIMARY_FIELDS"
+_FETCH_STATUS_NETWORK_ERROR = "NETWORK_ERROR"
+_FETCH_STATUS_OTHER_ERROR = "OTHER_FETCH_ERROR"
 
 _OUTPUT_HEADERS = ["symbol", "danelfin_raw", "danelfin_score", "sourced_date"]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -60,6 +73,26 @@ _URL_SYMBOL_OVERRIDES = {
     "MOG/A": "MOG.A",
 }
 
+_CHALLENGE_MARKERS = (
+    "just a moment",
+    "attention required",
+    "cf-chl",
+    "cloudflare",
+    "verify you are human",
+    "access denied",
+    "checking your browser",
+)
+
+
+@dataclass(frozen=True)
+class DanelfinFetchResult:
+    symbol: str
+    status: str
+    danelfin_raw: int | None
+    danelfin_score: float | None
+    http_status: int | None = None
+    detail: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Core fetch
@@ -71,34 +104,194 @@ def _stock_url(symbol: str) -> str:
     return f"https://danelfin.com/stock/{s}"
 
 
-def fetch_danelfin_score(symbol: str) -> tuple[int | None, float | None]:
-    """Scrape the Danelfin AI score for *symbol*.
+def _contains_challenge_marker(html: str) -> bool:
+    text = str(html or "").lower()
+    return any(marker in text for marker in _CHALLENGE_MARKERS)
 
-    Returns ``(danelfin_raw, danelfin_score)`` where:
-        - ``danelfin_raw`` is the integer 1–10 from the page, or ``None``
-        - ``danelfin_score`` is ``danelfin_raw / 2.0`` on the 1–5 composite
-          scale, or ``None``
-    """
+
+def fetch_danelfin_score_detailed(symbol: str) -> DanelfinFetchResult:
+    """Scrape Danelfin and classify acquisition outcome for *symbol*."""
     url = _stock_url(symbol)
     try:
         resp = requests.get(url, headers=_HEADERS, timeout=_REQUEST_TIMEOUT, allow_redirects=True)
+        if resp.status_code == 403:
+            return DanelfinFetchResult(
+                symbol=str(symbol).strip().upper(),
+                status=_FETCH_STATUS_BLOCKED,
+                danelfin_raw=None,
+                danelfin_score=None,
+                http_status=403,
+            )
         if resp.status_code != 200:
-            return None, None
+            return DanelfinFetchResult(
+                symbol=str(symbol).strip().upper(),
+                status=_FETCH_STATUS_OTHER_ERROR,
+                danelfin_raw=None,
+                danelfin_score=None,
+                http_status=int(resp.status_code),
+            )
         html = resp.text
-    except requests.RequestException:
-        return None, None
+    except requests.Timeout:
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_NETWORK_ERROR,
+            danelfin_raw=None,
+            danelfin_score=None,
+            detail="timeout",
+        )
+    except requests.ConnectionError:
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_NETWORK_ERROR,
+            danelfin_raw=None,
+            danelfin_score=None,
+            detail="connection_error",
+        )
+    except requests.RequestException as exc:
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_OTHER_ERROR,
+            danelfin_raw=None,
+            danelfin_score=None,
+            detail=str(exc),
+        )
+
+    if _contains_challenge_marker(html):
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_BLOCKED,
+            danelfin_raw=None,
+            danelfin_score=None,
+            http_status=200,
+            detail="challenge_marker",
+        )
 
     score_values = _SCORE_RE.findall(html)
     if not score_values:
-        return None, None
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_NO_PRIMARY,
+            danelfin_raw=None,
+            danelfin_score=None,
+            http_status=200,
+        )
 
     try:
         danelfin_raw = int(score_values[0])
         if not (1 <= danelfin_raw <= 10):
-            return None, None
-        return danelfin_raw, round(danelfin_raw / 2.0, 4)
+            return DanelfinFetchResult(
+                symbol=str(symbol).strip().upper(),
+                status=_FETCH_STATUS_NO_PRIMARY,
+                danelfin_raw=None,
+                danelfin_score=None,
+                http_status=200,
+                detail="raw_out_of_range",
+            )
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_SUCCESS,
+            danelfin_raw=danelfin_raw,
+            danelfin_score=round(danelfin_raw / 2.0, 4),
+            http_status=200,
+        )
     except (ValueError, IndexError):
-        return None, None
+        return DanelfinFetchResult(
+            symbol=str(symbol).strip().upper(),
+            status=_FETCH_STATUS_NO_PRIMARY,
+            danelfin_raw=None,
+            danelfin_score=None,
+            http_status=200,
+            detail="parse_error",
+        )
+
+
+def fetch_danelfin_score(symbol: str) -> tuple[int | None, float | None]:
+    """Backward-compatible tuple return used by existing consumers."""
+    detailed = fetch_danelfin_score_detailed(symbol)
+    return detailed.danelfin_raw, detailed.danelfin_score
+
+
+_ORIGINAL_FETCH_DANELFIN_SCORE_FUNC = fetch_danelfin_score
+
+
+def _post_json(url: str, payload: dict[str, object], timeout: float) -> dict[str, object]:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _get_json(url: str, timeout: float) -> dict[str, object]:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _request_browser_fallback_for_blocked_symbols(symbols: list[str], *, verbose: bool) -> dict[str, object]:
+    stats: dict[str, object] = {
+        "browser_fallback_requested": 1 if symbols else 0,
+        "browser_jobs_prepared": 0,
+        "browser_jobs_claimed": 0,
+        "browser_jobs_completed": 0,
+        "browser_jobs_failed": 0,
+        "browser_primary_fields_success": 0,
+        "browser_run_id": "",
+    }
+    if not symbols:
+        return stats
+
+    try:
+        body = _post_json(
+            "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/prepare",
+            {"symbols": symbols, "source": "refresh_requests_blocked"},
+            timeout=10,
+        )
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        stats["browser_jobs_failed"] = 1
+        stats["browser_error"] = f"prepare_failed:{exc}"
+        return stats
+
+    run_id = str(body.get("run_id") or "").strip()
+    stats["browser_run_id"] = run_id
+    stats["browser_jobs_prepared"] = int(body.get("job_count") or 0)
+    if not run_id:
+        stats["browser_jobs_failed"] = 1
+        stats["browser_error"] = "missing_run_id"
+        return stats
+
+    deadline = time.time() + _BROWSER_FALLBACK_TIMEOUT_SEC
+    status_url = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-status?id=" + urllib.parse.quote(run_id, safe="")
+    while time.time() < deadline:
+        try:
+            status_body = _get_json(status_url, timeout=10)
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            time.sleep(_BROWSER_FALLBACK_POLL_SEC)
+            continue
+        run_state = status_body.get("run") if isinstance(status_body, dict) else None
+        if not isinstance(run_state, dict):
+            time.sleep(_BROWSER_FALLBACK_POLL_SEC)
+            continue
+        if run_state.get("claimed_at"):
+            stats["browser_jobs_claimed"] = 1
+        state = str(run_state.get("state") or "").upper()
+        if state == "COMPLETED":
+            stats["browser_jobs_completed"] = 1
+            stats["browser_primary_fields_success"] = 1 if run_state.get("validation_passed") else 0
+            return stats
+        if state == "ERROR":
+            stats["browser_jobs_failed"] = 1
+            stats["browser_error"] = "terminal_error"
+            return stats
+        time.sleep(_BROWSER_FALLBACK_POLL_SEC)
+
+    stats["browser_jobs_failed"] = 1
+    stats["browser_error"] = "timeout"
+    if verbose:
+        print(f"[danelfin] browser fallback timed out for run_id={run_id}")
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +328,20 @@ def fetch_danelfin_scores_for_symbols(
         "skipped_checkpoint": 0,
         "skipped_already_covered": 0,
         "retried_failed_checkpoint": 0,
+        "requests_attempted": 0,
+        "requests_success": 0,
+        "requests_blocked": 0,
+        "requests_no_primary_fields": 0,
+        "requests_network_error": 0,
+        "requests_other_fetch_error": 0,
+        "browser_fallback_requested": 0,
+        "browser_jobs_prepared": 0,
+        "browser_jobs_claimed": 0,
+        "browser_jobs_completed": 0,
+        "browser_jobs_failed": 0,
+        "browser_primary_fields_success": 0,
     }
+    blocked_symbols: list[str] = []
 
     for symbol in symbol_list:
         row = archived_rows.get(symbol)
@@ -161,7 +367,30 @@ def fetch_danelfin_scores_for_symbols(
         if verbose:
             print(f"[{i}/{len(pending_symbols)}] {sym}...", end=" ", flush=True)
 
-        danelfin_raw, danelfin_score = fetch_danelfin_score(sym)
+        if fetch_danelfin_score is not _ORIGINAL_FETCH_DANELFIN_SCORE_FUNC:
+            danelfin_raw, danelfin_score = fetch_danelfin_score(sym)
+            result = DanelfinFetchResult(
+                symbol=sym,
+                status=_FETCH_STATUS_SUCCESS if danelfin_raw is not None else _FETCH_STATUS_NO_PRIMARY,
+                danelfin_raw=danelfin_raw,
+                danelfin_score=danelfin_score,
+            )
+        else:
+            result = fetch_danelfin_score_detailed(sym)
+        stats["requests_attempted"] += 1
+        if result.status == _FETCH_STATUS_SUCCESS:
+            stats["requests_success"] += 1
+        elif result.status == _FETCH_STATUS_BLOCKED:
+            stats["requests_blocked"] += 1
+            blocked_symbols.append(sym)
+        elif result.status == _FETCH_STATUS_NO_PRIMARY:
+            stats["requests_no_primary_fields"] += 1
+        elif result.status == _FETCH_STATUS_NETWORK_ERROR:
+            stats["requests_network_error"] += 1
+        else:
+            stats["requests_other_fetch_error"] += 1
+
+        danelfin_raw, danelfin_score = result.danelfin_raw, result.danelfin_score
 
         row = {
             "symbol": sym,
@@ -182,6 +411,23 @@ def fetch_danelfin_scores_for_symbols(
 
         if i < len(pending_symbols):
             time.sleep(random.uniform(delay_min, delay_max))
+
+    fallback_stats = _request_browser_fallback_for_blocked_symbols(blocked_symbols, verbose=verbose)
+    for key, value in fallback_stats.items():
+        if key in stats and isinstance(value, int):
+            stats[key] += value
+        else:
+            stats[key] = value
+
+    if blocked_symbols and int(fallback_stats.get("browser_jobs_completed") or 0) > 0:
+        archived_rows = _load_rows_by_symbol(output_path)
+        latest_rows = _load_rows_by_symbol(latest_path)
+        for symbol in blocked_symbols:
+            latest_row = latest_rows.get(symbol)
+            if latest_row is not None:
+                archived_rows[symbol] = latest_row
+        _write_csv(output_path, list(archived_rows.values()))
+        _write_csv(latest_path, list(latest_rows.values()))
 
     rows = list(archived_rows.values())
 

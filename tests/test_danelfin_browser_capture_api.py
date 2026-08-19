@@ -79,6 +79,8 @@ def isolated_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setitem(run_outcome_ui._SIGNAL_FILES, "danelfin", signals_dir / "latest_danelfin.csv")
     with run_outcome_ui._danelfin_diag_lock:
         run_outcome_ui._danelfin_diag_runs.clear()
+    with run_outcome_ui._danelfin_prod_lock:
+        run_outcome_ui._danelfin_prod_runs.clear()
     return repo
 
 
@@ -693,3 +695,99 @@ def test_danelfin_capture_queue_endpoint_builds_deterministic_jobs(isolated_repo
     assert jobs[1]["symbols"] == ["EEE"]
     assert jobs[1]["operator_source"] == "STOCK_PAGE"
     assert jobs[1]["url"] == "https://danelfin.com/stock/eee"
+
+
+def test_production_prepare_pending_and_claim_contract(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        status_prepare, prepared = _post_json(
+            port,
+            "/api/danelfin/browser-capture/production-queue/prepare",
+            {"symbols": ["NVDA", "ANIP"], "source": "pytest"},
+        )
+        run_id = str(prepared["run_id"])
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/production-queue/pending?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            pending = json.loads(resp.read().decode("utf-8"))
+
+        status_claim, claim = _post_json(
+            port,
+            "/api/danelfin/browser-capture/production-queue/claim",
+            {"run_id": run_id, "worker_id": "extension-worker-1"},
+        )
+        status_claim_2, claim_second = _post_json(
+            port,
+            "/api/danelfin/browser-capture/production-queue/claim",
+            {"run_id": run_id, "worker_id": "extension-worker-2"},
+        )
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/production-status?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            status_payload = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status_prepare == 200
+    assert prepared["status"] == "ok"
+    assert prepared["mode"] == "production"
+    assert prepared["dry_run"] is False
+    assert prepared["job_count"] == 1
+    assert prepared["jobs"][0]["mode"] == "production"
+    assert prepared["jobs"][0]["dry_run"] is False
+
+    assert pending["status"] == "ok"
+    assert pending["run_id"] == run_id
+    assert pending["job_count"] == 1
+
+    assert status_claim == 200
+    assert claim["status"] == "ok"
+    assert claim["run_id"] == run_id
+    assert claim["job_count"] == 1
+
+    assert status_claim_2 == 200
+    assert claim_second["status"] == "ok"
+    assert claim_second["job_count"] == 0
+
+    run_state = status_payload["run"]
+    assert run_state["run_id"] == run_id
+    assert run_state["claimed_at"] is not None
+    assert run_state["state"] == "RUNNING"
+
+
+def test_production_status_tracks_terminal_error_event(isolated_repo: Path) -> None:
+    server, thread, port = _start_server()
+    try:
+        _, prepared = _post_json(
+            port,
+            "/api/danelfin/browser-capture/production-queue/prepare",
+            {"symbols": ["NVDA"], "source": "pytest"},
+        )
+        run_id = str(prepared["run_id"])
+
+        status_event, _ = _post_json(
+            port,
+            "/api/danelfin/browser-capture/production-status",
+            {"run_id": run_id, "event": "error", "error": "simulated timeout"},
+        )
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/danelfin/browser-capture/production-status?id={urllib.parse.quote(run_id, safe='')}",
+            timeout=10,
+        ) as resp:
+            status_payload = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status_event == 200
+    run_state = status_payload["run"]
+    assert run_state["state"] == "ERROR"
+    assert run_state["error"]["message"] == "simulated timeout"

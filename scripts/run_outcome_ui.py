@@ -69,7 +69,7 @@ _DANELFIN_CAPTURE_ALLOWED_METHODS = {
 }
 _DANELFIN_DIAGNOSTIC_DEFAULT_SYMBOL = "NVDA"
 _DANELFIN_DIAGNOSTIC_DEFAULT_PAIR_SYMBOL = "ANIP"
-_DANELFIN_DIAGNOSTIC_STATUS_FIELDS = {
+_DANELFIN_CAPTURE_STATUS_FIELDS = {
     "worker_started",
     "worker_claimed",
     "navigation_started",
@@ -83,6 +83,8 @@ _DANELFIN_DIAGNOSTIC_STATUS_FIELDS = {
 
 _danelfin_diag_lock = threading.Lock()
 _danelfin_diag_runs: dict[str, dict[str, object]] = {}
+_danelfin_prod_lock = threading.Lock()
+_danelfin_prod_runs: dict[str, dict[str, object]] = {}
 
 
 def _utc_now_iso() -> str:
@@ -124,7 +126,7 @@ def _record_danelfin_diag_event(
         if event == "created":
             state["created"] = timestamp
             state["state"] = "PREPARED"
-        elif event in _DANELFIN_DIAGNOSTIC_STATUS_FIELDS:
+        elif event in _DANELFIN_CAPTURE_STATUS_FIELDS:
             state[event] = timestamp
             if event == "worker_started":
                 state["state"] = "RUNNING"
@@ -346,6 +348,227 @@ def _claim_prepared_danelfin_diagnostic_run(run_id: str, worker_id: str = "") ->
     return _build_danelfin_diagnostic_queue_payload_from_state(claimed)
 
 
+def _build_danelfin_production_jobs(symbols: list[str], run_id: str) -> list[dict[str, object]]:
+    jobs: list[dict[str, object]] = []
+    for idx in range(0, len(symbols), 2):
+        chunk = symbols[idx:idx + 2]
+        kind = "single" if len(chunk) == 1 else "pair"
+        operator_source = "STOCK_PAGE" if kind == "single" else "PAIR_PAGE"
+        jobs.append(
+            {
+                "job_id": f"{run_id}:{idx // 2}",
+                "run_id": run_id,
+                "mode": "production",
+                "kind": kind,
+                "symbols": chunk,
+                "url": _danelfin_capture_pair_url(chunk),
+                "operator_source": operator_source,
+                "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+                "diagnostic": False,
+                "dry_run": False,
+            }
+        )
+    return jobs
+
+
+def _build_danelfin_production_queue_payload_from_state(state: dict[str, object]) -> dict[str, object]:
+    run_id = str(state.get("run_id") or "").strip()
+    symbols = [
+        str(item).strip().upper()
+        for item in (state.get("symbols") if isinstance(state.get("symbols"), list) else [])
+        if str(item).strip()
+    ]
+    if not run_id or not symbols:
+        raise ValueError("production run state is incomplete")
+
+    jobs = state.get("jobs") if isinstance(state.get("jobs"), list) else []
+    if not jobs:
+        jobs = _build_danelfin_production_jobs(symbols, run_id)
+
+    return {
+        "status": "ok",
+        "provider": "danelfin",
+        "diagnostic": False,
+        "dry_run": False,
+        "mode": "production",
+        "run_id": run_id,
+        "symbols": symbols,
+        "jobs": jobs,
+        "job_count": len(jobs),
+        "generated_at_utc": _utc_now_iso(),
+    }
+
+
+def _prepare_danelfin_production_run(symbols: list[str], *, source: str = "") -> dict[str, object]:
+    normalized_symbols: list[str] = []
+    seen: set[str] = set()
+    for raw in symbols:
+        sym = str(raw or "").strip().upper()
+        if not sym or not _SYMBOL_RE.match(sym) or sym in seen:
+            continue
+        seen.add(sym)
+        normalized_symbols.append(sym)
+    if not normalized_symbols:
+        raise ValueError("at least one valid symbol is required")
+
+    run_id = f"prod-{_utc_now_iso().replace(':', '').replace('-', '').replace('.', '')}-{secrets.token_hex(4)}"
+    jobs = _build_danelfin_production_jobs(normalized_symbols, run_id)
+    created_at = _utc_now_iso()
+    with _danelfin_prod_lock:
+        state = {
+            "run_id": run_id,
+            "mode": "production",
+            "diagnostic": False,
+            "dry_run": False,
+            "symbols": normalized_symbols,
+            "jobs": jobs,
+            "source": str(source or "").strip() or None,
+            "created": created_at,
+            "state": "PREPARED",
+            "claimed_at": None,
+            "worker_started": None,
+            "worker_claimed": None,
+            "navigation_started": None,
+            "navigation_completed": None,
+            "capture_started": None,
+            "capture_completed": None,
+            "result_received": None,
+            "normalized": None,
+            "validation_passed": None,
+            "error": None,
+            "event_log": [],
+            "updated_at": created_at,
+        }
+        _danelfin_prod_runs[run_id] = state
+        prepared_state = copy.deepcopy(state)
+    return _build_danelfin_production_queue_payload_from_state(prepared_state)
+
+
+def _find_prepared_danelfin_production_run(run_id: str = "") -> dict[str, object] | None:
+    requested_run_id = str(run_id or "").strip()
+    with _danelfin_prod_lock:
+        if requested_run_id:
+            state = _danelfin_prod_runs.get(requested_run_id)
+            if not isinstance(state, dict):
+                return None
+            if state.get("claimed_at") is not None:
+                return None
+            if state.get("state") in {"COMPLETED", "ERROR"}:
+                return None
+            return copy.deepcopy(state)
+
+        candidates: list[dict[str, object]] = []
+        for state in _danelfin_prod_runs.values():
+            if not isinstance(state, dict):
+                continue
+            if state.get("claimed_at") is not None:
+                continue
+            if state.get("state") in {"COMPLETED", "ERROR"}:
+                continue
+            candidates.append(copy.deepcopy(state))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: str(item.get("created") or ""))
+    return candidates[0]
+
+
+def _claim_prepared_danelfin_production_run(run_id: str, worker_id: str = "") -> dict[str, object] | None:
+    requested_run_id = str(run_id or "").strip()
+    worker = str(worker_id or "").strip() or "local_worker"
+    if not requested_run_id:
+        raise ValueError("run id is required for production claim")
+
+    with _danelfin_prod_lock:
+        state = _danelfin_prod_runs.get(requested_run_id)
+        if not isinstance(state, dict):
+            return None
+        if state.get("claimed_at") is not None:
+            return None
+        if state.get("state") in {"COMPLETED", "ERROR"}:
+            return None
+
+        claim_ts = _utc_now_iso()
+        state["claimed_at"] = claim_ts
+        state["worker_id"] = worker
+        state["state"] = "RUNNING"
+        state["worker_claimed"] = claim_ts
+        state["updated_at"] = claim_ts
+        event_log = state.get("event_log")
+        if not isinstance(event_log, list):
+            event_log = []
+            state["event_log"] = event_log
+        event_log.append(
+            {
+                "event": "worker_claimed",
+                "timestamp": claim_ts,
+                "payload": {"worker_id": worker, "claim_source": "claim_endpoint"},
+            }
+        )
+        claimed = copy.deepcopy(state)
+
+    return _build_danelfin_production_queue_payload_from_state(claimed)
+
+
+def _record_danelfin_production_event(
+    run_id: str,
+    event: str,
+    *,
+    error: str | None = None,
+    url: str | None = None,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    requested_run_id = str(run_id or "").strip()
+    if not requested_run_id:
+        raise ValueError("run id is required")
+
+    with _danelfin_prod_lock:
+        state = _danelfin_prod_runs.get(requested_run_id)
+        if not isinstance(state, dict):
+            raise KeyError(requested_run_id)
+
+        timestamp = _utc_now_iso()
+        if event in _DANELFIN_CAPTURE_STATUS_FIELDS:
+            state[event] = timestamp
+            if event == "worker_started":
+                state["state"] = "RUNNING"
+        elif event == "error":
+            state["error"] = {
+                "timestamp": timestamp,
+                "message": str(error or "unknown_error"),
+            }
+            state["state"] = "ERROR"
+
+        if event == "validation_passed":
+            state["state"] = "COMPLETED"
+        if url:
+            state["url"] = str(url)
+
+        event_log = state.get("event_log")
+        if not isinstance(event_log, list):
+            event_log = []
+            state["event_log"] = event_log
+        event_log.append(
+            {
+                "event": str(event),
+                "timestamp": timestamp,
+                "payload": copy.deepcopy(payload) if isinstance(payload, dict) else {},
+            }
+        )
+        state["updated_at"] = timestamp
+        return copy.deepcopy(state)
+
+
+def _danelfin_production_status(run_id: str) -> dict[str, object]:
+    requested = str(run_id or "").strip()
+    if not requested:
+        raise ValueError("run id is required")
+    with _danelfin_prod_lock:
+        state = _danelfin_prod_runs.get(requested)
+        if not isinstance(state, dict):
+            raise KeyError(requested)
+        return copy.deepcopy(state)
+
+
 def _resolve_provider_signal_file(provider_name: str) -> Path:
     configured = _SIGNAL_FILES.get(provider_name)
     if configured is None:
@@ -427,24 +650,32 @@ def _danelfin_capture_queue_payload() -> dict[str, object]:
             capture_symbols.append(symbol)
 
     jobs: list[dict[str, object]] = []
+    run_id = str(coverage.get("run_id") or "").strip() or f"coverage-{_utc_now_iso().replace(':', '').replace('-', '').replace('.', '')}"
     for idx in range(0, len(capture_symbols), 2):
         chunk = capture_symbols[idx:idx + 2]
         kind = "single" if len(chunk) == 1 else "pair"
         operator_source = "STOCK_PAGE" if kind == "single" else "PAIR_PAGE"
         jobs.append(
             {
+                "job_id": f"{run_id}:{idx // 2}",
+                "run_id": run_id,
+                "mode": "production",
                 "kind": kind,
                 "symbols": chunk,
                 "url": _danelfin_capture_pair_url(chunk),
                 "operator_source": operator_source,
                 "acquisition_method": "BROWSER_CAPTURE_DANELFIN_UI",
+                "dry_run": False,
+                "diagnostic": False,
             }
         )
 
     return {
         "status": "ok",
         "provider": "danelfin",
-        "run_id": coverage.get("run_id"),
+        "run_id": run_id,
+        "mode": "production",
+        "dry_run": False,
         "coverage": coverage,
         "symbols": capture_symbols,
         "jobs": jobs,
@@ -509,8 +740,10 @@ def _normalize_browser_capture_payload(payload: dict[str, object]) -> dict[str, 
 
     return {
         "dry_run": dry_run,
+        "mode": "diagnostic" if dry_run else "production",
         "operator_source": operator_source,
         "acquisition_method": acquisition_method,
+        "run_id": str(payload.get("run_id") or payload.get("diagnostic_run_id") or "").strip() or None,
         "diagnostic_run_id": str(payload.get("diagnostic_run_id") or "").strip() or None,
         "observations": normalized_observations,
     }
@@ -525,9 +758,14 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
     from src.scoring.danelfin_manual_import import import_manual_danelfin_observations, _normalize_observation
 
     normalized_payload = _normalize_browser_capture_payload(payload)
-    diagnostic_run_id = normalized_payload.get("diagnostic_run_id")
-    if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
-        _record_danelfin_diag_event(diagnostic_run_id, "result_received")
+    run_mode = str(normalized_payload.get("mode") or "diagnostic").strip().lower()
+    run_id = normalized_payload.get("run_id")
+
+    if isinstance(run_id, str) and run_id:
+        if run_mode == "production":
+            _record_danelfin_production_event(run_id, "result_received")
+        else:
+            _record_danelfin_diag_event(run_id, "result_received")
 
     if bool(normalized_payload["dry_run"]):
         normalized_rows: list[dict[str, str]] = []
@@ -543,14 +781,19 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
                 }
             )
 
-        if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
-            _record_danelfin_diag_event(diagnostic_run_id, "normalized")
-            _record_danelfin_diag_event(diagnostic_run_id, "validation_passed")
+        if isinstance(run_id, str) and run_id:
+            if run_mode == "production":
+                _record_danelfin_production_event(run_id, "normalized")
+                _record_danelfin_production_event(run_id, "validation_passed")
+            else:
+                _record_danelfin_diag_event(run_id, "normalized")
+                _record_danelfin_diag_event(run_id, "validation_passed")
 
         return {
             "status": "ok",
             "dry_run": True,
-            "diagnostic_run_id": diagnostic_run_id,
+            "run_id": run_id,
+            "diagnostic_run_id": run_id,
             "output_dir": None,
             "operator_source": normalized_payload["operator_source"],
             "acquisition_method": normalized_payload["acquisition_method"],
@@ -567,9 +810,13 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
     # Production mode writes through the canonical Danelfin signal cache path.
     output_dir = _REPO_ROOT / "data" / "signals" / "danelfin"
 
-    if isinstance(diagnostic_run_id, str) and diagnostic_run_id:
-        _record_danelfin_diag_event(diagnostic_run_id, "normalized")
-        _record_danelfin_diag_event(diagnostic_run_id, "validation_passed")
+    if isinstance(run_id, str) and run_id:
+        if run_mode == "production":
+            _record_danelfin_production_event(run_id, "normalized")
+            _record_danelfin_production_event(run_id, "validation_passed")
+        else:
+            _record_danelfin_diag_event(run_id, "normalized")
+            _record_danelfin_diag_event(run_id, "validation_passed")
 
     summary = import_manual_danelfin_observations(
         normalized_payload["observations"],
@@ -601,7 +848,8 @@ def _run_browser_capture(payload: dict[str, object]) -> dict[str, object]:
     return {
         "status": "ok",
         "dry_run": False,
-        "diagnostic_run_id": diagnostic_run_id,
+        "run_id": run_id,
+        "diagnostic_run_id": run_id,
         "output_dir": str(output_dir),
         "operator_source": normalized_payload["operator_source"],
         "acquisition_method": normalized_payload["acquisition_method"],
@@ -2336,6 +2584,9 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             "/api/danelfin/browser-capture",
             "/api/danelfin/browser-capture/diagnostic-status",
             "/api/danelfin/browser-capture/diagnostic-queue/claim",
+            "/api/danelfin/browser-capture/production-status",
+            "/api/danelfin/browser-capture/production-queue/prepare",
+            "/api/danelfin/browser-capture/production-queue/claim",
         }:
             self.send_response(204)
             origin = _capture_cors_origin(self)
@@ -2417,6 +2668,41 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 self._json_response({"error": str(exc)}, 422)
             except KeyError:
                 self._json_response({"error": "diagnostic run not found"}, 404)
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/danelfin/browser-capture/production-queue/pending":
+            qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            run_id = str((qs.get("id") or [""])[0] or "").strip()
+            try:
+                state = _find_prepared_danelfin_production_run(run_id=run_id)
+                if state is None:
+                    self._json_response(
+                        {
+                            "status": "ok",
+                            "provider": "danelfin",
+                            "diagnostic": False,
+                            "mode": "production",
+                            "dry_run": False,
+                            "run_id": run_id or None,
+                            "symbols": [],
+                            "jobs": [],
+                            "job_count": 0,
+                            "generated_at_utc": _utc_now_iso(),
+                        }
+                    )
+                else:
+                    self._json_response(_build_danelfin_production_queue_payload_from_state(state))
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500)
+        elif path == "/api/danelfin/browser-capture/production-status":
+            qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            run_id = str((qs.get("id") or [""])[0] or "").strip()
+            try:
+                self._json_response({"status": "ok", "run": _danelfin_production_status(run_id)})
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422)
+            except KeyError:
+                self._json_response({"error": "production run not found"}, 404)
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
         elif path == "/api/refresh-transparency":
@@ -3400,6 +3686,108 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     },
                 )
                 self._json_response({"status": "ok", "diagnostic": state}, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
+        elif path == "/api/danelfin/browser-capture/production-status":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400, extra_headers=self._cors_headers())
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400, extra_headers=self._cors_headers())
+                return
+
+            run_id = str(payload.get("run_id") or payload.get("diagnostic_run_id") or "").strip()
+            event = str(payload.get("event") or "").strip()
+            if not run_id or not event:
+                self._json_response({"error": "run_id and event are required"}, 422, extra_headers=self._cors_headers())
+                return
+
+            try:
+                state = _record_danelfin_production_event(
+                    run_id,
+                    event,
+                    error=str(payload.get("error") or "").strip() or None,
+                    url=str(payload.get("url") or "").strip() or None,
+                    payload={
+                        key: value
+                        for key, value in payload.items()
+                        if key not in {"run_id", "diagnostic_run_id", "event", "error", "url"}
+                    },
+                )
+                self._json_response({"status": "ok", "run": state}, extra_headers=self._cors_headers())
+            except KeyError:
+                self._json_response({"error": "production run not found"}, 404, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
+        elif path == "/api/danelfin/browser-capture/production-queue/prepare":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400, extra_headers=self._cors_headers())
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400, extra_headers=self._cors_headers())
+                return
+            symbols = payload.get("symbols")
+            if not isinstance(symbols, list):
+                self._json_response({"error": "symbols must be an array"}, 422, extra_headers=self._cors_headers())
+                return
+
+            try:
+                prepared = _prepare_danelfin_production_run(
+                    [str(item) for item in symbols],
+                    source=str(payload.get("source") or "").strip(),
+                )
+                self._json_response(prepared, extra_headers=self._cors_headers())
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422, extra_headers=self._cors_headers())
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
+        elif path == "/api/danelfin/browser-capture/production-queue/claim":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(body)
+            except Exception:
+                self._json_response({"error": "invalid JSON body"}, 400, extra_headers=self._cors_headers())
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be a JSON object"}, 400, extra_headers=self._cors_headers())
+                return
+
+            run_id = str(payload.get("run_id") or "").strip()
+            worker_id = str(payload.get("worker_id") or "").strip()
+            if not run_id:
+                self._json_response({"error": "run_id is required"}, 422, extra_headers=self._cors_headers())
+                return
+
+            try:
+                claimed_payload = _claim_prepared_danelfin_production_run(run_id, worker_id=worker_id)
+                if claimed_payload is None:
+                    self._json_response(
+                        {
+                            "status": "ok",
+                            "provider": "danelfin",
+                            "diagnostic": False,
+                            "mode": "production",
+                            "dry_run": False,
+                            "jobs": [],
+                            "job_count": 0,
+                            "run_id": run_id,
+                            "generated_at_utc": _utc_now_iso(),
+                        },
+                        extra_headers=self._cors_headers(),
+                    )
+                    return
+                self._json_response(claimed_payload, extra_headers=self._cors_headers())
+            except ValueError as exc:
+                self._json_response({"error": str(exc)}, 422, extra_headers=self._cors_headers())
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500, extra_headers=self._cors_headers())
         elif path == "/api/danelfin/browser-capture/diagnostic-queue/claim":

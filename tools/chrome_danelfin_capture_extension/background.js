@@ -4,6 +4,9 @@ const LOCAL_DIAGNOSTIC_QUEUE_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/brow
 const LOCAL_DIAGNOSTIC_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/pending";
 const LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-queue/claim";
 const LOCAL_DIAGNOSTIC_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/diagnostic-status";
+const LOCAL_PRODUCTION_PENDING_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/pending";
+const LOCAL_PRODUCTION_CLAIM_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/claim";
+const LOCAL_PRODUCTION_STATUS_ENDPOINT = "http://127.0.0.1:8765/api/danelfin/browser-capture/production-status";
 const AUTO_POLL_ALARM = "sih-danelfin-auto-poll";
 const AUTO_POLL_MINUTES = 1;
 
@@ -156,6 +159,14 @@ async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "", que
     endpoint = params.toString()
       ? `${LOCAL_DIAGNOSTIC_PENDING_ENDPOINT}?${params.toString()}`
       : LOCAL_DIAGNOSTIC_PENDING_ENDPOINT;
+  } else if (mode === "production") {
+    const params = new URLSearchParams();
+    if (diagnosticRunId) {
+      params.set("id", diagnosticRunId);
+    }
+    endpoint = params.toString()
+      ? `${LOCAL_PRODUCTION_PENDING_ENDPOINT}?${params.toString()}`
+      : LOCAL_PRODUCTION_PENDING_ENDPOINT;
   } else if (diagnosticSymbol || diagnosticRunId) {
     const params = new URLSearchParams();
     if (diagnosticRunId) {
@@ -184,19 +195,22 @@ async function loadCaptureQueue(diagnosticSymbol = "", diagnosticRunId = "", que
   return body.jobs;
 }
 
-async function claimDiagnosticRun(diagnosticRunId, workerId) {
-  const runId = String(diagnosticRunId || "").trim();
+async function claimCaptureRun(runIdHint, workerId, queueMode = "diagnostic") {
+  const runId = String(runIdHint || "").trim();
   if (!runId) {
     return [];
   }
 
-  const resp = await fetch(LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT, {
+  const mode = String(queueMode || "diagnostic").trim().toLowerCase();
+  const endpoint = mode === "production" ? LOCAL_PRODUCTION_CLAIM_ENDPOINT : LOCAL_DIAGNOSTIC_CLAIM_ENDPOINT;
+  const claimPayload = mode === "production"
+    ? { run_id: runId, worker_id: String(workerId || "").trim() || "extension-worker" }
+    : { diagnostic_run_id: runId, worker_id: String(workerId || "").trim() || "extension-worker" };
+
+  const resp = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      diagnostic_run_id: runId,
-      worker_id: String(workerId || "").trim() || "extension-worker"
-    })
+    body: JSON.stringify(claimPayload)
   });
 
   const body = await resp.json().catch(() => ({}));
@@ -217,6 +231,7 @@ async function postCapture(observations, dryRun, operatorSource, diagnosticRunId
     observations
   };
   if (diagnosticRunId) {
+    payload.run_id = String(diagnosticRunId);
     payload.diagnostic_run_id = String(diagnosticRunId);
   }
 
@@ -233,16 +248,19 @@ async function postCapture(observations, dryRun, operatorSource, diagnosticRunId
   return body;
 }
 
-async function postDiagnosticEvent(runId, event, payload = {}) {
+async function postRunEvent(runId, event, payload = {}, queueMode = "diagnostic") {
   if (!runId) {
     return;
   }
+  const mode = String(queueMode || "diagnostic").trim().toLowerCase();
+  const endpoint = mode === "production" ? LOCAL_PRODUCTION_STATUS_ENDPOINT : LOCAL_DIAGNOSTIC_STATUS_ENDPOINT;
   const body = {
+    run_id: String(runId),
     diagnostic_run_id: String(runId),
     event: String(event),
     ...payload
   };
-  await fetch(LOCAL_DIAGNOSTIC_STATUS_ENDPOINT, {
+  await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -278,9 +296,24 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
   let totalJobs = 0;
   let stopReason = "completed";
   let diagnosticRunId = "";
+  let activeQueueMode = String(queueMode || "auto").trim().toLowerCase();
 
   try {
-    const pendingQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint, queueMode);
+    let pendingQueue = [];
+    if (activeQueueMode === "alarm_auto") {
+      pendingQueue = await loadCaptureQueue("", "", "diagnostic");
+      activeQueueMode = "diagnostic";
+      if (!pendingQueue.length) {
+        pendingQueue = await loadCaptureQueue("", "", "production");
+        activeQueueMode = "production";
+      }
+    } else {
+      pendingQueue = await loadCaptureQueue(diagnosticSymbol, diagnosticRunIdHint, activeQueueMode);
+      if (activeQueueMode !== "diagnostic" && activeQueueMode !== "production") {
+        activeQueueMode = (diagnosticSymbol || diagnosticRunIdHint) ? "diagnostic" : "production";
+      }
+    }
+
     totalJobs = pendingQueue.length;
     if (!pendingQueue.length) {
       console.info("Danelfin background capture queue is empty; nothing to do", { trigger });
@@ -288,17 +321,23 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
     }
 
     const workerId = `${chrome.runtime.id}:${trigger}`;
-    diagnosticRunId = String((pendingQueue[0] && pendingQueue[0].diagnostic_run_id) || "").trim();
-    const captureQueue = await claimDiagnosticRun(diagnosticRunId, workerId);
-    if (!captureQueue.length) {
-      console.info("Danelfin prepared job already claimed; skipping", { trigger, diagnosticRunId });
-      return;
+    diagnosticRunId = String((pendingQueue[0] && (pendingQueue[0].diagnostic_run_id || pendingQueue[0].run_id)) || "").trim();
+    const claimMode = activeQueueMode === "production" ? "production" : "diagnostic";
+    let captureQueue = pendingQueue;
+    if (diagnosticRunId) {
+      captureQueue = await claimCaptureRun(diagnosticRunId, workerId, claimMode);
+      if (!captureQueue.length) {
+        console.info("Danelfin prepared job already claimed; skipping", { trigger, diagnosticRunId });
+        return;
+      }
     }
 
-    await postDiagnosticEvent(diagnosticRunId, "worker_started", {
-      trigger,
-      worker_id: workerId,
-    });
+    if (diagnosticRunId) {
+      await postRunEvent(diagnosticRunId, "worker_started", {
+        trigger,
+        worker_id: workerId,
+      }, claimMode);
+    }
 
     for (const job of captureQueue) {
       const kind = String(job && job.kind ? job.kind : "").trim().toLowerCase();
@@ -306,7 +345,7 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
       const symbols = Array.isArray(job && job.symbols) ? job.symbols.map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean) : [];
       const operatorSource = String(job && job.operator_source ? job.operator_source : (kind === "single" ? "STOCK_PAGE" : "PAIR_PAGE")).trim().toUpperCase();
       const dryRun = Boolean(job && job.dry_run);
-      const runId = String(job && job.diagnostic_run_id ? job.diagnostic_run_id : "").trim();
+      const runId = String(job && (job.diagnostic_run_id || job.run_id) ? (job.diagnostic_run_id || job.run_id) : "").trim();
       const url = String(job && job.url ? job.url : "").trim();
       if (kind !== "pair" && kind !== "single") {
         throw new Error(`invalid queue job kind: ${JSON.stringify(job)}`);
@@ -324,8 +363,11 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
       const left = symbols[0];
       const right = symbols[1];
       const jobUrl = url || (kind === "single" ? singleUrl(left) : pairUrl(left, right));
-      await postDiagnosticEvent(runId, "worker_claimed", { url: jobUrl, trigger, mode, dry_run: dryRun });
-      await postDiagnosticEvent(runId, "navigation_started", { url: jobUrl, trigger });
+      if (mode === "production" && dryRun !== false) {
+        throw new Error(`production job must run in non-dry mode: ${JSON.stringify(job)}`);
+      }
+      await postRunEvent(runId, "worker_claimed", { url: jobUrl, trigger, mode, dry_run: dryRun }, mode);
+      await postRunEvent(runId, "navigation_started", { url: jobUrl, trigger }, mode);
 
       const [activeBefore] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       const created = await chrome.tabs.create({
@@ -340,24 +382,24 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
       try {
         const loadedTab = await waitForTabComplete(created.id);
         const [activeAfter] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-        await postDiagnosticEvent(runId, "navigation_completed", {
+        await postRunEvent(runId, "navigation_completed", {
           url: String((loadedTab && loadedTab.url) || jobUrl),
           active_tab_before: activeBefore && typeof activeBefore.id === "number" ? activeBefore.id : null,
           active_tab_after: activeAfter && typeof activeAfter.id === "number" ? activeAfter.id : null,
           auto_tab_active: false,
-        });
+        }, mode);
         const tabUrl = String((loadedTab && loadedTab.url) || "");
         if (!tabUrl.startsWith("https://danelfin.com/") && !tabUrl.startsWith("https://www.danelfin.com/")) {
           throw new Error(`temporary tab loaded unexpected URL: ${tabUrl || "(empty)"}`);
         }
 
-        await postDiagnosticEvent(runId, "capture_started", { url: tabUrl, trigger });
+        await postRunEvent(runId, "capture_started", { url: tabUrl, trigger }, mode);
         const response = await requestCapture(created.id, symbols);
-        await postDiagnosticEvent(runId, "capture_completed", {
+        await postRunEvent(runId, "capture_completed", {
           url: tabUrl,
           raw_capture_present: Boolean(response && response.capture),
           parser_executed: true,
-        });
+        }, mode);
         if (response.capture.challenge) {
           stopReason = `provider challenge detected for ${symbols.join("/")}`;
           throw new Error(stopReason);
@@ -377,10 +419,10 @@ async function runCaptureWorker(trigger, diagnosticSymbol = "", diagnosticRunIdH
       await sleep(QUEUE_DELAY_MS);
     }
   } catch (err) {
-    await postDiagnosticEvent(diagnosticRunId, "error", {
+    await postRunEvent(diagnosticRunId, "error", {
       error: String(err && err.message ? err.message : err),
       trigger,
-    });
+    }, activeQueueMode === "production" ? "production" : "diagnostic");
     if (stopReason === "completed") {
       stopReason = String(err && err.message ? err.message : err);
     }
@@ -418,7 +460,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm || alarm.name !== AUTO_POLL_ALARM) {
     return;
   }
-  await runCaptureWorker("alarm_poll", "", "", "diagnostic");
+  await runCaptureWorker("alarm_poll", "", "", "alarm_auto");
 });
 
 ensureAutoPollAlarm();
