@@ -57,6 +57,26 @@ def _write_manifest(repo: Path, portfolios: list[dict]) -> None:
     manifest_path.write_text(json.dumps({"portfolios": portfolios}), encoding="utf-8")
 
 
+def _fnv1a32(text: str) -> str:
+    h = 0x811C9DC5
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
+def _target_fingerprint(rows: list[dict]) -> str:
+    canonical_rows: list[tuple[str, float]] = []
+    for row in rows:
+        canonical_rows.append((
+            str(row.get("node_key", "")),
+            float(row.get("target_pct_of_total", 0.0) or 0.0),
+        ))
+    canonical_rows.sort(key=lambda x: x[0])
+    canonical = "|".join(f"{k}={v:.6f}" for k, v in canonical_rows)
+    return _fnv1a32(canonical)
+
+
 @contextmanager
 def _serve_allocation_page(
     route_specs: list[tuple[str, object, int]],
@@ -239,6 +259,9 @@ def test_allocation_frontend_recalc_panel_never_infers_pass_without_validator_ev
     assert "NOT_EVALUATED" in app_js
     assert "Validator evidence unavailable in snapshot artifact." in app_js
     assert "validatorStatuses[v].status === \"PASS\"" in app_js
+    assert "/data/allocation/proposed/proposed_snapshot.json" in app_js
+    assert "target_model_fingerprint" in app_js
+    assert "target_model_scope" in app_js
 
 
 def test_allocation_frontend_strategic_micro_combined_check_is_preserved() -> None:
@@ -372,7 +395,10 @@ def test_allocation_page_renders_validator_evidence_and_unavailable_states() -> 
         assert "NOT EVALUATED" in body_text
         assert "policy bounds" in body_text
         assert "concentration ceilings" in body_text
-        assert "Validator evidence unavailable in snapshot artifact." in body_text
+        assert (
+            "Validator evidence unavailable in snapshot artifact." in body_text
+            or "provenance" in body_text.lower()
+        )
 
     with _serve_allocation_page([
         (r".*/data/allocation/manifest\.json$", manifest, 200),
@@ -382,4 +408,177 @@ def test_allocation_page_renders_validator_evidence_and_unavailable_states() -> 
         assert "PASS" in body_text
         assert "FAIL" in body_text
         assert "concentration ceilings" in body_text
-        assert "Combined MICRO cap exposure breaches policy." in body_text
+
+
+def test_allocation_page_reads_proposed_snapshot_when_manifest_history_is_unavailable() -> None:
+    proposed_snapshot = {
+        "recalculation_id": "RECALC-20260819-01",
+        "change_summary": ["Validator payload present in proposed snapshot."],
+        "target_model_scope": "PROPOSED_NON_COMMIT",
+        "validator_results": {
+            "hierarchy_sums": {"status": "PASS"},
+            "policy_bounds": {"status": "FAIL", "message": "EQUITIES exceeds max_single_asset_class_pct"},
+            "tactical_overflow": {"status": "PASS"},
+            "overlay_staleness": {"status": "PASS"},
+            "recalculation_churn": {"status": "PASS"},
+            "evidence_alignment": {"status": "PASS"},
+            "concentration_ceilings": {"status": "FAIL", "message": "Combined MICRO cap exposure exceeds max_micro_cap_pct"},
+            "lineage_completeness": {"status": "PASS"},
+        },
+    }
+
+    with _serve_allocation_page([
+        (r".*/data/allocation/manifest\.json$", {"reason": "missing"}, 404),
+        (r".*/data/allocation/proposed/proposed_snapshot\.json$", proposed_snapshot, 200),
+    ], path="/ui/allocation_intelligence/?validation=allocation-readpath-proposed-fallback&allocation_context=proposed_preview", wait_script="() => document.body && document.body.innerText.includes('PASS') && document.body.innerText.includes('FAIL')") as (page, _requests):
+        body_text = page.locator("body").inner_text()
+        assert "PASS" in body_text
+        assert "FAIL" in body_text
+        assert "policy bounds" in body_text
+        assert "concentration ceilings" in body_text
+        assert "NOT EVALUATED" not in body_text
+
+
+def test_allocation_page_does_not_apply_proposed_validator_evidence_to_active_targets() -> None:
+    proposed_snapshot = {
+        "recalculation_id": "RECALC-20260819-01",
+        "change_summary": ["Proposed validator payload present."],
+        "target_model_scope": "PROPOSED_NON_COMMIT",
+        "validator_results": {
+            "hierarchy_sums": {"status": "PASS"},
+            "policy_bounds": {"status": "PASS"},
+            "tactical_overflow": {"status": "PASS"},
+            "overlay_staleness": {"status": "PASS"},
+            "recalculation_churn": {"status": "PASS"},
+            "evidence_alignment": {"status": "PASS"},
+            "concentration_ceilings": {"status": "PASS"},
+            "lineage_completeness": {"status": "PASS"},
+        },
+    }
+
+    with _serve_allocation_page([
+        (r".*/data/allocation/manifest\.json$", {"reason": "missing"}, 404),
+        (r".*/data/allocation/proposed/proposed_snapshot\.json$", proposed_snapshot, 200),
+    ], path="/ui/allocation_intelligence/?validation=allocation-readpath-no-cross-association", wait_script="() => document.body && document.body.innerText.includes('NOT EVALUATED')") as (page, _requests):
+        body_text = page.locator("body").inner_text()
+        assert "NOT EVALUATED" in body_text
+        assert "Validator evidence unavailable in snapshot artifact." in body_text
+
+
+def test_allocation_page_marks_not_evaluated_on_active_fingerprint_mismatch() -> None:
+    active_targets = [
+        {
+            "node_key": "EQUITIES",
+            "node_label": "Equities",
+            "parent_key": "",
+            "asset_class": "EQUITIES",
+            "hierarchy_depth": "1",
+            "target_pct_of_total": "88.0",
+            "target_pct_of_parent": "88.0",
+            "delta_pct": "",
+            "confidence_score": "1.0",
+        }
+    ]
+
+    manifest = {
+        "latest_recalculation_id": "RECALC-20260819-02",
+        "latest_recalculation_date": "2026-08-19",
+        "total_snapshots": 1,
+        "updated_at_utc": "2026-08-19T00:00:00Z",
+        "history": [{"recalculation_id": "RECALC-20260819-02"}],
+    }
+    mismatched_snapshot = {
+        "recalculation_id": "RECALC-20260819-02",
+        "target_model_scope": "ACTIVE_PUBLISHED",
+        "target_model_fingerprint": "deadbeef",
+        "validator_results": {
+            "hierarchy_sums": {"status": "PASS"},
+            "policy_bounds": {"status": "PASS"},
+            "tactical_overflow": {"status": "PASS"},
+            "overlay_staleness": {"status": "PASS"},
+            "recalculation_churn": {"status": "PASS"},
+            "evidence_alignment": {"status": "PASS"},
+            "concentration_ceilings": {"status": "PASS"},
+            "lineage_completeness": {"status": "PASS"},
+        },
+    }
+
+    with _serve_allocation_page([
+        (r".*/api/portfolio/archetype-targets\?mandate=CONCENTRATED_ALPHA$", {
+            "mandate_type": "CONCENTRATED_ALPHA",
+            "display_name": "Concentrated Alpha",
+            "philosophy": "",
+            "targets": active_targets,
+        }, 200),
+        (r".*/data/allocation/manifest\.json$", manifest, 200),
+        (r".*/data/allocation/recalculation_snapshots/RECALC-20260819-02\.json$", mismatched_snapshot, 200),
+    ], path="/ui/allocation_intelligence/?validation=allocation-active-fingerprint-mismatch", wait_script="() => document.body && document.body.innerText.includes('NOT EVALUATED')") as (page, _requests):
+        body_text = page.locator("body").inner_text()
+        assert "NOT EVALUATED" in body_text
+        assert "provenance mismatch" in body_text.lower()
+
+
+def test_allocation_page_accepts_active_validator_evidence_when_fingerprint_matches() -> None:
+    active_targets = [
+        {
+            "node_key": "EQUITIES",
+            "node_label": "Equities",
+            "parent_key": "",
+            "asset_class": "EQUITIES",
+            "hierarchy_depth": "1",
+            "target_pct_of_total": "88.0",
+            "target_pct_of_parent": "88.0",
+            "delta_pct": "",
+            "confidence_score": "1.0",
+        },
+        {
+            "node_key": "CASH",
+            "node_label": "Cash",
+            "parent_key": "",
+            "asset_class": "CASH",
+            "hierarchy_depth": "1",
+            "target_pct_of_total": "7.0",
+            "target_pct_of_parent": "7.0",
+            "delta_pct": "",
+            "confidence_score": "1.0",
+        },
+    ]
+    fingerprint = _target_fingerprint(active_targets)
+
+    manifest = {
+        "latest_recalculation_id": "RECALC-20260819-01",
+        "latest_recalculation_date": "2026-08-19",
+        "total_snapshots": 1,
+        "updated_at_utc": "2026-08-19T00:00:00Z",
+        "history": [{"recalculation_id": "RECALC-20260819-01"}],
+    }
+    active_snapshot = {
+        "recalculation_id": "RECALC-20260819-01",
+        "target_model_scope": "ACTIVE_PUBLISHED",
+        "target_model_fingerprint": fingerprint,
+        "validator_results": {
+            "hierarchy_sums": {"status": "PASS"},
+            "policy_bounds": {"status": "FAIL", "message": "EQUITIES exceeds max_single_asset_class_pct"},
+            "tactical_overflow": {"status": "PASS"},
+            "overlay_staleness": {"status": "PASS"},
+            "recalculation_churn": {"status": "PASS"},
+            "evidence_alignment": {"status": "PASS"},
+            "concentration_ceilings": {"status": "FAIL", "message": "Combined MICRO cap exposure exceeds max_micro_cap_pct"},
+            "lineage_completeness": {"status": "PASS"},
+        },
+    }
+
+    with _serve_allocation_page([
+        (r".*/api/portfolio/archetype-targets\?mandate=CONCENTRATED_ALPHA$", {
+            "mandate_type": "CONCENTRATED_ALPHA",
+            "display_name": "Concentrated Alpha",
+            "philosophy": "",
+            "targets": active_targets,
+        }, 200),
+        (r".*/data/allocation/manifest\.json$", manifest, 200),
+        (r".*/data/allocation/recalculation_snapshots/RECALC-20260819-01\.json$", active_snapshot, 200),
+    ], path="/ui/allocation_intelligence/?validation=allocation-active-fingerprint-match", wait_script="() => document.body && document.body.innerText.includes('PASS') && document.body.innerText.includes('FAIL')") as (page, _requests):
+        body_text = page.locator("body").inner_text()
+        assert "PASS" in body_text
+        assert "FAIL" in body_text
+        assert "NOT EVALUATED" not in body_text

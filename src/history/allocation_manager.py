@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -175,8 +176,60 @@ def _evidence_to_row(e: AllocationEvidence) -> dict:
     }
 
 
-def _snapshot_to_dict(s: AllocationRecalculationSnapshot) -> dict:
-    return {
+def _canonical_target_rows(targets: list[StrategicAllocationTarget]) -> list[tuple[str, float]]:
+    rows: list[tuple[str, float]] = []
+    for t in targets:
+        pct = float(getattr(t, "target_pct_of_total", 0.0) or 0.0)
+        if math.isnan(pct) or math.isinf(pct):
+            pct = 0.0
+        rows.append((str(getattr(t, "node_key", "")), pct))
+    rows.sort(key=lambda x: x[0])
+    return rows
+
+
+def _fnv1a_32(text: str) -> str:
+    h = 0x811C9DC5
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
+def _target_model_fingerprint(targets: list[StrategicAllocationTarget]) -> str:
+    canonical = "|".join(f"{k}={v:.6f}" for k, v in _canonical_target_rows(targets))
+    return _fnv1a_32(canonical)
+
+
+def _format_validator_results(validation_results: dict[str, list[str]] | None) -> dict[str, dict[str, object]]:
+    """Normalize validator output to an object schema the UI already supports."""
+    if not validation_results:
+        return {}
+
+    payload: dict[str, dict[str, object]] = {}
+    for name, errors in validation_results.items():
+        err_list = list(errors or [])
+        if err_list:
+            payload[name] = {
+                "status": "FAIL",
+                "message": " | ".join(str(e) for e in err_list),
+                "errors": [str(e) for e in err_list],
+            }
+        else:
+            payload[name] = {
+                "status": "PASS",
+                "message": "",
+                "errors": [],
+            }
+    return payload
+
+
+def _snapshot_to_dict(
+    s: AllocationRecalculationSnapshot,
+    validation_results: dict[str, list[str]] | None = None,
+    target_model_fingerprint: str | None = None,
+    target_model_scope: str | None = None,
+) -> dict:
+    payload = {
         "recalculation_id": s.recalculation_id,
         "recalculation_date": s.recalculation_date,
         "prior_recalculation_id": s.prior_recalculation_id or "",
@@ -189,6 +242,14 @@ def _snapshot_to_dict(s: AllocationRecalculationSnapshot) -> dict:
         "total_allocation_valid": s.total_allocation_valid,
         "notes": s.notes,
     }
+    formatted = _format_validator_results(validation_results)
+    if formatted:
+        payload["validator_results"] = formatted
+    if target_model_fingerprint:
+        payload["target_model_fingerprint"] = target_model_fingerprint
+    if target_model_scope:
+        payload["target_model_scope"] = target_model_scope
+    return payload
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -197,6 +258,7 @@ def save_proposed_targets(
     targets: list[StrategicAllocationTarget],
     snapshot: AllocationRecalculationSnapshot,
     recommendations: list[AllocationRecommendation],
+    validation_results: dict[str, list[str]] | None = None,
     paths: AllocationStoragePaths | None = None,
 ) -> None:
     """Write proposed targets, recommendation, and snapshot JSON to proposed/ dir."""
@@ -208,8 +270,18 @@ def save_proposed_targets(
                     [_target_to_row(t) for t in targets])
     _write_csv_rows(paths.proposed_recommendation, ALLOCATION_RECOMMENDATION_HEADERS,
                     [_recommendation_to_row(r) for r in recommendations])
+    target_fingerprint = _target_model_fingerprint(targets)
     with paths.proposed_snapshot.open("w", encoding="utf-8") as fh:
-        json.dump(_snapshot_to_dict(snapshot), fh, indent=2)
+        json.dump(
+            _snapshot_to_dict(
+                snapshot,
+                validation_results=validation_results,
+                target_model_fingerprint=target_fingerprint,
+                target_model_scope="PROPOSED_NON_COMMIT",
+            ),
+            fh,
+            indent=2,
+        )
 
 
 def publish_proposed_targets(
@@ -217,6 +289,7 @@ def publish_proposed_targets(
     snapshot: AllocationRecalculationSnapshot,
     recommendations: list[AllocationRecommendation],
     evidence_records: list[AllocationEvidence],
+    validation_results: dict[str, list[str]] | None = None,
     paths: AllocationStoragePaths | None = None,
 ) -> None:
     """Commit proposed targets to data/current/ and append to historical archives."""
@@ -233,8 +306,18 @@ def publish_proposed_targets(
 
     # Append to historical snapshots archive
     snapshot_archive = paths.snapshots_dir / f"{snapshot.recalculation_id}.json"
+    target_fingerprint = _target_model_fingerprint(targets)
     with snapshot_archive.open("w", encoding="utf-8") as fh:
-        json.dump(_snapshot_to_dict(snapshot), fh, indent=2)
+        json.dump(
+            _snapshot_to_dict(
+                snapshot,
+                validation_results=validation_results,
+                target_model_fingerprint=target_fingerprint,
+                target_model_scope="ACTIVE_PUBLISHED",
+            ),
+            fh,
+            indent=2,
+        )
 
     # Append evidence to historical evidence archive
     evidence_archive = paths.evidence_dir / f"{snapshot.recalculation_id}_evidence.csv"

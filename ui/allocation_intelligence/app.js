@@ -34,6 +34,8 @@ let state = {
   mandateType: "CONCENTRATED_ALPHA",
   displayName: "Concentrated Alpha",
   philosophy: "",
+  activeTargetFingerprint: "",
+  evidenceContext: "ACTIVE",
 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -83,6 +85,37 @@ function normalizePortfolioRuns(payload) {
   if (Array.isArray(payload)) return payload;
   if (payload && Array.isArray(payload.portfolios)) return payload.portfolios;
   return [];
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function fnv1a32(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+function computeTargetFingerprint(targets) {
+  if (!Array.isArray(targets) || !targets.length) return "";
+  const rows = targets
+    .map(t => ({
+      key: String(t.node_key || ""),
+      pct: toFiniteNumber(t.target_pct_of_total, 0),
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const canonical = rows.map(r => `${r.key}=${r.pct.toFixed(6)}`).join("|");
+  return fnv1a32(canonical);
+}
+
+function isProposedPreviewMode() {
+  const params = new URLSearchParams(window.location.search || "");
+  return params.get("allocation_context") === "proposed_preview";
 }
 
 function toggleCard(bodyId, btnId) {
@@ -346,7 +379,7 @@ function lightenColor(hex, amount) {
 
 // ─── Section 3: Recalculation / Validators ───────────────────────────────────
 
-function renderRecalcPanel(manifest, snapshots) {
+function renderRecalcPanel(manifest, snapshots, context = {}) {
   // Snapshot meta
   const metaEl = document.getElementById("snapshot-meta");
   if (metaEl && manifest) {
@@ -380,7 +413,7 @@ function renderRecalcPanel(manifest, snapshots) {
     "recalculation_churn", "evidence_alignment", "concentration_ceilings", "lineage_completeness",
   ];
 
-  function deriveValidatorStatuses(latestSnapshot, validatorNames) {
+  function deriveValidatorStatuses(latestSnapshot, validatorNames, opts = {}) {
     const fallback = {};
     for (const name of validatorNames) {
       fallback[name] = {
@@ -391,6 +424,38 @@ function renderRecalcPanel(manifest, snapshots) {
 
     if (!latestSnapshot || typeof latestSnapshot !== "object") {
       return fallback;
+    }
+
+    if (opts.requireActiveProvenance) {
+      const activeFp = String(opts.activeTargetFingerprint || "").trim();
+      const snapshotFp = String(latestSnapshot.target_model_fingerprint || "").trim();
+      const scope = String(latestSnapshot.target_model_scope || "").trim();
+
+      if (!activeFp || !snapshotFp || snapshotFp !== activeFp || scope !== "ACTIVE_PUBLISHED") {
+        const reason = (!snapshotFp || !scope)
+          ? "Validator evidence missing active-target provenance metadata."
+          : "Validator evidence provenance mismatch: snapshot target model does not match active strategic targets.";
+        for (const name of validatorNames) {
+          fallback[name] = {
+            status: "NOT_EVALUATED",
+            message: reason,
+          };
+        }
+        return fallback;
+      }
+    }
+
+    if (opts.requireProposedPreviewScope) {
+      const scope = String(latestSnapshot.target_model_scope || "").trim();
+      if (scope && scope !== "PROPOSED_NON_COMMIT") {
+        for (const name of validatorNames) {
+          fallback[name] = {
+            status: "NOT_EVALUATED",
+            message: "Proposed preview requires PROPOSED_NON_COMMIT validator evidence.",
+          };
+        }
+        return fallback;
+      }
     }
 
     const candidates = [
@@ -431,7 +496,11 @@ function renderRecalcPanel(manifest, snapshots) {
 
   if (validatorEl) {
     const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null;
-    const validatorStatuses = deriveValidatorStatuses(latestSnapshot, VALIDATORS);
+    const validatorStatuses = deriveValidatorStatuses(latestSnapshot, VALIDATORS, {
+      requireActiveProvenance: context.evidenceContext !== "PROPOSED_PREVIEW",
+      requireProposedPreviewScope: context.evidenceContext === "PROPOSED_PREVIEW",
+      activeTargetFingerprint: context.activeTargetFingerprint || "",
+    });
     validatorEl.innerHTML = VALIDATORS.map(v => `
       <div class="validator-item">
         <span class="validator-icon">${validatorStatuses[v].status === "PASS" ? "✓" : validatorStatuses[v].status === "NOT_EVALUATED" ? "—" : "✗"}</span>
@@ -1030,6 +1099,8 @@ async function loadAllData() {
     state.dimensions = jsyaml.load(dimYamlText);
   }
 
+  const proposedPreviewMode = isProposedPreviewMode();
+
   // ── Archetype targets: prefer API response, fall back to legacy CSV ──────
   if (archetypeResp && !archetypeResp.error && Array.isArray(archetypeResp.targets)) {
     state.targets     = archetypeResp.targets;
@@ -1044,6 +1115,8 @@ async function loadAllData() {
     state.displayName = mandate;
     state.philosophy  = "";
   }
+
+  state.activeTargetFingerprint = computeTargetFingerprint(state.targets);
 
   // Show active archetype badge + philosophy
   const badge = document.getElementById("archetypeActiveBadge");
@@ -1065,12 +1138,20 @@ async function loadAllData() {
   state.recommendations = recommendationText ? parseCsv(recommendationText) : [];
   state.manifest       = manifestJson;
 
-  // Load all snapshot JSONs from manifest history
+  // Load historical snapshots from manifest (active evidence chain).
+  // Proposed snapshot evidence is only available in explicit proposed preview mode.
+  state.evidenceContext = "ACTIVE";
   if (manifestJson?.history?.length) {
     const snapshotPromises = manifestJson.history.map(h =>
       fetchJson(`/data/allocation/recalculation_snapshots/${h.recalculation_id}.json`)
     );
     state.snapshots = (await Promise.all(snapshotPromises)).filter(Boolean);
+  } else if (proposedPreviewMode) {
+    const proposedSnapshot = await fetchJson("/data/allocation/proposed/proposed_snapshot.json");
+    state.snapshots = proposedSnapshot ? [proposedSnapshot] : [];
+    state.evidenceContext = "PROPOSED_PREVIEW";
+  } else {
+    state.snapshots = [];
   }
 
   // Hide loading bar
@@ -1080,7 +1161,10 @@ async function loadAllData() {
   // Render all sections
   renderPolicy(state.policy);
   renderSunburst(state.targets, state.dimensions);
-  renderRecalcPanel(state.manifest, state.snapshots);
+  renderRecalcPanel(state.manifest, state.snapshots, {
+    activeTargetFingerprint: state.activeTargetFingerprint,
+    evidenceContext: state.evidenceContext,
+  });
   renderOverlays(state.overlays);
   renderTargets(state.targets);
   renderConcentration(state.targets, state.policy);

@@ -256,7 +256,13 @@ def main() -> int:
         print(f"  {t.asset_class:<18} {t.target_pct_of_total:6.2f}%  {bar}")
 
     # ── Step 8: Save proposed or commit ──────────────────────────────────
-    save_proposed_targets(proposed_targets, snapshot, recommendations, paths)
+    save_proposed_targets(
+        proposed_targets,
+        snapshot,
+        recommendations,
+        validation_results=validation_results,
+        paths=paths,
+    )
     print(f"\n  Proposed targets written to: data/allocation/proposed/")
 
     if args.commit:
@@ -268,7 +274,14 @@ def main() -> int:
             )
             return 1
         _print_header("Committing to data/current/")
-        publish_proposed_targets(proposed_targets, snapshot, recommendations, evidence, paths)
+        publish_proposed_targets(
+            proposed_targets,
+            snapshot,
+            recommendations,
+            evidence,
+            validation_results=validation_results,
+            paths=paths,
+        )
         print(f"  Published {len(proposed_targets)} targets to data/current/strategic_allocation_targets.csv")
         print(f"  Snapshot saved: data/allocation/recalculation_snapshots/{snapshot.recalculation_id}.json")
         print(f"  Manifest updated: data/allocation/manifest.json")

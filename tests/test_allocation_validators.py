@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from src.allocation.structural_policy import load_structural_policy
 from src.allocation.validators import (
     validate_concentration_ceilings,
     validate_policy_bounds,
 )
+from src.portfolio.archetype import load_archetype_targets
 
 
 def _target(node_key: str, pct_total: float, *, depth: int = 3, asset_class: str = "EQUITIES") -> SimpleNamespace:
@@ -66,3 +68,39 @@ def test_concentration_ceilings_passes_when_combined_micro_within_limit() -> Non
     errors = validate_concentration_ceilings(targets, _policy(max_micro=5.0))
 
     assert not any("Combined MICRO cap exposure" in e for e in errors)
+
+
+def test_concentrated_alpha_active_model_fails_policy_bounds() -> None:
+    policy = load_structural_policy("config/allocation_policy.yaml")
+    targets = load_archetype_targets("CONCENTRATED_ALPHA")
+    objs = [
+        _target(
+            node_key=k,
+            pct_total=float(v),
+            depth=k.count(".") + 1,
+            asset_class=k.split(".")[0],
+        )
+        for k, v in targets.items()
+    ]
+
+    errors = validate_policy_bounds(objs, policy)
+
+    assert any("EQUITIES: pct_of_total=88.00% exceeds ceiling 80.0%" in e for e in errors)
+
+
+def test_concentrated_alpha_active_model_fails_concentration_ceilings_micro_cap() -> None:
+    policy = load_structural_policy("config/allocation_policy.yaml")
+    targets = load_archetype_targets("CONCENTRATED_ALPHA")
+    objs = [
+        _target(
+            node_key=k,
+            pct_total=float(v),
+            depth=k.count(".") + 1,
+            asset_class=k.split(".")[0],
+        )
+        for k, v in targets.items()
+    ]
+
+    errors = validate_concentration_ceilings(objs, policy)
+
+    assert any("Combined MICRO cap exposure: 6.50% exceeds max_micro_cap_pct=5.0%" in e for e in errors)
