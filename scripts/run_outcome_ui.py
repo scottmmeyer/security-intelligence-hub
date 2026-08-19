@@ -2393,6 +2393,8 @@ PIS_DASHBOARD_API_ROUTES = {
     "/api/pis/policy/timeline",
     "/api/pis/compliance/latest",
     "/api/pis/compliance/summary",
+    "/api/pis/momentum/summary",
+    "/api/pis/momentum/methodology",
 }
 
 
@@ -2441,6 +2443,7 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
         pis_attribution_latest,
         pis_attribution_summary,
     )
+    from src.pis.momentum_intelligence import pis_momentum_methodology, pis_momentum_summary
     from src.pis.policy_change_summary import policy_impact, policy_summary, policy_timeline
     from src.pis.policy_version_diff import pis_policy_current, pis_policy_diff, pis_policy_history
     from src.pis.recommendation_lineage import pis_lineage_latest, pis_lineage_summary
@@ -2526,6 +2529,10 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
         return pis_compliance_latest(repo_root=_REPO_ROOT)
     if path == "/api/pis/compliance/summary":
         return pis_compliance_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/momentum/summary":
+        return pis_momentum_summary(repo_root=_REPO_ROOT)
+    if path == "/api/pis/momentum/methodology":
+        return pis_momentum_methodology(repo_root=_REPO_ROOT)
     return None
 
 
