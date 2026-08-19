@@ -225,7 +225,7 @@ def test_T07_reduce_rec_increased_opposed():
     assert status == "OPPOSED"
 
 
-def test_T08_none_confidence_ignored():
+def test_T08_none_confidence_unknown():
     status, conf = classify_action_status(
         lineage_confidence="NONE",
         change_type="INCREASED",
@@ -233,11 +233,11 @@ def test_T08_none_confidence_ignored():
         days_between=3,
         delta_market_value=1000.0,
     )
-    assert status == "IGNORED"
-    assert conf == "HIGH"
+    assert status == "UNKNOWN"
+    assert conf == "NONE"
 
 
-def test_T09_no_matching_change_ignored():
+def test_T09_no_matching_change_unknown():
     # days_between=None with NONE confidence
     status, conf = classify_action_status(
         lineage_confidence="NONE",
@@ -246,7 +246,7 @@ def test_T09_no_matching_change_ignored():
         days_between=None,
         delta_market_value=0.0,
     )
-    assert status == "IGNORED"
+    assert status == "UNKNOWN"
 
 
 def test_T10_days_beyond_window_expired():
@@ -473,7 +473,8 @@ def test_T33_counts_sum_to_total(tmp_path):
         summary["partially_followed_count"] +
         summary["ignored_count"] +
         summary["opposed_count"] +
-        summary["expired_count"]
+        summary["expired_count"] +
+        summary.get("unknown_count", 0)
     )
     assert counted == total
 
@@ -492,8 +493,9 @@ def test_T34_follow_rate_correct(tmp_path):
     _write_csv(paths["changes"] / "change_records.csv", _CHANGE_HEADERS, chg_rows)
 
     summary = pis_action_attribution_summary(tmp_path)
-    # 1 FOLLOWED of 2 total = 50%
-    assert abs(summary["follow_rate_pct"] - 50.0) < 1.0
+    # Recommendation-centric view excludes unmatched lineage rows without rec IDs.
+    assert summary["total_attribution_records"] == 1
+    assert abs(summary["follow_rate_pct"] - 100.0) < 1.0
 
 
 def test_T35_avg_response_days_ignores_none(tmp_path):
@@ -510,7 +512,7 @@ def test_T35_avg_response_days_ignores_none(tmp_path):
     _write_csv(paths["changes"] / "change_records.csv", _CHANGE_HEADERS, chg_rows)
 
     summary = pis_action_attribution_summary(tmp_path)
-    # Only CHG-001 has response_days=6; CHG-002 (IGNORED) has none
+    # Only CHG-001 has response_days=6; CHG-002 (UNKNOWN) has none
     assert summary["avg_response_days"] == 6.0
 
 
@@ -583,7 +585,7 @@ def test_T42_summary_required_fields(tmp_path):
     required = {
         "generated_at", "total_attribution_records", "followed_count",
         "partially_followed_count", "ignored_count", "opposed_count",
-        "expired_count", "follow_rate_pct", "ignore_rate_pct", "oppose_rate_pct",
+        "expired_count", "unknown_count", "follow_rate_pct", "ignore_rate_pct", "oppose_rate_pct",
         "avg_response_days", "sources_covered", "dates_covered", "observations",
     }
     assert required.issubset(result.keys())
@@ -694,12 +696,78 @@ def test_T51_unchanged_excluded_from_attribution(tmp_path):
     _write_csv(paths["changes"] / "change_records.csv", _CHANGE_HEADERS, chg_rows)
 
     result = pis_action_attribution_recommendations(tmp_path)
-    # CHG-UNC (UNCHANGED) is in lineage with NONE confidence → becomes IGNORED
+    # CHG-UNC (UNCHANGED) is in lineage with NONE confidence → remains UNKNOWN
     # but it should NOT be classified as FOLLOWED since no change direction exists
     arw_records = [r for r in result["records"] if r["symbol"] == "ARW"]
     nvda_records = [r for r in result["records"] if r["symbol"] == "NVDA"]
 
     # ARW should be FOLLOWED
     assert any(r["action_status"] == "FOLLOWED" for r in arw_records)
-    # NVDA UNCHANGED→NONE→IGNORED (change_dir="") → should be IGNORED
-    assert all(r["action_status"] == "IGNORED" for r in nvda_records)
+    # NVDA UNCHANGED→NONE→UNKNOWN (change_dir="") → should be UNKNOWN
+    assert all(r["action_status"] == "UNKNOWN" for r in nvda_records)
+
+
+def test_T52_unmatched_recommendation_open_window_is_unknown(tmp_path):
+    paths = _setup_pis_dirs(tmp_path)
+
+    _write_csv(paths["lineage"] / "lineage_records.csv", _LINEAGE_HEADERS, [])
+    _write_csv(
+        paths["changes"] / "change_records.csv",
+        _CHANGE_HEADERS,
+        [
+            _make_change_row("CHG-001", "ARW", "UNCHANGED", "2026-06-10", 0.0, 0.0),
+        ],
+    )
+
+    run_dir = paths["par"] / "PAR-20260610-TEST"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_metadata.json").write_text(json.dumps({"snapshot_date": "2026-06-10"}), encoding="utf-8")
+    (run_dir / "recommendations.json").write_text(
+        json.dumps([
+            {
+                "recommendation_id": "REC-OPEN-WINDOW",
+                "recommendation_type": "PORTFOLIO_CONSTRUCTION_NARRATIVE",
+                "created_at_utc": "2026-06-08T00:00:00Z",
+                "title": "Keep ARW core",
+                "affected_symbols": ["ARW"],
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    records = _build_attribution_records(tmp_path)
+    target = next(r for r in records if r.recommendation_id == "REC-OPEN-WINDOW")
+    assert target.action_status == "UNKNOWN"
+
+
+def test_T53_unmatched_recommendation_matured_window_no_action_is_ignored(tmp_path):
+    paths = _setup_pis_dirs(tmp_path)
+
+    _write_csv(paths["lineage"] / "lineage_records.csv", _LINEAGE_HEADERS, [])
+    _write_csv(
+        paths["changes"] / "change_records.csv",
+        _CHANGE_HEADERS,
+        [
+            _make_change_row("CHG-001", "ARW", "UNCHANGED", "2026-07-20", 0.0, 0.0),
+        ],
+    )
+
+    run_dir = paths["par"] / "PAR-20260720-TEST"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_metadata.json").write_text(json.dumps({"snapshot_date": "2026-07-20"}), encoding="utf-8")
+    (run_dir / "recommendations.json").write_text(
+        json.dumps([
+            {
+                "recommendation_id": "REC-MATURED-WINDOW",
+                "recommendation_type": "PORTFOLIO_CONSTRUCTION_NARRATIVE",
+                "created_at_utc": "2026-06-01T00:00:00Z",
+                "title": "Keep ARW core",
+                "affected_symbols": ["ARW"],
+            }
+        ]),
+        encoding="utf-8",
+    )
+
+    records = _build_attribution_records(tmp_path)
+    target = next(r for r in records if r.recommendation_id == "REC-MATURED-WINDOW")
+    assert target.action_status == "IGNORED"

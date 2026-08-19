@@ -1718,6 +1718,7 @@ function _statusBadge(status) {
     IGNORED:            { bg: "#757575", label: "IGNORED" },
     OPPOSED:            { bg: "#c62828", label: "OPPOSED" },
     EXPIRED:            { bg: "#e65100", label: "EXPIRED" },
+    UNKNOWN:            { bg: "#455a64", label: "UNKNOWN" },
   };
   const c = cfg[status] || { bg: "#999", label: status || "UNKNOWN" };
   return `<span style="background:${c.bg};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.78em;font-weight:600;">${c.label}</span>`;
@@ -1735,6 +1736,7 @@ function renderActionAttributionSummary(payload) {
     { label: "Followed",           value: String(payload.followed_count || 0),           color: "#2e7d32" },
     { label: "Partially Followed", value: String(payload.partially_followed_count || 0), color: "#558b2f" },
     { label: "Ignored",            value: String(payload.ignored_count || 0),            color: "#757575" },
+    { label: "Unknown",            value: String(payload.unknown_count || 0),            color: "#455a64" },
     { label: "Opposed",            value: String(payload.opposed_count || 0),            color: "#c62828" },
     { label: "Expired",            value: String(payload.expired_count || 0),            color: "#e65100" },
   ];

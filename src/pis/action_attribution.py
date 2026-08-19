@@ -50,6 +50,7 @@ _STATUS_RANK = {
     "OPPOSED": 3,
     "EXPIRED": 2,
     "IGNORED": 1,
+    "UNKNOWN": 0,
 }
 
 _CONFIDENCE_RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "NONE": 0}
@@ -88,6 +89,7 @@ class SourceScorecard:
     ignored_count: int
     opposed_count: int
     expired_count: int
+    unknown_count: int
     follow_rate_pct: float
     ignore_rate_pct: float
     oppose_rate_pct: float
@@ -161,22 +163,21 @@ def classify_action_status(
     """Return (action_status, action_confidence).
 
     Logic:
-    1. NONE confidence → IGNORED (no recommendation matched this change, or no
-       change occurred for this recommendation within any window).
+    1. NONE confidence → UNKNOWN (matching evidence unavailable).
     2. Direction mismatch → OPPOSED (portfolio moved opposite to recommendation).
     3. days_between > MAX_WINDOW → EXPIRED.
     4. Small delta + LOW lineage confidence → PARTIALLY_FOLLOWED.
     5. Everything else that matches direction → FOLLOWED.
     """
-    # IGNORED: no match at all
+    # UNKNOWN: no match evidence at all
     if lineage_confidence == "NONE":
-        return "IGNORED", "HIGH"
+        return "UNKNOWN", "NONE"
 
     change_dir = _change_to_direction(change_type)
 
-    # No change direction (e.g., UNCHANGED) → IGNORED
+    # No change direction (e.g., UNCHANGED) → UNKNOWN
     if not change_dir:
-        return "IGNORED", "MEDIUM"
+        return "UNKNOWN", "LOW"
 
     # No recommended direction — benefit of the doubt
     if not recommended_direction:
@@ -251,6 +252,12 @@ def _build_attribution_records(repo_root: Path) -> list[ActionAttributionRecord]
     generated_at = datetime.now(timezone.utc).isoformat()
     records: list[ActionAttributionRecord] = []
 
+    latest_snapshot_date = ""
+    for row in change_index.values():
+        s = _parse_date_str(row.get("snapshot_date", ""))
+        if s and s > latest_snapshot_date:
+            latest_snapshot_date = s
+
     # Track which recommendation_ids have been processed via lineage
     processed_rec_ids: set[str] = set()
 
@@ -260,6 +267,10 @@ def _build_attribution_records(repo_root: Path) -> list[ActionAttributionRecord]
         change_type = str(lin.get("change_type", "")).strip()
         lineage_conf = str(lin.get("confidence", "NONE")).strip() or "NONE"
         matched_rec_id = str(lin.get("matched_recommendation_id", "")).strip()
+        if not matched_rec_id:
+            # This view is recommendation-centric; unmatched change-only lineage rows
+            # are handled through candidate-driven synthesis below.
+            continue
         rec_source = str(lin.get("recommendation_source", "")).strip()
         rec_date = _parse_date_str(lin.get("recommendation_date", ""))
         raw_days = lin.get("days_between", "")
@@ -357,11 +368,23 @@ def _build_attribution_records(repo_root: Path) -> list[ActionAttributionRecord]
             for chg_date in dates_with_change
         )
 
-        # If symbol changed in window but wasn't matched, confidence is MEDIUM;
-        # otherwise HIGH (clearly nothing happened)
-        action_conf = "MEDIUM" if has_window_change else "HIGH"
+        # Only classify as IGNORED when the full window has elapsed and no
+        # canonical action evidence exists. Otherwise stay UNKNOWN.
+        days_since_rec = _days_between(rec_date, latest_snapshot_date)
+        if days_since_rec is None:
+            action_status = "UNKNOWN"
+            action_conf = "NONE"
+        elif days_since_rec < _MAX_ATTRIBUTION_WINDOW_DAYS:
+            action_status = "UNKNOWN"
+            action_conf = "LOW"
+        elif has_window_change:
+            action_status = "UNKNOWN"
+            action_conf = "LOW"
+        else:
+            action_status = "IGNORED"
+            action_conf = "HIGH"
 
-        attribution_id = f"AA-{rec_id}-{sym}-IGNORED"
+        attribution_id = f"AA-{rec_id}-{sym}-{action_status}"
         record = ActionAttributionRecord(
             attribution_id=attribution_id,
             recommendation_id=rec_id,
@@ -369,7 +392,7 @@ def _build_attribution_records(repo_root: Path) -> list[ActionAttributionRecord]
             recommendation_date=rec_date,
             symbol=sym,
             recommended_direction=rec_direction,
-            action_status="IGNORED",
+            action_status=action_status,
             action_confidence=action_conf,
             observed_change_type="",
             observed_date="",
@@ -401,6 +424,7 @@ def _compute_scorecards(records: list[ActionAttributionRecord]) -> list[SourceSc
         ignored = sum(1 for r in recs if r.action_status == "IGNORED")
         opposed = sum(1 for r in recs if r.action_status == "OPPOSED")
         expired = sum(1 for r in recs if r.action_status == "EXPIRED")
+        unknown = sum(1 for r in recs if r.action_status == "UNKNOWN")
 
         responded = [r for r in recs if r.response_days is not None]
         avg_days: Optional[float] = (
@@ -421,6 +445,7 @@ def _compute_scorecards(records: list[ActionAttributionRecord]) -> list[SourceSc
             ignored_count=ignored,
             opposed_count=opposed,
             expired_count=expired,
+            unknown_count=unknown,
             follow_rate_pct=round((followed + partial) / total * 100, 1) if total else 0.0,
             ignore_rate_pct=round(ignored / total * 100, 1) if total else 0.0,
             oppose_rate_pct=round(opposed / total * 100, 1) if total else 0.0,
@@ -530,6 +555,18 @@ def _cache_is_valid(cache_path: Path, repo_root: Path) -> bool:
                 return False
         except OSError:
             continue
+
+    # Recommendation candidates are sourced from analysis_runs artifacts.
+    # If any candidate source is newer than the cache, rebuild.
+    analysis_runs_root = repo_root / "data" / "portfolio_ingestion" / "analysis_runs"
+    if analysis_runs_root.exists():
+        for pattern in ("*/recommendations.json", "*/deployment_plan.json", "*/ucf_verdicts.json", "*/run_metadata.json"):
+            for path in analysis_runs_root.glob(pattern):
+                try:
+                    if path.stat().st_mtime > cache_mtime:
+                        return False
+                except OSError:
+                    continue
     return True
 
 
@@ -593,6 +630,7 @@ def pis_action_attribution_summary(repo_root: Path | str = ".") -> dict:
     ignored = sum(1 for r in records if r.action_status == "IGNORED")
     opposed = sum(1 for r in records if r.action_status == "OPPOSED")
     expired = sum(1 for r in records if r.action_status == "EXPIRED")
+    unknown = sum(1 for r in records if r.action_status == "UNKNOWN")
 
     responded = [r for r in records if r.response_days is not None]
     avg_days: Optional[float] = (
@@ -614,6 +652,7 @@ def pis_action_attribution_summary(repo_root: Path | str = ".") -> dict:
         "ignored_count": ignored,
         "opposed_count": opposed,
         "expired_count": expired,
+        "unknown_count": unknown,
         "follow_rate_pct": round((followed + partial) / total * 100, 1) if total else 0.0,
         "ignore_rate_pct": round(ignored / total * 100, 1) if total else 0.0,
         "oppose_rate_pct": round(opposed / total * 100, 1) if total else 0.0,
