@@ -1025,13 +1025,126 @@ def test_as_of_current_parity_keeps_industry_unavailable_and_no_market_fallback(
     assert dell_asof["relative_strength_level"] == "UNAVAILABLE"
 
     assert live_rows["VO"]["relative_strength_level"] == "UNAVAILABLE"
-    assert vo_asof["relative_strength_level"] == "UNAVAILABLE"
+    assert vo_asof["relative_strength_level"] == "LOW"
     assert live_rows["VOO"]["relative_strength_level"] == "UNAVAILABLE"
-    assert voo_asof["relative_strength_level"] == "UNAVAILABLE"
+    assert voo_asof["relative_strength_level"] == "LOW"
 
     assert dell_asof["source_constraints"]["historical_short_history_fallback_used"] is False
     assert vo_asof["source_constraints"]["historical_short_history_fallback_used"] is False
     assert voo_asof["source_constraints"]["historical_short_history_fallback_used"] is False
+
+
+def test_non_held_etf_proposed_buy_metadata_is_partially_evaluable_and_provenanced() -> None:
+    symbols = ["IJH", "MDY", "SCHB", "VO", "VOO", "VTI"]
+    current = {row["symbol"]: row for row in evaluate_momentum_for_symbols(symbols, repo_root=".")}
+
+    assert current["IJH"]["security_type"] == "ETF"
+    assert current["MDY"]["security_type"] == "ETF"
+    assert current["SCHB"]["security_type"] == "ETF"
+    assert current["VO"]["security_type"] == "ETF"
+    assert current["VOO"]["security_type"] == "ETF"
+    assert current["VTI"]["security_type"] == "ETF"
+
+    assert current["IJH"]["relative_strength_level"] == "HIGH"
+    assert current["IJH"]["relative_momentum_change"] == "FADING"
+    assert current["IJH"]["extension_state"] == "NORMAL"
+    assert current["MDY"]["relative_strength_level"] == "HIGH"
+    assert current["MDY"]["relative_momentum_change"] == "FADING"
+    assert current["MDY"]["extension_state"] == "NORMAL"
+    assert current["SCHB"]["relative_strength_level"] == "MEDIUM"
+    assert current["SCHB"]["relative_momentum_change"] == "FADING"
+    assert current["SCHB"]["extension_state"] == "NORMAL"
+    assert current["VO"]["relative_strength_level"] == "HIGH"
+    assert current["VO"]["relative_momentum_change"] == "FADING"
+    assert current["VO"]["extension_state"] == "NORMAL"
+    assert current["VOO"]["relative_strength_level"] == "MEDIUM"
+    assert current["VOO"]["relative_momentum_change"] == "FADING"
+    assert current["VOO"]["extension_state"] == "NORMAL"
+    assert current["VTI"]["relative_strength_level"] == "MEDIUM"
+    assert current["VTI"]["relative_momentum_change"] == "FADING"
+    assert current["VTI"]["extension_state"] == "NORMAL"
+
+    assert current["IJH"]["market_fallback_used"] is True
+    assert current["MDY"]["market_fallback_used"] is True
+    assert current["SCHB"]["market_fallback_used"] is True
+    assert current["VO"]["market_fallback_used"] is True
+    assert current["VOO"]["market_fallback_used"] is True
+    assert current["VTI"]["market_fallback_used"] is True
+    assert current["IJH"]["industry"] == "UNAVAILABLE"
+    assert current["VO"]["industry"] == "UNAVAILABLE"
+    assert current["VOO"]["industry"] == "UNAVAILABLE"
+    assert current["IJH"]["industry_parent_used"] is False
+    assert current["MDY"]["industry_parent_used"] is False
+    assert current["SCHB"]["industry_parent_used"] is False
+    assert current["VO"]["industry_parent_used"] is False
+    assert current["VOO"]["industry_parent_used"] is False
+    assert current["VTI"]["industry_parent_used"] is False
+    assert current["VO"]["sector_parent_used"] is True
+    assert current["VOO"]["sector_parent_used"] is True
+    assert current["IJH"]["sector_parent_used"] is False
+    assert current["MDY"]["sector_parent_used"] is False
+    assert current["SCHB"]["sector_parent_used"] is False
+    assert current["VTI"]["sector_parent_used"] is False
+
+    expected = {
+        "2026-08-19": {
+            "IJH": ("HIGH", "FADING", "NORMAL", "UNAVAILABLE"),
+            "MDY": ("HIGH", "FADING", "NORMAL", "UNAVAILABLE"),
+            "SCHB": ("MEDIUM", "FADING", "NORMAL", "UNAVAILABLE"),
+            "VO": ("HIGH", "FADING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
+            "VOO": ("MEDIUM", "FADING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
+            "VTI": ("MEDIUM", "FADING", "NORMAL", "UNAVAILABLE"),
+        },
+        "2026-07-20": {
+            "IJH": ("WEAK", "STABLE", "NORMAL", "UNAVAILABLE"),
+            "MDY": ("WEAK", "STABLE", "NORMAL", "UNAVAILABLE"),
+            "SCHB": ("NEUTRAL", "STABLE", "NORMAL", "UNAVAILABLE"),
+            "VO": ("NEUTRAL", "STABLE", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
+            "VOO": ("NEUTRAL", "STABLE", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
+            "VTI": ("NEUTRAL", "STABLE", "NORMAL", "UNAVAILABLE"),
+        },
+        "2026-05-21": {
+            "IJH": ("LOW", "ACCELERATING", "NORMAL", "UNAVAILABLE"),
+            "MDY": ("LOW", "ACCELERATING", "NORMAL", "UNAVAILABLE"),
+            "SCHB": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
+            "VO": ("LOW", "ACCELERATING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
+            "VOO": ("NEUTRAL", "STABLE", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
+            "VTI": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
+        },
+        "2026-02-20": {
+            "IJH": ("HIGH", "FADING", "ELEVATED", "UNAVAILABLE"),
+            "MDY": ("HIGH", "FADING", "ELEVATED", "UNAVAILABLE"),
+            "SCHB": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
+            "VO": ("HIGH", "FADING", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
+            "VOO": ("NEUTRAL", "STABLE", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
+            "VTI": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
+        },
+    }
+
+    for as_of, by_symbol in expected.items():
+        for symbol, (level, change, extension, provenance) in by_symbol.items():
+            result = evaluate_momentum_as_of(symbol, as_of, repo_root=".")
+            assert result["security_type"] == "ETF"
+            assert result["industry"] == "UNAVAILABLE"
+            assert result["relative_strength_level"] == level
+            assert result["relative_momentum_change"] == change
+            assert result["extension_state"] == extension
+            assert result["metadata_provenance"] == provenance
+            assert result["price_provenance"] == "HISTORICAL_PRICE_HISTORY_AS_OF"
+            assert result["price_points_available"] > 0
+            assert result["raw_price_points"][-1] <= as_of
+            assert result["source_constraints"]["price_observations_filtered_to_as_of"] is True
+            assert result["source_constraints"]["benchmark_observations_filtered_to_as_of"] is True
+            assert result["source_constraints"]["provider_fundamental_evidence_filtered_to_as_of"] is True
+            assert result["market_fallback_used"] is True
+            assert result["industry_parent_used"] is False
+            assert result["sector_parent_used"] in {True, False}
+            if symbol in {"VO", "VOO"}:
+                assert result["metadata_source"] == "PORTFOLIO_ANALYSIS_HOLDINGS"
+
+    before = pis_momentum_summary(repo_root=".")
+    after = pis_momentum_summary(repo_root=".")
+    assert before["portfolio_momentum_map"]["holdings"] == after["portfolio_momentum_map"]["holdings"]
 
 
 def test_latest_provider_file_uses_exact_sourced_date_for_as_of_filter(tmp_path: Path) -> None:

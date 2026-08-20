@@ -49,6 +49,13 @@ _EQUITY_LIKE_ASSET_TYPES = {
     "ADR",
 }
 
+_MARKET_FALLBACK_ASSET_TYPES = {
+    "ETF",
+    "FUND",
+    "MUTUAL FUND",
+    "MUTUAL_FUND",
+}
+
 _TAXONOMY_UNKNOWN_VALUES = {"", "UNKNOWN", "N/A", "NA", "NONE"}
 
 
@@ -108,6 +115,78 @@ def _load_security_metadata_taxonomy(repo_root: Path) -> dict[str, dict[str, str
             "industry": _taxonomy_clean(row.get("industry", "")),
         }
     return out
+
+
+def _load_security_type_taxonomy(repo_root: Path) -> dict[str, str]:
+    """Load the best available security_type classification for reporting use.
+
+    This is classification context only. It does not supply price, benchmark,
+    provider, or fundamental evidence.
+    """
+    out: dict[str, str] = {}
+
+    snapshot_date, holdings = _load_holdings(repo_root)
+    _ = snapshot_date
+    for row in holdings:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        asset_type = _taxonomy_upper_or_unknown(row.get("asset_type", ""))
+        if symbol and asset_type != "UNKNOWN":
+            out[symbol] = asset_type
+
+    current_price_rows = _read_csv_rows(repo_root / "data/current/security_prices.csv")
+    for row in current_price_rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        security_type = _taxonomy_upper_or_unknown(row.get("security_type", ""))
+        if symbol and security_type != "UNKNOWN" and symbol not in out:
+            out[symbol] = security_type
+
+    price_root = repo_root / "data/history/prices"
+    if price_root.exists():
+        for price_file in price_root.glob("symbol=*/prices.csv"):
+            symbol = price_file.parent.name.replace("symbol=", "").strip().upper()
+            if not symbol or symbol in out:
+                continue
+            for row in _read_csv_rows(price_file):
+                security_type = _taxonomy_upper_or_unknown(row.get("security_type", ""))
+                if security_type != "UNKNOWN":
+                    out[symbol] = security_type
+                    break
+
+    return out
+
+
+def _resolve_momentum_security_metadata(
+    symbol: str,
+    *,
+    universe: dict[str, dict[str, str]],
+    security_type_map: dict[str, str],
+    provenance_label: str,
+) -> dict[str, object]:
+    symbol_u = str(symbol or "").strip().upper()
+    meta = universe.get(symbol_u, {})
+    sector = str(meta.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    industry = str(meta.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    sector_source = str(meta.get("sector_source", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    industry_source = str(meta.get("industry_source", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    industry_granularity = str(meta.get("industry_granularity", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    metadata_source = sector_source if sector_source != "UNAVAILABLE" else industry_source
+    metadata_provenance = provenance_label if metadata_source != "UNAVAILABLE" else "UNAVAILABLE"
+    security_type = security_type_map.get(symbol_u, "UNAVAILABLE")
+    if not _taxonomy_is_known(security_type):
+        security_type = "UNAVAILABLE"
+    if metadata_source == "UNAVAILABLE" and security_type != "UNAVAILABLE":
+        metadata_source = "PRICE_HISTORY"
+    return {
+        "symbol": symbol_u,
+        "security_type": security_type,
+        "sector": sector,
+        "industry": industry,
+        "metadata_source": metadata_source,
+        "metadata_provenance": metadata_provenance,
+        "sector_source": sector_source,
+        "industry_source": industry_source,
+        "industry_granularity": industry_granularity,
+    }
 
 
 def _industry_granularity_and_value(
@@ -1017,6 +1096,7 @@ def evaluate_momentum_as_of(
     as_of = str(as_of_date or "")[:10]
 
     universe = _load_universe_metadata(root)
+    security_type_map = _load_security_type_taxonomy(root)
     _holdings_snapshot_date, holdings_as_of = _load_holdings_as_of(root, as_of)
     holdings_symbols_as_of = [str(item.get("symbol", "")).upper() for item in holdings_as_of]
     holding_asset_type_by_symbol = {
@@ -1051,6 +1131,15 @@ def evaluate_momentum_as_of(
         context_symbols = holdings_symbols_as_of
     else:
         context_symbols = list(universe.keys())
+
+    metadata = _resolve_momentum_security_metadata(
+        sym,
+        universe=universe,
+        security_type_map=security_type_map,
+        provenance_label="CURRENT_TAXONOMY_FALLBACK",
+    )
+    sector_name = str(metadata.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    industry_name = str(metadata.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
 
     sector_proxy = _SECTOR_PROXY_FALLBACKS.get(sector_name.upper())
     sector_proxy_series = _load_sector_proxy_series(root, security_series=security_series)
@@ -1103,12 +1192,21 @@ def evaluate_momentum_as_of(
     sec_vs_market = _compute_relative_horizons(sec_horizons, market_horizons, source_label=f"{sym} vs market")
     sec_vs_sector = _compute_relative_horizons(sec_horizons, sector_horizons, source_label=f"{sym} vs sector")
     sec_vs_industry = _compute_relative_horizons(sec_horizons, industry_horizons, source_label=f"{sym} vs industry")
-    rel_level = _relative_strength_level(sec_vs_industry)
-    rel_change = _relative_momentum_change(sec_vs_industry)
+    industry_rel_level = _relative_strength_level(sec_vs_industry)
+    industry_rel_change = _relative_momentum_change(sec_vs_industry)
+    market_rel_level = _relative_strength_level(sec_vs_market)
+    market_rel_change = _relative_momentum_change(sec_vs_market)
+    fallback_allowed = str(metadata.get("security_type", "UNAVAILABLE")).strip().upper() in _MARKET_FALLBACK_ASSET_TYPES
+    market_fallback_used = fallback_allowed and industry_name == "UNAVAILABLE" and market_rel_level != "UNAVAILABLE"
+    rel_level = market_rel_level if market_fallback_used else industry_rel_level
+    rel_change = market_rel_change if market_fallback_used else industry_rel_change
 
     fallback_used = abs_state == "UNAVAILABLE" and len(sec_series.points) >= 2
     if fallback_used:
         abs_state = _as_of_absolute_state_from_price_points(sec_series)
+
+    sector_parent_used = bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_sector.values()))
+    industry_parent_used = bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_industry.values()))
 
     ess_series = _load_ess_series(root)
     zacks_series = _load_daily_symbol_metric_series(root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score")))
@@ -1149,6 +1247,15 @@ def evaluate_momentum_as_of(
         "symbol": sym,
         "as_of_date": as_of,
         "provenance": "HISTORICAL_AS_OF",
+        "security_type": metadata.get("security_type", "UNAVAILABLE"),
+        "sector": sector_name,
+        "industry": industry_name,
+        "metadata_source": metadata.get("metadata_source", "UNAVAILABLE"),
+        "metadata_provenance": metadata.get("metadata_provenance", "UNAVAILABLE"),
+        "market_fallback_used": market_fallback_used,
+        "sector_parent_used": sector_parent_used,
+        "industry_parent_used": industry_parent_used,
+        "price_provenance": "HISTORICAL_PRICE_HISTORY_AS_OF",
         "absolute_state": abs_state,
         "vs_market": sec_vs_market,
         "vs_sector": sec_vs_sector,
@@ -1502,6 +1609,7 @@ def _build_symbol_evaluation_record(
     *,
     repo_root: Path,
     universe: dict[str, dict[str, str]],
+    security_type_map: dict[str, str],
     market_horizons: dict[str, dict[str, object]],
     security_series: dict[str, MomentumSeries],
     sector_proxy_series: dict[str, MomentumSeries],
@@ -1514,9 +1622,14 @@ def _build_symbol_evaluation_record(
     fmp_income_growth_series: dict[str, list[tuple[str, float]]],
 ) -> dict[str, object]:
     symbol = str(symbol).strip().upper()
-    meta = universe.get(symbol, {})
-    sector_name = str(meta.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
-    industry_name = str(meta.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    metadata = _resolve_momentum_security_metadata(
+        symbol,
+        universe=universe,
+        security_type_map=security_type_map,
+        provenance_label="CURRENT_TAXONOMY",
+    )
+    sector_name = str(metadata.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    industry_name = str(metadata.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
     sector_proxy = _SECTOR_PROXY_FALLBACKS.get(sector_name.upper())
     sector_series = sector_proxy_series.get(sector_proxy) if sector_proxy else None
     if sector_series is None:
@@ -1532,7 +1645,7 @@ def _build_symbol_evaluation_record(
     else:
         sector_horizons = _build_horizon_payload(sector_series)
 
-    industry_candidates = [s for s, m in universe.items() if str(m.get("industry", "")).strip() == industry_name]
+    industry_candidates = [s for s, m in universe.items() if str(m.get("industry", "")).strip() == industry_name] if industry_name != "UNAVAILABLE" else []
     if industry_candidates:
         industry_series = _group_series_from_constituents([s for s in industry_candidates if s in security_series], security_series, group_key=f"INDUSTRY::{industry_name.upper()}")
     else:
@@ -1548,12 +1661,14 @@ def _build_symbol_evaluation_record(
     sec_vs_market = _compute_relative_horizons(sec_horizons, market_horizons, source_label=f"{symbol} vs market")
     sec_vs_sector = _compute_relative_horizons(sec_horizons, sector_horizons, source_label=f"{symbol} vs sector")
     sec_vs_industry = _compute_relative_horizons(sec_horizons, industry_horizons, source_label=f"{symbol} vs industry")
-    rel_level = _relative_strength_level(sec_vs_industry)
-    if rel_level == "UNAVAILABLE":
-        rel_level = _relative_strength_level(sec_vs_market)
-    rel_change = _relative_momentum_change(sec_vs_industry)
-    if rel_change == "UNAVAILABLE":
-        rel_change = _relative_momentum_change(sec_vs_market)
+    industry_rel_level = _relative_strength_level(sec_vs_industry)
+    industry_rel_change = _relative_momentum_change(sec_vs_industry)
+    market_rel_level = _relative_strength_level(sec_vs_market)
+    market_rel_change = _relative_momentum_change(sec_vs_market)
+    fallback_allowed = str(metadata.get("security_type", "UNAVAILABLE")).strip().upper() in _MARKET_FALLBACK_ASSET_TYPES
+    market_fallback_used = fallback_allowed and industry_name == "UNAVAILABLE" and market_rel_level != "UNAVAILABLE"
+    rel_level = market_rel_level if market_fallback_used else industry_rel_level
+    rel_change = market_rel_change if market_fallback_used else industry_rel_change
 
     fundamentals = _fundamental_snapshot_for_symbol(
         symbol,
@@ -1604,8 +1719,11 @@ def _build_symbol_evaluation_record(
     return {
         "symbol": symbol,
         "portfolio_weight": None,
+        "security_type": metadata.get("security_type", "UNAVAILABLE"),
         "sector": sector_name,
         "industry": industry_name,
+        "metadata_source": metadata.get("metadata_source", "UNAVAILABLE"),
+        "metadata_provenance": metadata.get("metadata_provenance", "UNAVAILABLE"),
         "absolute_state": abs_state,
         "vs_market": sec_vs_market,
         "vs_sector": sec_vs_sector,
@@ -1615,6 +1733,9 @@ def _build_symbol_evaluation_record(
         "fundamental_momentum": fundamentals,
         "confirmation_state": confirmation,
         "extension_state": extension_state,
+        "market_fallback_used": market_fallback_used,
+        "sector_parent_used": bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_sector.values())),
+        "industry_parent_used": bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_industry.values())),
         "sector_rotation_context": sector_class,
         "industry_rotation_context": industry_class,
         "data_quality": {
@@ -1645,6 +1766,7 @@ def evaluate_momentum_for_symbols(symbols: list[str] | tuple[str, ...], *, repo_
     root = Path(repo_root)
     coverage_inventory = inventory_current_price_coverage(root)
     universe = _load_universe_metadata(root)
+    security_type_map = _load_security_type_taxonomy(root)
     market_series = _load_benchmark_series(root)
     market_horizons = _build_horizon_payload(market_series)
     security_series = _load_security_price_series(root)
@@ -1669,6 +1791,7 @@ def evaluate_momentum_for_symbols(symbols: list[str] | tuple[str, ...], *, repo_
                 sym,
                 repo_root=root,
                 universe=universe,
+                security_type_map=security_type_map,
                 market_horizons=market_horizons,
                 security_series=security_series,
                 sector_proxy_series=sector_proxy_series,
