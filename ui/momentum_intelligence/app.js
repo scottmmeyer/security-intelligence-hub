@@ -19,6 +19,28 @@ function pct(v) {
   return typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(2)}%` : "—";
 }
 
+function relativeLevelFromHorizons(relativeHorizons) {
+  if (!relativeHorizons || typeof relativeHorizons !== "object") {
+    return "UNAVAILABLE";
+  }
+  let value = null;
+  for (const horizon of ["3M", "1M", "1W"]) {
+    const candidate = relativeHorizons[horizon]?.relative_return_pct;
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      value = candidate;
+      break;
+    }
+  }
+  if (value == null) {
+    return "UNAVAILABLE";
+  }
+  if (value >= 3.0) return "HIGH";
+  if (value >= 1.0) return "MEDIUM";
+  if (value <= -3.0) return "LOW";
+  if (value <= -1.0) return "WEAK";
+  return "NEUTRAL";
+}
+
 function renderExecutive(summary) {
   const root = document.getElementById("executive");
   const holdings = summary?.portfolio_momentum_map?.holdings || [];
@@ -26,6 +48,27 @@ function renderExecutive(summary) {
   const industries = summary?.industry_rotation || [];
   const marketState = summary?.market_momentum?.market_absolute_momentum?.state || "UNAVAILABLE";
   const coverage = summary?.coverage || {};
+  const hierarchy = coverage?.hierarchy_availability || {};
+  const securityCounts = coverage?.security_counts || {};
+  const sectorParentCounts = coverage?.sector_parent_counts || {};
+  const industryParentCounts = coverage?.industry_parent_counts || {};
+
+  const applicableSecurityCount = Number(securityCounts?.applicable || 0);
+  const fullHistorySecurityCount = Number(securityCounts?.present || 0);
+  const anyHistorySecurityCount = Number(securityCounts?.present || 0) + Number(securityCounts?.partial || 0);
+
+  const fullHistorySecurityCoverage =
+    typeof coverage?.full_history_security_coverage_pct === "number"
+      ? coverage.full_history_security_coverage_pct
+      : coverage.security_history_coverage_pct;
+  const fullHistoryWeightCoverage = coverage?.full_history_portfolio_weight_coverage_pct;
+  const anyHistoryWeightCoverage = coverage?.any_history_portfolio_weight_coverage_pct;
+
+  const sectorParentRequired = Number(sectorParentCounts?.required || 0);
+  const sectorParentAvailable = Number(sectorParentCounts?.available || 0);
+  const industryParentRequired = Number(industryParentCounts?.required || 0);
+  const industryParentAvailable = Number(industryParentCounts?.available || 0);
+
   root.innerHTML = `
     <div class="kv-grid">
       <div class="kpi"><div class="kpi-label">Snapshot Date</div><div class="kpi-value">${esc(summary?.snapshot_date || "—")}</div></div>
@@ -34,11 +77,28 @@ function renderExecutive(summary) {
       <div class="kpi"><div class="kpi-label">Sectors</div><div class="kpi-value">${sectors.length}</div></div>
       <div class="kpi"><div class="kpi-label">Industries</div><div class="kpi-value">${industries.length}</div></div>
       <div class="kpi"><div class="kpi-label">Generated (UTC)</div><div class="kpi-value mono">${esc(summary?.generated_at_utc || "—")}</div></div>
-      <div class="kpi"><div class="kpi-label">Security History Coverage</div><div class="kpi-value">${pct(coverage.security_history_coverage_pct)}</div></div>
-      <div class="kpi"><div class="kpi-label">Sector Parent Coverage</div><div class="kpi-value">${pct(coverage.sector_parent_coverage_pct)}</div></div>
-      <div class="kpi"><div class="kpi-label">Industry Parent Coverage</div><div class="kpi-value">${pct(coverage.industry_parent_coverage_pct)}</div></div>
-      <div class="kpi"><div class="kpi-label">Evaluable Weight</div><div class="kpi-value">${pct(coverage.portfolio_momentum_evaluable_weight_pct)}</div></div>
-      <div class="kpi"><div class="kpi-label">Coverage State</div><div class="kpi-value">${esc(coverage.portfolio_coverage_state || "UNAVAILABLE")}</div></div>
+      <div class="kpi"><div class="kpi-label">Full History Security Coverage</div><div class="kpi-value">${pct(fullHistorySecurityCoverage)}</div><div class="kpi-sub">${fullHistorySecurityCount}/${applicableSecurityCount} applicable holdings</div></div>
+      <div class="kpi"><div class="kpi-label">Any History Security Coverage</div><div class="kpi-value">${pct(coverage.any_history_security_coverage_pct)}</div><div class="kpi-sub">${anyHistorySecurityCount}/${applicableSecurityCount} applicable holdings</div></div>
+      <div class="kpi"><div class="kpi-label">Full History Weight Coverage</div><div class="kpi-value">${pct(fullHistoryWeightCoverage)}</div><div class="kpi-sub">weight of applicable holdings</div></div>
+      <div class="kpi"><div class="kpi-label">Any History Weight Coverage</div><div class="kpi-value">${pct(anyHistoryWeightCoverage)}</div><div class="kpi-sub">weight of applicable holdings</div></div>
+      <div class="kpi"><div class="kpi-label">Sector Parent Coverage</div><div class="kpi-value">${pct(coverage.sector_parent_coverage_pct)}</div><div class="kpi-sub">${sectorParentAvailable}/${sectorParentRequired} sector groups requiring a parent</div></div>
+      <div class="kpi"><div class="kpi-label">Industry Parent Coverage</div><div class="kpi-value">${pct(coverage.industry_parent_coverage_pct)}</div><div class="kpi-sub">${industryParentAvailable}/${industryParentRequired} industry groups in rotation set</div></div>
+      <div class="kpi"><div class="kpi-label">Fully Evaluated Weight</div><div class="kpi-value">${pct(coverage.portfolio_momentum_evaluable_weight_pct)}</div><div class="kpi-sub">weight where Security State is FULLY_EVALUATED</div></div>
+      <div class="kpi"><div class="kpi-label">Coverage State</div><div class="kpi-value">${esc(coverage.portfolio_coverage_state || "UNAVAILABLE")}</div><div class="kpi-sub">derived from fully evaluated portfolio weight</div></div>
+    </div>
+    <div class="coverage-compact">
+      <div class="kpi-label">Hierarchy Coverage (denominator: applicable holdings)</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Security Count %</th><th>Portfolio Weight %</th></tr></thead>
+          <tbody>
+            <tr><td>Market Relative</td><td>${pct(hierarchy.market_relative_evaluable_security_pct)}</td><td>${pct(hierarchy.market_relative_evaluable_weight_pct)}</td></tr>
+            <tr><td>Sector Relative</td><td>${pct(hierarchy.sector_relative_evaluable_security_pct)}</td><td>${pct(hierarchy.sector_relative_evaluable_weight_pct)}</td></tr>
+            <tr><td>Industry Relative</td><td>${pct(hierarchy.industry_relative_evaluable_security_pct)}</td><td>${pct(hierarchy.industry_relative_evaluable_weight_pct)}</td></tr>
+            <tr><td>Full Hierarchy (Absolute + Market + Sector + Industry)</td><td>${pct(hierarchy.full_hierarchy_security_pct)}</td><td>${pct(hierarchy.full_hierarchy_weight_pct)}</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
     <p class="muted" style="margin-top:10px;">Momentum is explanatory only and does not create buy/sell/add/trim actions.</p>
   `;
@@ -81,6 +141,7 @@ function renderMu(summary) {
         <tr><td>Extension</td><td>${esc(q.extension || "UNAVAILABLE")}</td></tr>
       </tbody>
     </table>
+    <p class="muted" style="margin-top:8px;">Absolute Rising is based on MU 1M absolute return sign (YES if 1M return &gt; 0, NO if evaluated and &le; 0, UNAVAILABLE only when 1M return is unavailable).</p>
     ${mu.data_gap ? `<p class="muted" style="margin-top:8px;">${esc(mu.data_gap)}</p>` : ""}
   `;
 }
@@ -137,7 +198,15 @@ function renderPortfolio(summary) {
       <td>${num(r.portfolio_weight, 3)}</td>
       <td>${esc(r.sector)}</td>
       <td>${esc(r.industry)}</td>
-      <td>${esc(r.security_state)}</td>
+      <td>
+        ${esc(r.security_state)}
+        <div class="layer-summary mono muted">
+          ABS:${esc(r.absolute_security_momentum?.state || "UNAVAILABLE")}
+          | MKT:${esc(r.relative_strength_level || "UNAVAILABLE")}
+          | SEC:${esc(relativeLevelFromHorizons(r.security_vs_sector))}
+          | IND:${esc(relativeLevelFromHorizons(r.security_vs_industry))}
+        </div>
+      </td>
       <td>${esc(r.relative_strength_level)}</td>
       <td>${esc(r.relative_momentum_change)}</td>
       <td>${esc(r.fundamental_momentum?.state || "UNAVAILABLE")}</td>
