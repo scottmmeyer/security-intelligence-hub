@@ -8,7 +8,9 @@ allocation, deployment, market-regime gating, or execution behavior.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -717,6 +719,45 @@ def _load_holdings(repo_root: Path) -> tuple[str, list[dict[str, object]]]:
     return snapshot_date, out
 
 
+def _load_holdings_as_of(repo_root: Path, as_of_date: str) -> tuple[str, list[dict[str, object]]]:
+    rows = _read_csv_rows(repo_root / "data/history/pis/pis_snapshot_index.csv")
+    if not rows:
+        return "", []
+    as_of = str(as_of_date or "")[:10]
+    eligible = [row for row in rows if str(row.get("snapshot_date", "")) <= as_of] if as_of else rows
+    if not eligible:
+        return "", []
+    best = max(eligible, key=lambda row: str(row.get("snapshot_date", "")))
+    snapshot_date = str(best.get("snapshot_date", ""))
+    positions_path = str(best.get("positions_path", "")).strip()
+    if not positions_path:
+        return snapshot_date, []
+    p = Path(positions_path)
+    if not p.is_absolute():
+        p = repo_root / p
+    if not p.exists():
+        return snapshot_date, []
+
+    out: list[dict[str, object]] = []
+    for row in _read_csv_rows(p):
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol or symbol in {"CASH", "PENDING"}:
+            continue
+        weight = _to_float(row.get("percent_of_account"))
+        market_value = _to_float(row.get("market_value"))
+        asset_type = str(row.get("security_type", "")).strip().upper()
+        out.append(
+            {
+                "symbol": symbol,
+                "portfolio_weight": round(float(weight or 0.0), 4),
+                "market_value": round(float(market_value or 0.0), 4),
+                "asset_type": asset_type,
+            }
+        )
+    out.sort(key=lambda x: float(x.get("market_value", 0.0)), reverse=True)
+    return snapshot_date, out
+
+
 def _load_daily_symbol_metric_series(
     repo_root: Path,
     pattern: str,
@@ -725,10 +766,12 @@ def _load_daily_symbol_metric_series(
 ) -> dict[str, list[tuple[str, float]]]:
     out: dict[str, list[tuple[str, float]]] = {}
     for file_path in sorted(repo_root.glob(pattern)):
-        d = date_parser(file_path)
-        if not d:
-            continue
+        file_date = _normalize_date(date_parser(file_path))
         for row in _read_csv_rows(file_path):
+            row_date = _normalize_date(row.get("sourced_date", ""))
+            d = row_date or file_date
+            if not d:
+                continue
             symbol = str(row.get("symbol", "")).strip().upper()
             if not symbol:
                 continue
@@ -896,6 +939,241 @@ def _group_series_from_constituents(
     )
 
 
+def _filter_series_to_as_of(series: MomentumSeries | None, as_of_date: str) -> MomentumSeries | None:
+    if series is None:
+        return None
+    as_of = str(as_of_date or "")[:10]
+    if not as_of:
+        return series
+    filtered = [(d, price) for d, price in series.points if d <= as_of]
+    if not filtered:
+        return MomentumSeries(
+            symbol=series.symbol,
+            source=series.source,
+            as_of_date=as_of,
+            freshness_days=_freshness_days(as_of),
+            points=[],
+        )
+    return MomentumSeries(
+        symbol=series.symbol,
+        source=series.source,
+        as_of_date=as_of,
+        freshness_days=_freshness_days(as_of),
+        points=filtered,
+    )
+
+
+def _filter_metric_series_to_as_of(
+    series: list[tuple[str, float]],
+    as_of_date: str,
+) -> list[tuple[str, float]]:
+    as_of = str(as_of_date or "")[:10]
+    if not as_of:
+        return list(series)
+    return [(d, value) for d, value in series if d <= as_of]
+
+
+def _as_of_absolute_state_from_price_points(series: MomentumSeries) -> str:
+    points = series.points
+    if len(points) < 2:
+        return "UNAVAILABLE"
+
+    start_price = points[0][1]
+    end_price = points[-1][1]
+    if start_price <= 0 or end_price <= 0:
+        return "UNAVAILABLE"
+
+    ret = ((end_price / start_price) - 1.0) * 100.0
+    if ret >= 8.0:
+        return "STRONG"
+    if ret >= 2.0:
+        return "POSITIVE"
+    if ret >= 0.0:
+        return "IMPROVING"
+    if ret <= -8.0:
+        return "WEAK"
+    if ret <= -2.0:
+        return "NEGATIVE"
+    if ret < 0.0:
+        return "NEUTRAL"
+    return "NEUTRAL"
+
+
+def evaluate_momentum_as_of(
+    symbol: str,
+    as_of_date: str,
+    *,
+    repo_root: str | Path = ".",
+) -> dict[str, object]:
+    """Evaluate a symbol using only data observed on or before the requested as-of date.
+
+    This is the historical reporting-only evaluator: it filters price, benchmark,
+    sector-parent, industry-parent, and provider/fundamental evidence to <= as_of_date
+    and deliberately never reuses current runtime summary as historical evidence.
+    """
+
+    root = Path(repo_root)
+    sym = str(symbol or "").strip().upper()
+    as_of = str(as_of_date or "")[:10]
+
+    universe = _load_universe_metadata(root)
+    _holdings_snapshot_date, holdings_as_of = _load_holdings_as_of(root, as_of)
+    holdings_symbols_as_of = [str(item.get("symbol", "")).upper() for item in holdings_as_of]
+    holding_asset_type_by_symbol = {
+        str(item.get("symbol", "")).upper(): str(item.get("asset_type", "")).upper()
+        for item in holdings_as_of
+    }
+    market_series = _filter_series_to_as_of(_load_benchmark_series(root), as_of)
+    market_horizons = _build_horizon_payload(market_series or MomentumSeries(symbol="^GSPC", source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[]))
+
+    security_series = _load_security_price_series(root)
+    filtered_security_series: dict[str, MomentumSeries] = {
+        name: (_filter_series_to_as_of(series, as_of) or MomentumSeries(symbol=name, source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[]))
+        for name, series in security_series.items()
+    }
+    raw_series = _filter_series_to_as_of(security_series.get(sym), as_of)
+    raw_points = [d for d, _ in (raw_series.points if raw_series else [])]
+
+    sec_series = raw_series or MomentumSeries(
+        symbol=sym,
+        source="UNAVAILABLE",
+        as_of_date=as_of,
+        freshness_days=_freshness_days(as_of),
+        points=[],
+    )
+
+    sector_name = str(universe.get(sym, {}).get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    industry_name = str(universe.get(sym, {}).get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+
+    # For holdings symbols on a known as-of portfolio snapshot, align parent
+    # construction semantics with canonical live momentum (holdings cohort).
+    if sym in set(holdings_symbols_as_of):
+        context_symbols = holdings_symbols_as_of
+    else:
+        context_symbols = list(universe.keys())
+
+    sector_proxy = _SECTOR_PROXY_FALLBACKS.get(sector_name.upper())
+    sector_proxy_series = _load_sector_proxy_series(root, security_series=security_series)
+    filtered_sector_proxy: dict[str, MomentumSeries] = {}
+    for sec_sym, series in sector_proxy_series.items():
+        filtered = _filter_series_to_as_of(series, as_of)
+        if filtered is not None:
+            filtered_sector_proxy[sec_sym] = filtered
+
+    sector_series = filtered_sector_proxy.get(sector_proxy) if sector_proxy else None
+    if sector_series is None:
+        candidates = [s for s in context_symbols if str(universe.get(s, {}).get("sector", "")).strip() == sector_name]
+        if candidates:
+            sector_series = _group_series_from_constituents(
+                [symbol_name for symbol_name in candidates if symbol_name in filtered_security_series],
+                filtered_security_series,
+                group_key=f"SECTOR::{sector_name.upper()}",
+            )
+    if sector_series is None:
+        sector_series = MomentumSeries(symbol=f"SECTOR::{sector_name.upper()}", source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[])
+
+    industry_series = None
+    if industry_name != "UNAVAILABLE":
+        industry_candidates = [s for s in context_symbols if str(universe.get(s, {}).get("industry", "")).strip() == industry_name]
+        with_series = [item for item in industry_candidates if item in filtered_security_series and bool(filtered_security_series[item].points)]
+        coverage_pct = (len(with_series) / len(industry_candidates)) if industry_candidates else 0.0
+        constituent_asset_types = {holding_asset_type_by_symbol.get(item, "") for item in industry_candidates}
+        has_equity_like_constituents = any(asset_type in _EQUITY_LIKE_ASSET_TYPES for asset_type in constituent_asset_types)
+        parent_applicable = has_equity_like_constituents if industry_candidates else False
+        parent_available = (
+            parent_applicable
+            and len(industry_candidates) >= _MIN_INDUSTRY_CONSTITUENTS
+            and len(with_series) >= _MIN_INDUSTRY_CONSTITUENTS
+            and coverage_pct >= _MIN_INDUSTRY_PRICE_COVERAGE_PCT
+        )
+        if parent_available:
+            industry_series = _group_series_from_constituents(
+                with_series,
+                filtered_security_series,
+                group_key=f"INDUSTRY::{industry_name.upper()}",
+            )
+    if industry_series is None:
+        industry_series = MomentumSeries(symbol=f"INDUSTRY::{industry_name.upper()}", source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[])
+
+    sec_horizons = _build_horizon_payload(sec_series)
+    sector_horizons = _build_horizon_payload(_filter_series_to_as_of(sector_series, as_of) or sector_series)
+    industry_horizons = _build_horizon_payload(_filter_series_to_as_of(industry_series, as_of) or industry_series)
+
+    abs_state = _classify_absolute_momentum_state(sec_horizons)
+    sec_vs_market = _compute_relative_horizons(sec_horizons, market_horizons, source_label=f"{sym} vs market")
+    sec_vs_sector = _compute_relative_horizons(sec_horizons, sector_horizons, source_label=f"{sym} vs sector")
+    sec_vs_industry = _compute_relative_horizons(sec_horizons, industry_horizons, source_label=f"{sym} vs industry")
+    rel_level = _relative_strength_level(sec_vs_industry)
+    rel_change = _relative_momentum_change(sec_vs_industry)
+
+    fallback_used = abs_state == "UNAVAILABLE" and len(sec_series.points) >= 2
+    if fallback_used:
+        abs_state = _as_of_absolute_state_from_price_points(sec_series)
+
+    ess_series = _load_ess_series(root)
+    zacks_series = _load_daily_symbol_metric_series(root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score")))
+    danelfin_series = _load_daily_symbol_metric_series(root, "data/signals/danelfin/*_danelfin*.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("danelfin_score")))
+    yahoo_pt_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("price_target")))
+    yahoo_abr_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("abr")))
+    fmp_consensus_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/daily/fmp_grades_consensus_*.csv", lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""), lambda row: _to_float(row.get("net_buy_score")))
+    fmp_income_growth_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/latest/latest_fmp_income_growth.csv", lambda _p: _today_utc().isoformat(), lambda row: _to_float(row.get("revenue_growth_q1_yoy")))
+
+    filtered_ess = _filter_metric_series_to_as_of(ess_series.get(sym, []), as_of)
+    filtered_zacks = _filter_metric_series_to_as_of(zacks_series.get(sym, []), as_of)
+    filtered_danelfin = _filter_metric_series_to_as_of(danelfin_series.get(sym, []), as_of)
+    filtered_yahoo_pt = _filter_metric_series_to_as_of(yahoo_pt_series.get(sym, []), as_of)
+    filtered_yahoo_abr = _filter_metric_series_to_as_of(yahoo_abr_series.get(sym, []), as_of)
+    filtered_fmp_consensus = _filter_metric_series_to_as_of(fmp_consensus_series.get(sym, []), as_of)
+    filtered_fmp_growth = _filter_metric_series_to_as_of(fmp_income_growth_series.get(sym, []), as_of)
+
+    fundamentals = _fundamental_snapshot_for_symbol(
+        sym,
+        ess_series={sym: filtered_ess},
+        zacks_series={sym: filtered_zacks},
+        danelfin_series={sym: filtered_danelfin},
+        yahoo_pt_series={sym: filtered_yahoo_pt},
+        yahoo_abr_series={sym: filtered_yahoo_abr},
+        fmp_consensus_series={sym: filtered_fmp_consensus},
+        fmp_income_growth_series={sym: filtered_fmp_growth},
+    )
+    confirmation = _classify_confirmation_state(abs_state, str(fundamentals.get("state", "UNAVAILABLE")))
+    extension_metrics = _extension_metrics(sec_series)
+    extension_state = _classify_extension_state(
+        distance_ma20_pct=extension_metrics["distance_from_ma20_pct"],
+        distance_52w_high_pct=extension_metrics["distance_from_52w_high_pct"],
+        recent_acceleration_pct=extension_metrics["recent_acceleration_pct"],
+        volatility_20d_pct=extension_metrics["volatility_20d_pct"],
+    )
+
+    return {
+        "symbol": sym,
+        "as_of_date": as_of,
+        "provenance": "HISTORICAL_AS_OF",
+        "absolute_state": abs_state,
+        "vs_market": sec_vs_market,
+        "vs_sector": sec_vs_sector,
+        "vs_industry": sec_vs_industry,
+        "relative_strength_level": rel_level,
+        "relative_momentum_change": rel_change,
+        "fundamental_momentum": fundamentals.get("state", "UNAVAILABLE"),
+        "confirmation_state": confirmation,
+        "extension_state": extension_state,
+        "price_points_available": len(raw_points),
+        "market_points_available": len([d for d, _ in (market_series.points if market_series else []) if d <= as_of]),
+        "raw_price_points": raw_points,
+        "raw_market_points": [d for d, _ in (market_series.points if market_series else []) if d <= as_of],
+        "source_constraints": {
+            "price_observations_filtered_to_as_of": True,
+            "benchmark_observations_filtered_to_as_of": True,
+            "sector_parent_observations_filtered_to_as_of": True,
+            "industry_parent_observations_filtered_to_as_of": True,
+            "provider_fundamental_evidence_filtered_to_as_of": True,
+            "current_runtime_summary_not_reused": True,
+            "historical_short_history_fallback_used": fallback_used,
+        },
+    }
+
+
 def _change_label(previous: str | None, current: str | None) -> str:
     if not current:
         return "UNAVAILABLE"
@@ -972,6 +1250,438 @@ def _build_methodology_payload() -> dict[str, object]:
             "LONG": ["12M"],
         },
     }
+
+
+def _momentum_snapshot_index_path(repo_root: Path) -> Path:
+    return repo_root / "data/history/pis/momentum_snapshot_index.csv"
+
+
+def _momentum_snapshot_root(repo_root: Path) -> Path:
+    return repo_root / "data/history/momentum"
+
+
+def _read_snapshot_index(repo_root: Path) -> list[dict[str, str]]:
+    path = _momentum_snapshot_index_path(repo_root)
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _write_snapshot_index(repo_root: Path, rows: list[dict[str, object]]) -> None:
+    path = _momentum_snapshot_index_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "snapshot_id",
+        "as_of_date",
+        "generated_at",
+        "portfolio_reference",
+        "artifact_path",
+        "portfolio_value_if_available",
+        "holdings_count",
+        "market_state",
+        "source_provenance",
+    ]
+    tmp_path = path.with_suffix(".tmp")
+    with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp_path, path)
+
+
+def _snapshot_payload_key(summary: dict[str, object]) -> str:
+    rows = summary.get("portfolio_momentum_map", {}).get("holdings", [])
+    hold = []
+    for row in rows:
+        hold.append(
+            {
+                "symbol": row.get("symbol"),
+                "portfolio_weight": row.get("portfolio_weight"),
+                "absolute_state": row.get("absolute_security_momentum", {}).get("state"),
+                "confirmation_state": row.get("confirmation_state"),
+                "relative_strength_level": row.get("relative_strength_level"),
+                "relative_momentum_change": row.get("relative_momentum_change"),
+                "fundamental_momentum": row.get("fundamental_momentum", {}).get("state"),
+                "extension_state": row.get("extension_state"),
+            }
+        )
+    payload = {
+        "snapshot_date": summary.get("snapshot_date"),
+        "market_state": summary.get("market_momentum", {}).get("market_absolute_momentum", {}).get("state"),
+        "holdings": sorted(hold, key=lambda item: str(item.get("symbol", ""))),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def materialize_momentum_snapshot(*, repo_root: str | Path = ".", portfolio_reference: str = "current-runtime") -> dict[str, object]:
+    root = Path(repo_root)
+    summary = pis_momentum_summary(repo_root=root)
+    as_of_date = str(summary.get("snapshot_date") or "").strip() or _today_utc().isoformat()
+    payload = _snapshot_payload_key(summary)
+    snapshot_id = f"MOM-{as_of_date}-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
+    index_path = _momentum_snapshot_index_path(root)
+    index_rows = _read_snapshot_index(root)
+    for row in index_rows:
+        if row.get("snapshot_id") == snapshot_id:
+            artifact_path = Path(str(row.get("artifact_path", "")))
+            if not artifact_path.is_absolute():
+                artifact_path = root / artifact_path
+            if artifact_path.exists():
+                with artifact_path.open("r", encoding="utf-8") as handle:
+                    return json.load(handle)
+    artifact_dir = _momentum_snapshot_root(root) / f"snapshot_date={as_of_date}" / f"snapshot_id={snapshot_id}"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / "momentum_snapshot.json"
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "as_of_date": as_of_date,
+        "portfolio_snapshot_reference": portfolio_reference,
+        "portfolio_value_if_available": summary.get("total_value"),
+        "holdings_count": len(summary.get("portfolio_momentum_map", {}).get("holdings", [])),
+        "market_state": summary.get("market_momentum", {}).get("market_absolute_momentum", {}).get("state"),
+        "coverage": summary.get("coverage", {}),
+        "sector_rotation": summary.get("sector_rotation", []),
+        "industry_rotation": summary.get("industry_rotation", []),
+        "portfolio_momentum_rows": summary.get("portfolio_momentum_map", {}).get("holdings", []),
+        "methodology": summary.get("methodology", {}),
+        "source_provenance": {
+            "source": "CURRENT_RUNTIME",
+            "portfolio_reference": portfolio_reference,
+            "generation_mode": "reporting_only",
+            "base_summary": "pis_momentum_summary",
+        },
+        "artifact_path": str(artifact_path),
+    }
+    tmp_path = artifact_path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(snapshot, handle, indent=2, sort_keys=True)
+    os.replace(tmp_path, artifact_path)
+    index_rows.append(
+        {
+            "snapshot_id": snapshot_id,
+            "as_of_date": as_of_date,
+            "generated_at": snapshot["generated_at"],
+            "portfolio_reference": portfolio_reference,
+            "artifact_path": str(artifact_path),
+            "portfolio_value_if_available": str(summary.get("total_value", "")),
+            "holdings_count": str(len(summary.get("portfolio_momentum_map", {}).get("holdings", []))),
+            "market_state": str(summary.get("market_momentum", {}).get("market_absolute_momentum", {}).get("state", "")),
+            "source_provenance": "CURRENT_RUNTIME",
+        }
+    )
+    _write_snapshot_index(root, index_rows)
+    return snapshot
+
+
+def pis_momentum_snapshot_history(*, repo_root: str | Path = ".") -> dict[str, object]:
+    root = Path(repo_root)
+    rows = _read_snapshot_index(root)
+    if not rows:
+        return {
+            "snapshot_count": 0,
+            "earliest_snapshot": None,
+            "latest_snapshot": None,
+            "previous_snapshot": None,
+            "snapshots": [],
+        }
+    ordered = sorted(rows, key=lambda row: (str(row.get("as_of_date", "")), str(row.get("generated_at", ""))))
+    latest = ordered[-1]
+    previous = ordered[-2] if len(ordered) > 1 else None
+    return {
+        "snapshot_count": len(ordered),
+        "earliest_snapshot": ordered[0],
+        "latest_snapshot": latest,
+        "previous_snapshot": previous,
+        "snapshots": ordered,
+    }
+
+
+def pis_momentum_compare(*, repo_root: str | Path = ".") -> dict[str, object]:
+    history = pis_momentum_snapshot_history(repo_root=repo_root)
+    latest = history.get("latest_snapshot")
+    prior = history.get("previous_snapshot")
+    if not latest or not prior:
+        return {
+            "direction": "UNAVAILABLE",
+            "current_snapshot": latest.get("snapshot_id") if latest else None,
+            "prior_snapshot": prior.get("snapshot_id") if prior else None,
+            "elapsed_days": None,
+            "coverage_comparability": "INSUFFICIENT_OBSERVED_HISTORY",
+            "positive_transition_weight": 0.0,
+            "negative_transition_weight": 0.0,
+            "mixed_or_unchanged_weight": 0.0,
+            "unavailable_comparison_weight": 0.0,
+            "top_positive_drivers": [],
+            "top_negative_drivers": [],
+        }
+    current_path = Path(str(latest.get("artifact_path", "")))
+    prior_path = Path(str(prior.get("artifact_path", "")))
+    if not current_path.is_absolute():
+        current_path = Path(repo_root) / current_path
+    if not prior_path.is_absolute():
+        prior_path = Path(repo_root) / prior_path
+    if not current_path.exists() or not prior_path.exists():
+        return {
+            "direction": "UNAVAILABLE",
+            "current_snapshot": latest.get("snapshot_id"),
+            "prior_snapshot": prior.get("snapshot_id"),
+            "elapsed_days": None,
+            "coverage_comparability": "OBSERVED_ARTIFACT_MISSING",
+            "positive_transition_weight": 0.0,
+            "negative_transition_weight": 0.0,
+            "mixed_or_unchanged_weight": 0.0,
+            "unavailable_comparison_weight": 0.0,
+            "top_positive_drivers": [],
+            "top_negative_drivers": [],
+        }
+    with current_path.open("r", encoding="utf-8") as handle:
+        current = json.load(handle)
+    with prior_path.open("r", encoding="utf-8") as handle:
+        prior_snapshot = json.load(handle)
+    current_rows = {str(row.get("symbol", "")): row for row in current.get("portfolio_momentum_rows", []) if str(row.get("symbol", ""))}
+    prior_rows = {str(row.get("symbol", "")): row for row in prior_snapshot.get("portfolio_momentum_rows", []) if str(row.get("symbol", ""))}
+    positive = []
+    negative = []
+    mixed = []
+    unavailable = []
+    for symbol in sorted(set(current_rows) | set(prior_rows)):
+        c = current_rows.get(symbol)
+        p = prior_rows.get(symbol)
+        c_state = str((c or {}).get("confirmation_state") or "UNAVAILABLE")
+        p_state = str((p or {}).get("confirmation_state") or "UNAVAILABLE")
+        c_weight = float((c or {}).get("portfolio_weight") or 0.0)
+        p_weight = float((p or {}).get("portfolio_weight") or 0.0)
+        weight = max(c_weight, p_weight)
+        if c_state == "UNAVAILABLE" or p_state == "UNAVAILABLE":
+            unavailable.append((symbol, weight))
+            continue
+        if c_state in {"CONFIRMED_MOMENTUM", "PRICE_ONLY_MOMENTUM"} and p_state in {"UNAVAILABLE", "MOMENTUM_DIVERGENCE", "BROAD_DOWNTREND"}:
+            positive.append((symbol, weight))
+        elif c_state in {"UNAVAILABLE", "MOMENTUM_DIVERGENCE", "BROAD_DOWNTREND"} and p_state in {"CONFIRMED_MOMENTUM", "PRICE_ONLY_MOMENTUM"}:
+            negative.append((symbol, weight))
+        else:
+            mixed.append((symbol, weight))
+
+    positive_weight = sum(w for _, w in positive)
+    negative_weight = sum(w for _, w in negative)
+    mixed_weight = sum(w for _, w in mixed)
+    unavailable_weight = sum(w for _, w in unavailable)
+    direction = "UNAVAILABLE"
+    if max(positive_weight, negative_weight, mixed_weight, unavailable_weight) == 0:
+        direction = "UNAVAILABLE"
+    elif positive_weight > negative_weight and positive_weight > max(mixed_weight, unavailable_weight):
+        direction = "IMPROVING"
+    elif negative_weight > positive_weight and negative_weight > max(mixed_weight, unavailable_weight):
+        direction = "DETERIORATING"
+    elif mixed_weight > max(positive_weight, negative_weight, unavailable_weight):
+        direction = "MIXED"
+    elif unavailable_weight > max(positive_weight, negative_weight, mixed_weight):
+        direction = "UNAVAILABLE"
+    else:
+        direction = "STABLE"
+
+    return {
+        "direction": direction,
+        "current_snapshot": latest.get("snapshot_id"),
+        "prior_snapshot": prior.get("snapshot_id"),
+        "elapsed_days": None,
+        "coverage_comparability": "OBSERVED_SNAPSHOT_PAIR" if len({latest.get("snapshot_id"), prior.get("snapshot_id")}) == 2 else "INSUFFICIENT_OBSERVED_HISTORY",
+        "positive_transition_weight": round(positive_weight, 2),
+        "negative_transition_weight": round(negative_weight, 2),
+        "mixed_or_unchanged_weight": round(mixed_weight, 2),
+        "unavailable_comparison_weight": round(unavailable_weight, 2),
+        "top_positive_drivers": [symbol for symbol, _ in sorted(positive, key=lambda item: item[1], reverse=True)[:5]],
+        "top_negative_drivers": [symbol for symbol, _ in sorted(negative, key=lambda item: item[1], reverse=True)[:5]],
+    }
+
+
+def _build_symbol_evaluation_record(
+    symbol: str,
+    *,
+    repo_root: Path,
+    universe: dict[str, dict[str, str]],
+    market_horizons: dict[str, dict[str, object]],
+    security_series: dict[str, MomentumSeries],
+    sector_proxy_series: dict[str, MomentumSeries],
+    ess_series: dict[str, list[tuple[str, float]]],
+    zacks_series: dict[str, list[tuple[str, float]]],
+    danelfin_series: dict[str, list[tuple[str, float]]],
+    yahoo_pt_series: dict[str, list[tuple[str, float]]],
+    yahoo_abr_series: dict[str, list[tuple[str, float]]],
+    fmp_consensus_series: dict[str, list[tuple[str, float]]],
+    fmp_income_growth_series: dict[str, list[tuple[str, float]]],
+) -> dict[str, object]:
+    symbol = str(symbol).strip().upper()
+    meta = universe.get(symbol, {})
+    sector_name = str(meta.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    industry_name = str(meta.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+    sector_proxy = _SECTOR_PROXY_FALLBACKS.get(sector_name.upper())
+    sector_series = sector_proxy_series.get(sector_proxy) if sector_proxy else None
+    if sector_series is None:
+        sector_candidates = [s for s, m in universe.items() if str(m.get("sector", "")).strip() == sector_name]
+        if sector_candidates:
+            sector_series = _group_series_from_constituents(
+                [s for s in sector_candidates if s in security_series],
+                security_series,
+                group_key=f"SECTOR::{sector_name.upper()}",
+            )
+    if sector_series is None:
+        sector_horizons = _build_horizon_payload(MomentumSeries(symbol=f"SECTOR::{sector_name.upper()}", source="unavailable", as_of_date="", freshness_days=None, points=[]))
+    else:
+        sector_horizons = _build_horizon_payload(sector_series)
+
+    industry_candidates = [s for s, m in universe.items() if str(m.get("industry", "")).strip() == industry_name]
+    if industry_candidates:
+        industry_series = _group_series_from_constituents([s for s in industry_candidates if s in security_series], security_series, group_key=f"INDUSTRY::{industry_name.upper()}")
+    else:
+        industry_series = None
+    if industry_series is None:
+        industry_horizons = _build_horizon_payload(MomentumSeries(symbol=f"INDUSTRY::{industry_name.upper()}", source="unavailable", as_of_date="", freshness_days=None, points=[]))
+    else:
+        industry_horizons = _build_horizon_payload(industry_series)
+
+    sec_series = security_series.get(symbol)
+    sec_horizons = _build_horizon_payload(sec_series if sec_series is not None else MomentumSeries(symbol=symbol, source="unavailable", as_of_date="", freshness_days=None, points=[]))
+    abs_state = _classify_absolute_momentum_state(sec_horizons)
+    sec_vs_market = _compute_relative_horizons(sec_horizons, market_horizons, source_label=f"{symbol} vs market")
+    sec_vs_sector = _compute_relative_horizons(sec_horizons, sector_horizons, source_label=f"{symbol} vs sector")
+    sec_vs_industry = _compute_relative_horizons(sec_horizons, industry_horizons, source_label=f"{symbol} vs industry")
+    rel_level = _relative_strength_level(sec_vs_industry)
+    if rel_level == "UNAVAILABLE":
+        rel_level = _relative_strength_level(sec_vs_market)
+    rel_change = _relative_momentum_change(sec_vs_industry)
+    if rel_change == "UNAVAILABLE":
+        rel_change = _relative_momentum_change(sec_vs_market)
+
+    fundamentals = _fundamental_snapshot_for_symbol(
+        symbol,
+        ess_series=ess_series,
+        zacks_series=zacks_series,
+        danelfin_series=danelfin_series,
+        yahoo_pt_series=yahoo_pt_series,
+        yahoo_abr_series=yahoo_abr_series,
+        fmp_consensus_series=fmp_consensus_series,
+        fmp_income_growth_series=fmp_income_growth_series,
+    )
+    confirmation = _classify_confirmation_state(abs_state, str(fundamentals.get("state", "UNAVAILABLE")))
+    extension_metrics = _extension_metrics(sec_series if sec_series is not None else MomentumSeries(symbol=symbol, source="unavailable", as_of_date="", freshness_days=None, points=[]))
+    extension_state = _classify_extension_state(
+        distance_ma20_pct=extension_metrics["distance_from_ma20_pct"],
+        distance_52w_high_pct=extension_metrics["distance_from_52w_high_pct"],
+        recent_acceleration_pct=extension_metrics["recent_acceleration_pct"],
+        volatility_20d_pct=extension_metrics["volatility_20d_pct"],
+    )
+    sector_class = "UNAVAILABLE"
+    if sector_horizons and any(isinstance(v.get("return_pct"), (int, float)) for v in sector_horizons.values()):
+        sector_level = _relative_strength_level(_compute_relative_horizons(sector_horizons, market_horizons, source_label=f"{sector_name} vs market"))
+        sector_change = _relative_momentum_change(_compute_relative_horizons(sector_horizons, market_horizons, source_label=f"{sector_name} vs market"))
+        if sector_level == "HIGH" and sector_change == "ACCELERATING":
+            sector_class = "LEADING"
+        elif sector_level in {"HIGH", "MEDIUM"} and sector_change == "STABLE":
+            sector_class = "IMPROVING"
+        elif sector_level in {"LOW", "WEAK"} and sector_change in {"FADING", "STABLE"}:
+            sector_class = "LAGGING"
+        elif sector_level == "UNAVAILABLE":
+            sector_class = "UNAVAILABLE"
+        else:
+            sector_class = "NEUTRAL"
+
+    industry_class = "UNAVAILABLE"
+    if industry_horizons and any(isinstance(v.get("return_pct"), (int, float)) for v in industry_horizons.values()):
+        industry_level = _relative_strength_level(_compute_relative_horizons(industry_horizons, market_horizons, source_label=f"{industry_name} vs market"))
+        industry_change = _relative_momentum_change(_compute_relative_horizons(industry_horizons, market_horizons, source_label=f"{industry_name} vs market"))
+        if industry_level == "HIGH" and industry_change == "ACCELERATING":
+            industry_class = "LEADING"
+        elif industry_level in {"HIGH", "MEDIUM"}:
+            industry_class = "IMPROVING"
+        elif industry_level in {"LOW", "WEAK"}:
+            industry_class = "WEAKENING"
+        else:
+            industry_class = "NEUTRAL"
+
+    return {
+        "symbol": symbol,
+        "portfolio_weight": None,
+        "sector": sector_name,
+        "industry": industry_name,
+        "absolute_state": abs_state,
+        "vs_market": sec_vs_market,
+        "vs_sector": sec_vs_sector,
+        "vs_industry": sec_vs_industry,
+        "relative_strength_level": rel_level,
+        "relative_momentum_change": rel_change,
+        "fundamental_momentum": fundamentals,
+        "confirmation_state": confirmation,
+        "extension_state": extension_state,
+        "sector_rotation_context": sector_class,
+        "industry_rotation_context": industry_class,
+        "data_quality": {
+            "price_history_available": sec_series is not None and bool(sec_series.points),
+            "history_points": len(sec_series.points) if sec_series is not None else 0,
+            "history_start": sec_series.points[0][0] if sec_series and sec_series.points else None,
+            "history_end": sec_series.points[-1][0] if sec_series and sec_series.points else None,
+            "sector_available": bool(sector_series and sector_series.points),
+            "industry_available": bool(industry_series and industry_series.points),
+            "fundamental_history_available": bool(fundamentals.get("signals_used")),
+        },
+        "coverage": {
+            "price_history_available": sec_series is not None and bool(sec_series.points),
+            "sector_available": bool(sector_series and sector_series.points),
+            "industry_available": bool(industry_series and industry_series.points),
+            "fundamental_history_available": bool(fundamentals.get("signals_used")),
+        },
+        "provenance": {
+            "as_of_date": sec_series.as_of_date if sec_series is not None else None,
+            "freshness_days": sec_series.freshness_days if sec_series is not None else None,
+            "source": sec_series.source if sec_series is not None else "UNAVAILABLE",
+            "methodology": "reporting_only_security_evaluation",
+        },
+    }
+
+
+def evaluate_momentum_for_symbols(symbols: list[str] | tuple[str, ...], *, repo_root: str | Path = ".") -> list[dict[str, object]]:
+    root = Path(repo_root)
+    coverage_inventory = inventory_current_price_coverage(root)
+    universe = _load_universe_metadata(root)
+    market_series = _load_benchmark_series(root)
+    market_horizons = _build_horizon_payload(market_series)
+    security_series = _load_security_price_series(root)
+    sector_proxy_series = _load_sector_proxy_series(root, security_series=security_series)
+    ess_series = _load_ess_series(root)
+    zacks_series = _load_daily_symbol_metric_series(root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score")))
+    danelfin_series = _load_daily_symbol_metric_series(root, "data/signals/danelfin/*_danelfin*.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("danelfin_score")))
+    yahoo_pt_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("price_target")))
+    yahoo_abr_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("abr")))
+    fmp_consensus_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/daily/fmp_grades_consensus_*.csv", lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""), lambda row: _to_float(row.get("net_buy_score")))
+    fmp_income_growth_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/latest/latest_fmp_income_growth.csv", lambda _p: _today_utc().isoformat(), lambda row: _to_float(row.get("revenue_growth_q1_yoy")))
+
+    results: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for symbol in list(symbols):
+        sym = str(symbol).strip().upper()
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        results.append(
+            _build_symbol_evaluation_record(
+                sym,
+                repo_root=root,
+                universe=universe,
+                market_horizons=market_horizons,
+                security_series=security_series,
+                sector_proxy_series=sector_proxy_series,
+                ess_series=ess_series,
+                zacks_series=zacks_series,
+                danelfin_series=danelfin_series,
+                yahoo_pt_series=yahoo_pt_series,
+                yahoo_abr_series=yahoo_abr_series,
+                fmp_consensus_series=fmp_consensus_series,
+                fmp_income_growth_series=fmp_income_growth_series,
+            )
+        )
+    return results
 
 
 def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:

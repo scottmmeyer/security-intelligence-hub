@@ -2395,6 +2395,9 @@ PIS_DASHBOARD_API_ROUTES = {
     "/api/pis/compliance/summary",
     "/api/pis/momentum/summary",
     "/api/pis/momentum/methodology",
+    "/api/pis/momentum/history",
+    "/api/pis/momentum/compare",
+    "/api/pis/momentum/proposed-buys",
 }
 
 
@@ -2443,7 +2446,14 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
         pis_attribution_latest,
         pis_attribution_summary,
     )
-    from src.pis.momentum_intelligence import pis_momentum_methodology, pis_momentum_summary
+    from src.pis.momentum_intelligence import (
+        evaluate_momentum_for_symbols,
+        materialize_momentum_snapshot,
+        pis_momentum_compare,
+        pis_momentum_methodology,
+        pis_momentum_snapshot_history,
+        pis_momentum_summary,
+    )
     from src.pis.policy_change_summary import policy_impact, policy_summary, policy_timeline
     from src.pis.policy_version_diff import pis_policy_current, pis_policy_diff, pis_policy_history
     from src.pis.recommendation_lineage import pis_lineage_latest, pis_lineage_summary
@@ -2533,6 +2543,32 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
         return pis_momentum_summary(repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/methodology":
         return pis_momentum_methodology(repo_root=_REPO_ROOT)
+    if path == "/api/pis/momentum/history":
+        return pis_momentum_snapshot_history(repo_root=_REPO_ROOT)
+    if path == "/api/pis/momentum/compare":
+        return pis_momentum_compare(repo_root=_REPO_ROOT)
+    if path == "/api/pis/momentum/proposed-buys":
+        symbols = ["IJH", "MDY", "SCHB", "VO", "VOO", "VTI"]
+        rows = []
+        for result in evaluate_momentum_for_symbols(symbols, repo_root=_REPO_ROOT):
+            row = {
+                "symbol": result["symbol"],
+                "current_holding": any(h.get("symbol") == result["symbol"] for h in pis_momentum_summary(repo_root=_REPO_ROOT)["portfolio_momentum_map"]["holdings"]),
+                "absolute_state": result["absolute_state"],
+                "vs_market": result["vs_market"],
+                "vs_sector": result["vs_sector"],
+                "vs_industry": result["vs_industry"],
+                "relative_strength_level": result["relative_strength_level"],
+                "relative_momentum_change": result["relative_momentum_change"],
+                "fundamental_momentum": result["fundamental_momentum"]["state"],
+                "confirmation_state": result["confirmation_state"],
+                "extension_state": result["extension_state"],
+                "sector_context": result["sector_rotation_context"],
+                "industry_context": result["industry_rotation_context"],
+                "coverage": result["coverage"],
+            }
+            rows.append(row)
+        return {"symbols": rows}
     return None
 
 

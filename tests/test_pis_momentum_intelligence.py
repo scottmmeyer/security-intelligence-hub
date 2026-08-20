@@ -16,6 +16,10 @@ from src.pis.momentum_intelligence import (
     _relative_momentum_change,
     _relative_strength_level,
     _series_confidence,
+    evaluate_momentum_as_of,
+    evaluate_momentum_for_symbols,
+    materialize_momentum_snapshot,
+    pis_momentum_snapshot_history,
     pis_momentum_summary,
 )
 
@@ -26,6 +30,236 @@ def _write_csv(path: Path, headers: list[str], rows: list[dict[str, object]]) ->
         writer = csv.DictWriter(handle, fieldnames=headers)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def test_momentum_snapshot_materialization_is_idempotent_and_indexed(tmp_path: Path) -> None:
+    """Materialized snapshots should be durable, indexed, and idempotent for the same as-of state."""
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {
+                "benchmark_id": "BM",
+                "symbol_or_index": "^GSPC",
+                "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(),
+                "adjusted_close": 100 + i,
+                "cumulative_return": 0,
+                "source_provider": "TEST",
+            }
+            for i in range(40)
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "source_file",
+            "source_run_id",
+            "source_format",
+            "partition_path",
+            "snapshot_path",
+            "positions_path",
+            "position_count",
+            "portfolio_value",
+            "cash_value",
+            "equity_value",
+            "ingestion_status",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": "2026-08-19",
+                "account_id": "A1",
+                "account_name": "TEST",
+                "source_file": "x",
+                "source_run_id": "R1",
+                "source_format": "csv",
+                "partition_path": "",
+                "snapshot_path": "",
+                "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+                "position_count": 1,
+                "portfolio_value": 100000,
+                "cash_value": 0,
+                "equity_value": 100000,
+                "ingestion_status": "PASS",
+                "created_at_utc": "2026-08-19T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "symbol",
+            "description",
+            "quantity",
+            "market_value",
+            "percent_of_account",
+            "source_percent_of_account",
+            "cost_basis_total",
+            "security_type",
+            "operational_state",
+            "is_cash_equivalent",
+            "source_file",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": "2026-08-19",
+                "account_id": "A1",
+                "account_name": "TEST",
+                "symbol": "MU",
+                "description": "MU",
+                "quantity": 10,
+                "market_value": 100000,
+                "percent_of_account": 100,
+                "source_percent_of_account": 100,
+                "cost_basis_total": 90000,
+                "security_type": "COMMON STOCK",
+                "operational_state": "ACTIVE_POSITION",
+                "is_cash_equivalent": "False",
+                "source_file": "x",
+                "created_at_utc": "2026-08-19T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 40, 100.0, 1.0, "MU"),
+    )
+
+    first = materialize_momentum_snapshot(repo_root=tmp_path, portfolio_reference="data/history/pis/pis_snapshot_index.csv")
+    second = materialize_momentum_snapshot(repo_root=tmp_path, portfolio_reference="data/history/pis/pis_snapshot_index.csv")
+
+    assert first["snapshot_id"] == second["snapshot_id"]
+    history = pis_momentum_snapshot_history(repo_root=tmp_path)
+    assert history["snapshot_count"] == 1
+    assert history["latest_snapshot"]["as_of_date"] == "2026-08-19"
+    assert first["artifact_path"].endswith("momentum_snapshot.json")
+
+
+def test_non_held_symbol_evaluation_uses_same_security_state_without_mutating_portfolio(tmp_path: Path) -> None:
+    """Shadow evaluation should reuse the same security-level methodology without mutating holdings or weights."""
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {
+                "benchmark_id": "BM",
+                "symbol_or_index": "^GSPC",
+                "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(),
+                "adjusted_close": 100 + i,
+                "cumulative_return": 0,
+                "source_provider": "TEST",
+            }
+            for i in range(40)
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "source_file",
+            "source_run_id",
+            "source_format",
+            "partition_path",
+            "snapshot_path",
+            "positions_path",
+            "position_count",
+            "portfolio_value",
+            "cash_value",
+            "equity_value",
+            "ingestion_status",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": "2026-08-19",
+                "account_id": "A1",
+                "account_name": "TEST",
+                "source_file": "x",
+                "source_run_id": "R1",
+                "source_format": "csv",
+                "partition_path": "",
+                "snapshot_path": "",
+                "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+                "position_count": 1,
+                "portfolio_value": 100000,
+                "cash_value": 0,
+                "equity_value": 100000,
+                "ingestion_status": "PASS",
+                "created_at_utc": "2026-08-19T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "symbol",
+            "description",
+            "quantity",
+            "market_value",
+            "percent_of_account",
+            "source_percent_of_account",
+            "cost_basis_total",
+            "security_type",
+            "operational_state",
+            "is_cash_equivalent",
+            "source_file",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": "2026-08-19",
+                "account_id": "A1",
+                "account_name": "TEST",
+                "symbol": "MU",
+                "description": "MU",
+                "quantity": 10,
+                "market_value": 100000,
+                "percent_of_account": 100,
+                "source_percent_of_account": 100,
+                "cost_basis_total": 90000,
+                "security_type": "COMMON STOCK",
+                "operational_state": "ACTIVE_POSITION",
+                "is_cash_equivalent": "False",
+                "source_file": "x",
+                "created_at_utc": "2026-08-19T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 40, 100.0, 1.0, "MU"),
+    )
+
+    before = pis_momentum_summary(repo_root=tmp_path)
+    shadow = evaluate_momentum_for_symbols(["MU"], repo_root=tmp_path)
+    after = pis_momentum_summary(repo_root=tmp_path)
+
+    assert shadow[0]["symbol"] == "MU"
+    assert shadow[0]["portfolio_weight"] is None
+    assert len(before["portfolio_momentum_map"]["holdings"]) == len(after["portfolio_momentum_map"]["holdings"])
+    assert shadow[0]["confirmation_state"] == next(row for row in before["portfolio_momentum_map"]["holdings"] if row["symbol"] == "MU")["confirmation_state"]
 
 
 def test_metadata_precedence_portfolio_analysis_over_universe(tmp_path: Path) -> None:
@@ -561,6 +795,328 @@ def test_missing_history_and_confidence_metadata() -> None:
     assert horizons["1W"]["history_available"] == 2
     assert horizons["1W"]["confidence"] in {"LOW", "UNAVAILABLE"}
     assert _series_confidence(10, 22) == "LOW"
+
+
+def test_evaluate_momentum_as_of_blocks_future_prices_and_providers(tmp_path: Path) -> None:
+    as_of = "2026-03-15"
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-01-01", "adjusted_close": 100.0, "cumulative_return": 0.0, "source_provider": "TEST"},
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-02-15", "adjusted_close": 110.0, "cumulative_return": 0.1, "source_provider": "TEST"},
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-03-20", "adjusted_close": 130.0, "cumulative_return": 0.3, "source_provider": "TEST"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        [
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-01-01", "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "adjusted_close": 100.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-01-01T00:00:00+00:00"},
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-02-15", "open": 110.0, "high": 110.0, "low": 110.0, "close": 110.0, "adjusted_close": 110.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-02-15T00:00:00+00:00"},
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-03-20", "open": 140.0, "high": 140.0, "low": 140.0, "close": 140.0, "adjusted_close": 140.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-03-20T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [{"security_id": "MU1", "symbol": "MU", "security_type": "EQUITY", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "Semiconductors", "sector": "Technology"}],
+    )
+
+    result = evaluate_momentum_as_of("MU", as_of, repo_root=tmp_path)
+
+    assert result["price_points_available"] == 2
+    assert result["provenance"] == "HISTORICAL_AS_OF"
+    assert result["absolute_state"] in {"STRONG", "IMPROVING", "POSITIVE"}
+    assert result["raw_price_points"] == ["2026-01-01", "2026-02-15"]
+
+
+def test_as_of_evaluation_uses_filtered_historical_provider_evidence(tmp_path: Path) -> None:
+    as_of = "2026-03-15"
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-01-01", "adjusted_close": 100.0, "cumulative_return": 0.0, "source_provider": "TEST"},
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-03-10", "adjusted_close": 115.0, "cumulative_return": 0.15, "source_provider": "TEST"},
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-03-20", "adjusted_close": 130.0, "cumulative_return": 0.3, "source_provider": "TEST"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        [
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-01-01", "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "adjusted_close": 100.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-01-01T00:00:00+00:00"},
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-03-10", "open": 120.0, "high": 120.0, "low": 120.0, "close": 120.0, "adjusted_close": 120.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-03-10T00:00:00+00:00"},
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-03-20", "open": 150.0, "high": 150.0, "low": 150.0, "close": 150.0, "adjusted_close": 150.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-03-20T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [{"security_id": "MU1", "symbol": "MU", "security_type": "EQUITY", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "Semiconductors", "sector": "Technology"}],
+    )
+
+    result = evaluate_momentum_as_of("MU", as_of, repo_root=tmp_path)
+
+    assert result["raw_price_points"] == ["2026-01-01", "2026-03-10"]
+    assert result["market_points_available"] == 2
+    assert result["provenance"] == "HISTORICAL_AS_OF"
+
+
+def test_short_history_fallback_is_historical_as_of_only(tmp_path: Path) -> None:
+    as_of = "2026-03-15"
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-03-01", "adjusted_close": 100.0, "cumulative_return": 0.0, "source_provider": "TEST"},
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": "2026-03-15", "adjusted_close": 101.0, "cumulative_return": 0.01, "source_provider": "TEST"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        [
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-03-01", "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "adjusted_close": 100.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-03-01T00:00:00+00:00"},
+            {"security_id": "MU", "symbol": "MU", "security_type": "EQUITY", "date": "2026-03-15", "open": 103.0, "high": 103.0, "low": 103.0, "close": 103.0, "adjusted_close": 103.0, "volume": 1000, "dividend": 0.0, "split_ratio": 1.0, "source_provider": "TEST", "created_at_utc": "2026-03-15T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [{"security_id": "MU1", "symbol": "MU", "security_type": "EQUITY", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "Semiconductors", "sector": "Technology"}],
+    )
+
+    short_series = MomentumSeries(
+        symbol="MU",
+        source="fixture",
+        as_of_date=as_of,
+        freshness_days=0,
+        points=[("2026-03-01", 100.0), ("2026-03-15", 103.0)],
+    )
+    generic_abs = _classify_absolute_momentum_state(_build_horizon_payload(short_series))
+    as_of_eval = evaluate_momentum_as_of("MU", as_of, repo_root=tmp_path)
+
+    assert generic_abs == "UNAVAILABLE"
+    assert as_of_eval["absolute_state"] in {"POSITIVE", "IMPROVING", "STRONG"}
+    assert as_of_eval["provenance"] == "HISTORICAL_AS_OF"
+    assert as_of_eval["source_constraints"]["historical_short_history_fallback_used"] is True
+
+
+def test_as_of_current_parity_keeps_industry_unavailable_and_no_market_fallback(tmp_path: Path) -> None:
+    as_of = "2026-08-19"
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {
+                "benchmark_id": "BM",
+                "symbol_or_index": "^GSPC",
+                "date": (date(2026, 5, 1) + timedelta(days=i)).isoformat(),
+                "adjusted_close": 100 + i,
+                "cumulative_return": 0,
+                "source_provider": "TEST",
+            }
+            for i in range(120)
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [
+            {"security_id": "D1", "symbol": "DELL", "security_type": "EQUITY", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "Computer Hardware", "sector": "Technology"},
+            {"security_id": "V1", "symbol": "VO", "security_type": "ETF", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "", "sector": "Financials"},
+            {"security_id": "V2", "symbol": "VOO", "security_type": "ETF", "snapshot_date": as_of, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "", "sector": "Financials"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "source_file",
+            "source_run_id",
+            "source_format",
+            "partition_path",
+            "snapshot_path",
+            "positions_path",
+            "position_count",
+            "portfolio_value",
+            "cash_value",
+            "equity_value",
+            "ingestion_status",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": as_of,
+                "account_id": "A1",
+                "account_name": "TEST",
+                "source_file": "x",
+                "source_run_id": "R1",
+                "source_format": "csv",
+                "partition_path": "",
+                "snapshot_path": "",
+                "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+                "position_count": 3,
+                "portfolio_value": 100000,
+                "cash_value": 0,
+                "equity_value": 100000,
+                "ingestion_status": "PASS",
+                "created_at_utc": "2026-08-19T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "symbol",
+            "description",
+            "quantity",
+            "market_value",
+            "percent_of_account",
+            "source_percent_of_account",
+            "cost_basis_total",
+            "security_type",
+            "operational_state",
+            "is_cash_equivalent",
+            "source_file",
+            "created_at_utc",
+        ],
+        [
+            {"snapshot_id": "S1", "snapshot_date": as_of, "account_id": "A1", "account_name": "TEST", "symbol": "DELL", "description": "DELL", "quantity": 10, "market_value": 40000, "percent_of_account": 40, "source_percent_of_account": 40, "cost_basis_total": 30000, "security_type": "COMMON STOCK", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+            {"snapshot_id": "S1", "snapshot_date": as_of, "account_id": "A1", "account_name": "TEST", "symbol": "VO", "description": "VO", "quantity": 10, "market_value": 30000, "percent_of_account": 30, "source_percent_of_account": 30, "cost_basis_total": 28000, "security_type": "ETF", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+            {"snapshot_id": "S1", "snapshot_date": as_of, "account_id": "A1", "account_name": "TEST", "symbol": "VOO", "description": "VOO", "quantity": 10, "market_value": 30000, "percent_of_account": 30, "source_percent_of_account": 30, "cost_basis_total": 28000, "security_type": "ETF", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=DELL/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 5, 1), 120, 100.0, 1.0, "DELL"),
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=VO/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 5, 1), 120, 80.0, 0.5, "VO"),
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=VOO/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 5, 1), 120, 90.0, 0.5, "VOO"),
+    )
+
+    live = pis_momentum_summary(repo_root=tmp_path)
+    live_rows = {row["symbol"]: row for row in live["portfolio_momentum_map"]["holdings"]}
+    dell_asof = evaluate_momentum_as_of("DELL", as_of, repo_root=tmp_path)
+    vo_asof = evaluate_momentum_as_of("VO", as_of, repo_root=tmp_path)
+    voo_asof = evaluate_momentum_as_of("VOO", as_of, repo_root=tmp_path)
+
+    assert _relative_strength_level(live_rows["DELL"]["security_vs_industry"]) == "UNAVAILABLE"
+    assert _relative_strength_level(dell_asof["vs_industry"]) == "UNAVAILABLE"
+    assert live_rows["DELL"]["relative_strength_level"] == "UNAVAILABLE"
+    assert dell_asof["relative_strength_level"] == "UNAVAILABLE"
+
+    assert live_rows["VO"]["relative_strength_level"] == "UNAVAILABLE"
+    assert vo_asof["relative_strength_level"] == "UNAVAILABLE"
+    assert live_rows["VOO"]["relative_strength_level"] == "UNAVAILABLE"
+    assert voo_asof["relative_strength_level"] == "UNAVAILABLE"
+
+    assert dell_asof["source_constraints"]["historical_short_history_fallback_used"] is False
+    assert vo_asof["source_constraints"]["historical_short_history_fallback_used"] is False
+    assert voo_asof["source_constraints"]["historical_short_history_fallback_used"] is False
+
+
+def test_latest_provider_file_uses_exact_sourced_date_for_as_of_filter(tmp_path: Path) -> None:
+    as_of_1 = "2026-08-18"
+    as_of_2 = "2026-08-19"
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [
+            {"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": (date(2026, 5, 1) + timedelta(days=i)).isoformat(), "adjusted_close": 100 + i, "cumulative_return": 0, "source_provider": "TEST"}
+            for i in range(120)
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [{"security_id": "P1", "symbol": "PLTR", "security_type": "EQUITY", "snapshot_date": as_of_2, "run_id": "R1", "market_cap_bucket": "L", "geography": "US", "country": "US", "industry": "Software", "sector": "Technology"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "source_file", "source_run_id", "source_format", "partition_path", "snapshot_path", "positions_path", "position_count", "portfolio_value", "cash_value", "equity_value", "ingestion_status", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": as_of_2, "account_id": "A1", "account_name": "TEST", "source_file": "x", "source_run_id": "R1", "source_format": "csv", "partition_path": "", "snapshot_path": "", "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv", "position_count": 1, "portfolio_value": 100000, "cash_value": 0, "equity_value": 100000, "ingestion_status": "PASS", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "symbol", "description", "quantity", "market_value", "percent_of_account", "source_percent_of_account", "cost_basis_total", "security_type", "operational_state", "is_cash_equivalent", "source_file", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": as_of_2, "account_id": "A1", "account_name": "TEST", "symbol": "PLTR", "description": "PLTR", "quantity": 10, "market_value": 100000, "percent_of_account": 100, "source_percent_of_account": 100, "cost_basis_total": 90000, "security_type": "COMMON STOCK", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=PLTR/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 5, 1), 120, 10.0, 0.2, "PLTR"),
+    )
+    _write_csv(
+        tmp_path / "data/signals/zacks/2026-08-18_zacks.csv",
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [{"symbol": "PLTR", "zacks_rank": 4, "zacks_score": 2, "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-08-18"}],
+    )
+    _write_csv(
+        tmp_path / "data/signals/zacks/latest_zacks.csv",
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [{"symbol": "PLTR", "zacks_rank": 2, "zacks_score": 4, "abr": "", "price_target": "", "eps_growth": "", "sourced_date": "2026-08-19"}],
+    )
+
+    older = evaluate_momentum_as_of("PLTR", as_of_1, repo_root=tmp_path)
+    newer = evaluate_momentum_as_of("PLTR", as_of_2, repo_root=tmp_path)
+    assert older["fundamental_momentum"] == "UNAVAILABLE"
+    assert newer["fundamental_momentum"] in {"STABLE", "IMPROVING", "DETERIORATING"}
+
+
+def test_proposed_buy_membership_uses_positions_not_shadow_weight() -> None:
+    holdings_symbols = {"VO", "VOO", "MU"}
+    proposed = ["IJH", "MDY", "SCHB", "VO", "VOO", "VTI"]
+    membership = {symbol: (symbol in holdings_symbols) for symbol in proposed}
+
+    assert membership["IJH"] is False
+    assert membership["MDY"] is False
+    assert membership["SCHB"] is False
+    assert membership["VTI"] is False
+    assert membership["VO"] is True
+    assert membership["VOO"] is True
+
+
+def test_direction_partition_percentages_reconcile_to_declared_denominator() -> None:
+    total_denom = 101.02
+    parts = {
+        "positive": 50.46,
+        "negative": 0.0,
+        "unchanged": 0.0,
+        "unavailable": 50.56,
+    }
+    pct_sum = sum((value / total_denom) * 100.0 for value in parts.values())
+    assert abs(pct_sum - 100.0) <= 0.02
+
+
+def test_backward_lens_partition_percentages_reconcile() -> None:
+    total_denom = 100.0
+    parts = {
+        "positive": 50.02,
+        "negative": 0.0,
+        "unchanged": 0.0,
+        "unavailable": 49.98,
+    }
+    pct_sum = sum((value / total_denom) * 100.0 for value in parts.values())
+    assert abs(pct_sum - 100.0) <= 0.02
 
 
 def test_stale_input_freshness_metadata() -> None:
