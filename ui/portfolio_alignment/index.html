@@ -953,6 +953,77 @@
         box-shadow: 0 6px 18px rgba(20,20,20,0.05);
         border-top: 3px solid var(--accent);
       }
+      .dq-empty-state {
+        margin-top: 14px;
+        padding: 16px 18px;
+        border: 1px solid #e4ddd3;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #fcfaf6 0%, #f7f2ea 100%);
+      }
+      .dq-empty-state-lead {
+        font-size: 0.95rem;
+        font-weight: 800;
+        color: var(--text);
+        margin-bottom: 6px;
+      }
+      .dq-empty-state-sub {
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin-bottom: 12px;
+        line-height: 1.5;
+      }
+      .dq-empty-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      @media (max-width: 900px) {
+        .dq-empty-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      .dq-empty-metric, .dq-empty-field {
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #fff;
+        border: 1px solid #e9e0d6;
+      }
+      .dq-empty-metric-label, .dq-empty-field-label, .dq-empty-reason-title {
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .dq-empty-metric-value, .dq-empty-field-value {
+        font-size: 0.96rem;
+        font-weight: 800;
+        color: var(--text);
+      }
+      .dq-empty-reason-block { margin-bottom: 12px; }
+      .dq-empty-reason-chips {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .dq-empty-reason-chip {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #fff;
+        border: 1px solid #e3d8ca;
+        color: #755c3d;
+        font-size: 0.7rem;
+        font-weight: 700;
+      }
+      .dq-empty-note {
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.5;
+        border-top: 1px solid #e5ddd1;
+        padding-top: 10px;
+      }
 
       /* ── ARCH-02: Reduction Queue ────────────────────────────────────────── */
       .rq-section { margin-top: 16px; }
@@ -4183,6 +4254,6 @@
     </div><!-- /shell -->
 
     <script src="../signal_translation_registry.js?v=1"></script>
-    <script src="app.js?v=28"></script>
+    <script src="app.js?v=29"></script>
   </body>
 </html>

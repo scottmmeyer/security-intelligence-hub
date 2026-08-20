@@ -3210,25 +3210,94 @@ function toggleNbaSection(id) {
 let _dqShowAll = false;
 const DQ_DEFAULT_ROWS = 10;
 
+function _dqEmptyStateHtml(data, dq, plan, queue) {
+  const planRecs = plan.recommendations || [];
+  const candidateCount = dq.candidate_count != null ? dq.candidate_count : queue.length;
+  const queueRowCount = queue.length;
+  const planRecommendationCount = planRecs.length;
+  const preflight = data.analysis_preflight || {};
+  const preflightStatus = preflight.status || (dq.suppressed_by_preflight ? "BLOCKED" : "DEGRADED");
+  const reasonCodes = [];
+  for (const code of (preflight.reason_codes || [])) reasonCodes.push(code);
+  for (const code of (dq.preflight_reason_codes || [])) reasonCodes.push(code);
+  for (const code of (plan.preflight_reason_codes || [])) reasonCodes.push(code);
+  const uniqueReasonCodes = [...new Set(reasonCodes.filter(Boolean).map(code => String(code)))];
+  const suppressedByPreflight = dq.suppressed_by_preflight != null
+    ? dq.suppressed_by_preflight
+    : (plan.suppressed_by_preflight != null ? plan.suppressed_by_preflight : null);
+
+  const reasonHtml = uniqueReasonCodes.length > 0 ? `
+    <div class="dq-empty-reason-block">
+      <div class="dq-empty-reason-title">Gate summary</div>
+      <div class="dq-empty-reason-chips">
+        ${uniqueReasonCodes.map(code => `<span class="dq-empty-reason-chip">${escHtml(code)}</span>`).join("")}
+      </div>
+    </div>` : "";
+
+  const suppressedHtml = suppressedByPreflight != null ? `
+    <div class="dq-empty-field">
+      <span class="dq-empty-field-label">Suppressed by preflight</span>
+      <span class="dq-empty-field-value">${suppressedByPreflight ? "YES" : "NO"}</span>
+    </div>` : "";
+
+  return `<div class="dq-empty-state">
+    <div class="dq-empty-state-lead">No canonical deployment candidates today.</div>
+    <div class="dq-empty-state-sub">Reason: no securities currently satisfy the canonical deployment-eligibility gates.</div>
+    <div class="dq-empty-metrics">
+      <div class="dq-empty-metric">
+        <span class="dq-empty-metric-label">Queue candidates</span>
+        <span class="dq-empty-metric-value">${candidateCount}</span>
+      </div>
+      <div class="dq-empty-metric">
+        <span class="dq-empty-metric-label">Queue rows</span>
+        <span class="dq-empty-metric-value">${queueRowCount}</span>
+      </div>
+      <div class="dq-empty-metric">
+        <span class="dq-empty-metric-label">Planned recommendations</span>
+        <span class="dq-empty-metric-value">${planRecommendationCount}</span>
+      </div>
+      <div class="dq-empty-metric">
+        <span class="dq-empty-metric-label">Preflight</span>
+        <span class="dq-empty-metric-value">${escHtml(preflightStatus)}</span>
+      </div>
+      ${suppressedHtml}
+    </div>
+    ${reasonHtml}
+    <div class="dq-empty-note">
+      Portfolio Action Pipeline contains broader HOLD / WATCH / TRIM / allocation guidance and is separate from the ranked deployment queue.
+      <a href="#portfolioActionPipelineSection">Jump to Portfolio Action Pipeline</a>.
+    </div>
+  </div>`;
+}
+
 function renderDeploymentQueue(data) {
   const el = document.getElementById("deploymentQueueContainer");
   if (!el) return;
 
-  const dq = data.deployment_queue;
-  if (!dq || !Array.isArray(dq.queue) || dq.queue.length === 0) {
-    el.innerHTML = "";
+  const dq = data.deployment_queue || {};
+  const queue = Array.isArray(dq.queue) ? dq.queue : [];
+  const plan = data.deployment_plan || {};
+  const planRecs = plan.recommendations || [];
+  const hasQueue = queue.length > 0;
+
+  if (!hasQueue) {
+    el.innerHTML = `<div class="dq-panel">
+      <div class="dq-section-header">
+        <span class="dq-section-title">Top Trades to Consider</span>
+        <span class="dq-version-badge">${escHtml(dq.queue_version || "CW-DAS-1.0")}</span>
+        <span class="dq-advisory-note">Canonical deployment candidates · Guidance only</span>
+      </div>
+      ${_dqEmptyStateHtml(data, dq, plan, queue)}
+    </div>`;
     return;
   }
 
   _dqShowAll = false;  // reset on each render
 
-  const queue   = dq.queue;
   const cashCtx = dq.cash_context || {};
   const top     = queue[0] || {};
 
   // Phase 7.5F — Build deployment plan lookup (available when plan is pre-loaded)
-  const plan = data.deployment_plan || {};
-  const planRecs = plan.recommendations || [];
   const _dpBySymbol = {};
   for (const r of planRecs) _dpBySymbol[r.symbol] = r;
   const hasPlan = planRecs.length > 0;
@@ -3401,9 +3470,9 @@ function renderDeploymentQueue(data) {
 
   el.innerHTML = `<div class="dq-panel">
     <div class="dq-section-header">
-      <span class="dq-section-title">Capital Deployment Queue</span>
+      <span class="dq-section-title">Top Trades to Consider</span>
       <span class="dq-version-badge">${escHtml(dq.queue_version || "CW-DAS-1.0")}</span>
-      <span class="dq-advisory-note">Guidance only — not a trade instruction</span>
+      <span class="dq-advisory-note">Canonical deployment candidates · Guidance only</span>
     </div>
     ${summaryHtml}
     ${cashContextHtml}
