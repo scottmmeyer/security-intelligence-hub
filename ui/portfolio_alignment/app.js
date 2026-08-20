@@ -63,6 +63,65 @@ function _clearSavedResult() {
   try { localStorage.removeItem(_STORAGE_KEY); } catch (_) {}
 }
 
+function _safeVersionedValue(data, key) {
+  if (!data || typeof data !== "object") return undefined;
+  const snapshot = data.snapshot && typeof data.snapshot === "object" ? data.snapshot : null;
+  const runMetadata = data.run_metadata && typeof data.run_metadata === "object" ? data.run_metadata : null;
+  const candidates = [
+    data[key],
+    snapshot && snapshot[key],
+    runMetadata && runMetadata[key],
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== undefined && candidate !== null && candidate !== "" && candidate !== "null" && candidate !== "undefined") {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function _getAccountName(data) {
+  return _safeVersionedValue(data, "account_name") || "Portfolio";
+}
+
+function _getPortfolioDate(data) {
+  return _safeVersionedValue(data, "snapshot_date") || "";
+}
+
+function _getHoldingCount(data) {
+  const value = _safeVersionedValue(data, "holding_count");
+  return value != null ? Number(value) : undefined;
+}
+
+function _getPortfolioValue(data) {
+  return _safeVersionedValue(data, "total_market_value");
+}
+
+function _getAlignmentScore(data) {
+  return _safeVersionedValue(data, "overall_alignment_score");
+}
+
+function _getRecommendationCount(data) {
+  const value = _safeVersionedValue(data, "recommendation_count");
+  return value != null ? Number(value) : undefined;
+}
+
+function _getConcentrationLabel(data) {
+  const value = _safeVersionedValue(data, "concentration_tier");
+  return value != null ? String(value) : "UNKNOWN";
+}
+
+function _getFormatLabel(data) {
+  const value = _safeVersionedValue(data, "source_format");
+  return value != null ? String(value) : "—";
+}
+
+function _getMandateLabel(data) {
+  const selected = document.getElementById("mandateSelect") && document.getElementById("mandateSelect").value;
+  const value = _safeVersionedValue(data, "mandate") || _safeVersionedValue(data, "mandate_type") || selected || "CONCENTRATED_ALPHA";
+  return value != null && value !== "" && value !== "null" && value !== "undefined" ? String(value) : "CONCENTRATED_ALPHA";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,14 +164,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const saved = _loadSavedResult();
   if (saved) {
     _analysisResult = saved;
-    const ts = saved.snapshot_date || "";
-    const savedMandate = saved.mandate_type || "CONCENTRATED_ALPHA";
-    // Sync mandate selector to the mandate used in the saved analysis
+    const ts = _getPortfolioDate(saved);
+    const savedMandate = _getMandateLabel(saved);
     const mandateSel = document.getElementById("mandateSelect");
     if (mandateSel) mandateSel.value = savedMandate;
     showStatus("info",
-      `Showing last analysis — <strong>${saved.account_name || "Portfolio"}</strong> ` +
-      `(${saved.holding_count} holdings, ${ts}, mandate: <strong>${savedMandate}</strong>). ` +
+      `Showing last analysis — <strong>${_getAccountName(saved)}</strong> ` +
+      `(${_getHoldingCount(saved) ?? "—"} holdings, ${ts}, mandate: <strong>${savedMandate}</strong>). ` +
       `Upload a new file to re-analyze.`);
     document.getElementById("clearBtn").style.display = "inline-block";
     renderResults(saved);
@@ -1136,17 +1194,22 @@ function renderMarketRegimeGuardrailCard(g) {
 // ─────────────────────────────────────────────────────────────────────────────
 function renderKPIs(data) {
   const el = document.getElementById("runSummary");
-  const score = data.overall_alignment_score;
-  const scoreLabel = score >= 0.85 ? "Strong" : score >= 0.65 ? "Moderate" : "Needs attention";
-  const concTier = data.concentration_tier || "UNKNOWN";
+  const scoreRaw = _getAlignmentScore(data);
+  const score = Number(scoreRaw);
+  const scoreLabel = Number.isFinite(score) ? (score >= 0.85 ? "Strong" : score >= 0.65 ? "Moderate" : "Needs attention") : "Unavailable";
+  const holdingCount = _getHoldingCount(data);
+  const portfolioValue = _getPortfolioValue(data);
+  const recommendationCount = _getRecommendationCount(data);
+  const concTier = _getConcentrationLabel(data);
+  const formatLabel = _getFormatLabel(data);
 
   el.innerHTML = `
-    ${kpiCard((data.holding_count || 0).toString(), "Holdings")}
-    ${kpiCard(formatMV(data.total_market_value), "Portfolio Value")}
-    ${kpiCard((score * 100).toFixed(0) + "%", "Legacy Alignment", scoreLabel)}
-    ${kpiCard((data.recommendation_count || 0).toString(), "Recommendations")}
+    ${kpiCard(holdingCount != null ? String(holdingCount) : "—", "Holdings")}
+    ${kpiCard(portfolioValue != null ? formatMV(portfolioValue) : "—", "Portfolio Value")}
+    ${kpiCard(Number.isFinite(score) ? `${(score * 100).toFixed(0)}%` : "—", "Legacy Alignment", scoreLabel)}
+    ${kpiCard(recommendationCount != null ? String(recommendationCount) : "—", "Recommendations")}
     ${kpiCard(concTier, "Concentration", "", `tier-${concTier}`)}
-    ${kpiCard(data.source_format || "—", "Format")}
+    ${kpiCard(formatLabel, "Format")}
   `;
 }
 
@@ -1207,7 +1270,7 @@ function renderMandatePanel(data) {
   const el = document.getElementById("mandatePanelContainer");
   if (!el) return;
 
-  const mandateDisplay = data.mandate_display_name || data.mandate_type || "—";
+  const mandateDisplay = _getMandateLabel(data);
   const cashCtx        = data.cash_mandate_context || "";
   const asym           = data.intentional_asymmetry || {};
   const asymState      = asym.asymmetry_state || "";
@@ -1330,7 +1393,8 @@ function renderConcentration(c) {
   const hhi = parseFloat(c.herfindahl_index || 0);
 
   // Alignment score ring
-  const overall = _analysisResult ? _analysisResult.overall_alignment_score || 0 : 0;
+  const overallRaw = _getAlignmentScore(_analysisResult);
+  const overall = Number.isFinite(Number(overallRaw)) ? Number(overallRaw) : 0;
   const ringHtml = scoreRing(overall);
   const hyperDirect = parseFloat(c.mega_subtier_direct_pct || 0) || 0;
   const hyperEtf = parseFloat(c.mega_subtier_etf_derived_pct || 0) || 0;
@@ -2520,7 +2584,6 @@ function renderReplayAlignment(data) {
 
   const replaySymbols = replayBacked
     .sort((a, b) => parseFloat(b.percent_of_portfolio || 0) - parseFloat(a.percent_of_portfolio || 0))
-    .slice(0, 12)
     .map(o => `<span class="rec-symbol" title="Replay-supported">${o.symbol}</span>`)
     .join(" ");
 
