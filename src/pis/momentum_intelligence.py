@@ -38,6 +38,15 @@ _SECTOR_PROXY_FALLBACKS = dict(SECTOR_PARENT_ETF_MAP)
 _MIN_INDUSTRY_CONSTITUENTS = 2
 _MIN_INDUSTRY_PRICE_COVERAGE_PCT = 0.6
 
+_EQUITY_LIKE_ASSET_TYPES = {
+    "EQUITY",
+    "EQUITIES",
+    "STOCK",
+    "COMMON STOCK",
+    "COMMON_STOCK",
+    "ADR",
+}
+
 _TAXONOMY_UNKNOWN_VALUES = {"", "UNKNOWN", "N/A", "NA", "NONE"}
 
 
@@ -695,11 +704,13 @@ def _load_holdings(repo_root: Path) -> tuple[str, list[dict[str, object]]]:
             continue
         weight = _to_float(row.get("percent_of_account"))
         market_value = _to_float(row.get("market_value"))
+        asset_type = str(row.get("security_type", "")).strip().upper()
         out.append(
             {
                 "symbol": symbol,
                 "portfolio_weight": round(float(weight or 0.0), 4),
                 "market_value": round(float(market_value or 0.0), 4),
+                "asset_type": asset_type,
             }
         )
     out.sort(key=lambda x: float(x.get("market_value", 0.0)), reverse=True)
@@ -1017,6 +1028,10 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
 
     # Sector universe from holdings metadata.
     holdings_symbols = [str(h["symbol"]) for h in holdings]
+    holding_asset_type_by_symbol = {
+        str(h["symbol"]): str(h.get("asset_type", "")).upper()
+        for h in holdings
+    }
     sectors: dict[str, list[str]] = {}
     industries: dict[str, list[str]] = {}
     for symbol in holdings_symbols:
@@ -1155,7 +1170,25 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     for industry_name, symbols in sorted(industries.items()):
         with_series = [s for s in symbols if s in security_series and security_series[s].points]
         coverage_pct = (len(with_series) / len(symbols)) if symbols else 0.0
+
+        constituent_asset_types = {holding_asset_type_by_symbol.get(s, "") for s in symbols}
+        has_equity_like_constituents = any(asset_type in _EQUITY_LIKE_ASSET_TYPES for asset_type in constituent_asset_types)
+
+        if not has_equity_like_constituents:
+            parent_applicable = False
+            parent_blocker = "ASSET_CLASS_NOT_MEANINGFUL"
+        else:
+            parent_applicable = True
+            if len(symbols) < _MIN_INDUSTRY_CONSTITUENTS:
+                parent_blocker = "INSUFFICIENT_CONSTITUENTS"
+            elif coverage_pct < _MIN_INDUSTRY_PRICE_COVERAGE_PCT:
+                parent_blocker = "INSUFFICIENT_HISTORY"
+            else:
+                parent_blocker = "NONE"
+
         parent_available = (
+            parent_applicable
+            and
             len(with_series) >= _MIN_INDUSTRY_CONSTITUENTS
             and coverage_pct >= _MIN_INDUSTRY_PRICE_COVERAGE_PCT
         )
@@ -1213,8 +1246,13 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
                 "industry_source": str(universe.get(first_symbol, {}).get("industry_source", "UNAVAILABLE")),
                 "industry_granularity": str(universe.get(first_symbol, {}).get("industry_granularity", "UNAVAILABLE")),
                 "constituent_count": len(symbols),
+                "parent_applicable": parent_applicable,
+                "parent_applicability_reason": "APPLICABLE" if parent_applicable else parent_blocker,
                 "parent_available": parent_available and industry_series is not None,
                 "parent_methodology": "CONSTITUENT_DERIVED" if parent_available and industry_series is not None else "UNAVAILABLE",
+                "direct_proxy_available": False,
+                "recognized_proxy_available": False,
+                "parent_blocker": parent_blocker,
                 "parent_constituents_with_history": len(with_series),
                 "parent_constituent_coverage_pct": round(coverage_pct, 4) if symbols else 0.0,
                 "parent_min_constituents_required": _MIN_INDUSTRY_CONSTITUENTS,
@@ -1483,8 +1521,14 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     sector_parent_coverage_pct = round((sector_parent_available / sector_parent_total) * 100.0, 2) if sector_parent_total else 0.0
 
     industry_parent_total = len(industry_rows)
-    industry_parent_available = len([row for row in industry_rows if bool(row.get("parent_available"))])
-    industry_parent_coverage_pct = round((industry_parent_available / industry_parent_total) * 100.0, 2) if industry_parent_total else 0.0
+    industry_parent_applicable = len([row for row in industry_rows if bool(row.get("parent_applicable"))])
+    industry_parent_not_applicable = industry_parent_total - industry_parent_applicable
+    industry_parent_available = len([
+        row
+        for row in industry_rows
+        if bool(row.get("parent_applicable")) and bool(row.get("parent_available"))
+    ])
+    industry_parent_coverage_pct = round((industry_parent_available / industry_parent_applicable) * 100.0, 2) if industry_parent_applicable else 0.0
 
     applicable_symbols = {row.symbol for row in coverage_inventory.rows}
     applicable_weights = {
@@ -1510,7 +1554,21 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     absolute_symbols = {str(row.get("symbol")) for row in applicable_rows if str(row.get("absolute_security_momentum", {}).get("state")) != "UNAVAILABLE"}
     market_relative_symbols = {str(row.get("symbol")) for row in applicable_rows if _has_relative_evidence(row.get("security_vs_market", {}))}
     sector_relative_symbols = {str(row.get("symbol")) for row in applicable_rows if _has_relative_evidence(row.get("security_vs_sector", {}))}
-    industry_relative_symbols = {str(row.get("symbol")) for row in applicable_rows if _has_relative_evidence(row.get("security_vs_industry", {}))}
+    industry_rows_by_name = {
+        str(row.get("industry")): row
+        for row in industry_rows
+    }
+    industry_relative_applicable_symbols = {
+        str(row.get("symbol"))
+        for row in applicable_rows
+        if bool(industry_rows_by_name.get(str(row.get("industry")), {}).get("parent_applicable"))
+    }
+    industry_relative_symbols = {
+        str(row.get("symbol"))
+        for row in applicable_rows
+        if str(row.get("symbol")) in industry_relative_applicable_symbols
+        and _has_relative_evidence(row.get("security_vs_industry", {}))
+    }
     full_hierarchy_symbols = absolute_symbols & market_relative_symbols & sector_relative_symbols & industry_relative_symbols
 
     def _pct(count: int, denom: int) -> float:
@@ -1519,18 +1577,27 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     absolute_evaluable_security_pct = _pct(len(absolute_symbols), len(applicable_rows))
     market_relative_evaluable_security_pct = _pct(len(market_relative_symbols), len(applicable_rows))
     sector_relative_evaluable_security_pct = _pct(len(sector_relative_symbols), len(applicable_rows))
-    industry_relative_evaluable_security_pct = _pct(len(industry_relative_symbols), len(applicable_rows))
-    full_hierarchy_security_pct = _pct(len(full_hierarchy_symbols), len(applicable_rows))
+    industry_relative_evaluable_security_pct = _pct(len(industry_relative_symbols), len(industry_relative_applicable_symbols))
+    full_hierarchy_security_pct = _pct(len(full_hierarchy_symbols), len(industry_relative_applicable_symbols))
 
-    def _weight_pct(symbols: set[str]) -> float:
+    def _weight_pct(symbols: set[str], *, denominator_symbols: set[str] | None = None) -> float:
+        if denominator_symbols is None:
+            denominator_symbols = set(applicable_weights.keys())
         weight = sum(applicable_weights.get(symbol, 0.0) for symbol in symbols)
-        return round((weight / applicable_total_weight) * 100.0, 2) if applicable_total_weight > 0 else 0.0
+        denominator_weight = sum(applicable_weights.get(symbol, 0.0) for symbol in denominator_symbols)
+        return round((weight / denominator_weight) * 100.0, 2) if denominator_weight > 0 else 0.0
 
     absolute_evaluable_weight_pct = _weight_pct(absolute_symbols)
     market_relative_evaluable_weight_pct = _weight_pct(market_relative_symbols)
     sector_relative_evaluable_weight_pct = _weight_pct(sector_relative_symbols)
-    industry_relative_evaluable_weight_pct = _weight_pct(industry_relative_symbols)
-    full_hierarchy_weight_pct = _weight_pct(full_hierarchy_symbols)
+    industry_relative_evaluable_weight_pct = _weight_pct(
+        industry_relative_symbols,
+        denominator_symbols=industry_relative_applicable_symbols,
+    )
+    full_hierarchy_weight_pct = _weight_pct(
+        full_hierarchy_symbols,
+        denominator_symbols=industry_relative_applicable_symbols,
+    )
 
     total_weight = sum(float(row.get("portfolio_weight") or 0.0) for row in portfolio_rows)
     evaluable_weight = sum(
@@ -1586,8 +1653,10 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
                 "available": sector_parent_available,
             },
             "industry_parent_counts": {
-                "required": industry_parent_total,
+                "required": industry_parent_applicable,
                 "available": industry_parent_available,
+                "total": industry_parent_total,
+                "not_applicable": industry_parent_not_applicable,
             },
         },
         "data_availability": {

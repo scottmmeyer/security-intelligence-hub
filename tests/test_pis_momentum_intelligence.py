@@ -1174,3 +1174,135 @@ def test_industry_uses_security_metadata_when_distinct(tmp_path: Path) -> None:
     assert mu_row["industry"] == "SEMICONDUCTORS"
     assert mu_row["industry_source"] == "SECURITY_METADATA"
     assert mu_row["industry_granularity"] == "DISTINCT_INDUSTRY"
+
+
+def test_industry_parent_coverage_uses_applicable_denominator(tmp_path: Path) -> None:
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [
+            {"security_id": "AAA1", "symbol": "AAA", "security_type": "EQUITY", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "LARGE", "geography": "US", "country": "US", "industry": "SEMICONDUCTORS", "sector": "TECHNOLOGY"},
+            {"security_id": "BBB1", "symbol": "BBB", "security_type": "EQUITY", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "LARGE", "geography": "US", "country": "US", "industry": "SEMICONDUCTORS", "sector": "TECHNOLOGY"},
+            {"security_id": "SPX1", "symbol": "SPAXX", "security_type": "MUTUAL_FUND", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "N/A", "geography": "US", "country": "US", "industry": "MONEY MARKET", "sector": "CASH"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "source_file", "source_run_id", "source_format", "partition_path", "snapshot_path", "positions_path", "position_count", "portfolio_value", "cash_value", "equity_value", "ingestion_status", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "source_file": "x", "source_run_id": "R1", "source_format": "csv", "partition_path": "", "snapshot_path": "", "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv", "position_count": 3, "portfolio_value": 100000, "cash_value": 10000, "equity_value": 90000, "ingestion_status": "PASS", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "symbol", "description", "quantity", "market_value", "percent_of_account", "source_percent_of_account", "cost_basis_total", "security_type", "operational_state", "is_cash_equivalent", "source_file", "created_at_utc"],
+        [
+            {"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "AAA", "description": "AAA", "quantity": 10, "market_value": 45000, "percent_of_account": 45, "source_percent_of_account": 45, "cost_basis_total": 40000, "security_type": "EQUITY", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+            {"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "BBB", "description": "BBB", "quantity": 10, "market_value": 45000, "percent_of_account": 45, "source_percent_of_account": 45, "cost_basis_total": 40000, "security_type": "EQUITY", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+            {"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "SPAXX", "description": "SPAXX", "quantity": 1, "market_value": 10000, "percent_of_account": 10, "source_percent_of_account": 10, "cost_basis_total": 10000, "security_type": "MUTUAL_FUND", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "True", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [{"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "adjusted_close": 100 + i, "cumulative_return": 0, "source_provider": "TEST"} for i in range(300)],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=AAA/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 300, 100.0, 0.2, "AAA"),
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=BBB/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 300, 95.0, 0.25, "BBB"),
+    )
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    counts = payload["coverage"]["industry_parent_counts"]
+    assert counts["total"] == 2
+    assert counts["required"] == 1
+    assert counts["not_applicable"] == 1
+    assert counts["available"] == 1
+    assert payload["coverage"]["industry_parent_coverage_pct"] == 100.0
+
+    hierarchy = payload["coverage"]["hierarchy_availability"]
+    assert hierarchy["industry_relative_evaluable_security_pct"] == 100.0
+    assert hierarchy["full_hierarchy_security_pct"] == 100.0
+
+
+def test_non_equity_industry_is_not_applicable_for_parent(tmp_path: Path) -> None:
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [
+            {"security_id": "IBIT1", "symbol": "IBIT", "security_type": "ETF", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "N/A", "geography": "US", "country": "US", "industry": "BITCOIN", "sector": "DIGITAL ASSETS"},
+            {"security_id": "FBTC1", "symbol": "FBTC", "security_type": "ETF", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "N/A", "geography": "US", "country": "US", "industry": "BITCOIN", "sector": "DIGITAL ASSETS"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "source_file", "source_run_id", "source_format", "partition_path", "snapshot_path", "positions_path", "position_count", "portfolio_value", "cash_value", "equity_value", "ingestion_status", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "source_file": "x", "source_run_id": "R1", "source_format": "csv", "partition_path": "", "snapshot_path": "", "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv", "position_count": 2, "portfolio_value": 100000, "cash_value": 0, "equity_value": 100000, "ingestion_status": "PASS", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "symbol", "description", "quantity", "market_value", "percent_of_account", "source_percent_of_account", "cost_basis_total", "security_type", "operational_state", "is_cash_equivalent", "source_file", "created_at_utc"],
+        [
+            {"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "IBIT", "description": "IBIT", "quantity": 10, "market_value": 50000, "percent_of_account": 50, "source_percent_of_account": 50, "cost_basis_total": 45000, "security_type": "ETF", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+            {"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "FBTC", "description": "FBTC", "quantity": 10, "market_value": 50000, "percent_of_account": 50, "source_percent_of_account": 50, "cost_basis_total": 45000, "security_type": "ETF", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [{"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "adjusted_close": 100 + i, "cumulative_return": 0, "source_provider": "TEST"} for i in range(300)],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=IBIT/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 300, 100.0, 0.3, "IBIT"),
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=FBTC/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 300, 95.0, 0.25, "FBTC"),
+    )
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    bitcoin = next(row for row in payload["industry_rotation"] if row["industry"] == "BITCOIN")
+    assert bitcoin["parent_applicable"] is False
+    assert bitcoin["parent_blocker"] == "ASSET_CLASS_NOT_MEANINGFUL"
+    assert bitcoin["parent_available"] is False
+
+
+def test_single_security_equity_industry_stays_applicable_but_unavailable(tmp_path: Path) -> None:
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [{"security_id": "DELL1", "symbol": "DELL", "security_type": "EQUITY", "snapshot_date": "2026-08-19", "run_id": "R1", "market_cap_bucket": "LARGE", "geography": "US", "country": "US", "industry": "COMPUTER HARDWARE", "sector": "TECHNOLOGY"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "source_file", "source_run_id", "source_format", "partition_path", "snapshot_path", "positions_path", "position_count", "portfolio_value", "cash_value", "equity_value", "ingestion_status", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "source_file": "x", "source_run_id": "R1", "source_format": "csv", "partition_path": "", "snapshot_path": "", "positions_path": "data/history/pis/snapshot_date=2026-08-19/positions.csv", "position_count": 1, "portfolio_value": 100000, "cash_value": 0, "equity_value": 100000, "ingestion_status": "PASS", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/history/pis/snapshot_date=2026-08-19/positions.csv",
+        ["snapshot_id", "snapshot_date", "account_id", "account_name", "symbol", "description", "quantity", "market_value", "percent_of_account", "source_percent_of_account", "cost_basis_total", "security_type", "operational_state", "is_cash_equivalent", "source_file", "created_at_utc"],
+        [{"snapshot_id": "S1", "snapshot_date": "2026-08-19", "account_id": "A1", "account_name": "TEST", "symbol": "DELL", "description": "DELL", "quantity": 10, "market_value": 100000, "percent_of_account": 100, "source_percent_of_account": 100, "cost_basis_total": 95000, "security_type": "EQUITY", "operational_state": "ACTIVE_POSITION", "is_cash_equivalent": "False", "source_file": "x", "created_at_utc": "2026-08-19T00:00:00+00:00"}],
+    )
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        [{"benchmark_id": "BM", "symbol_or_index": "^GSPC", "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "adjusted_close": 100 + i, "cumulative_return": 0, "source_provider": "TEST"} for i in range(120)],
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=DELL/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 1, 1), 120, 100.0, 0.2, "DELL"),
+    )
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    row = next(r for r in payload["industry_rotation"] if r["industry"] == "COMPUTER HARDWARE")
+    assert row["parent_applicable"] is True
+    assert row["parent_available"] is False
+    assert row["parent_blocker"] == "INSUFFICIENT_CONSTITUENTS"

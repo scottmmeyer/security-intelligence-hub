@@ -68,6 +68,8 @@ function renderExecutive(summary) {
   const sectorParentAvailable = Number(sectorParentCounts?.available || 0);
   const industryParentRequired = Number(industryParentCounts?.required || 0);
   const industryParentAvailable = Number(industryParentCounts?.available || 0);
+  const industryParentTotal = Number(industryParentCounts?.total || industryParentRequired);
+  const industryParentNotApplicable = Number(industryParentCounts?.not_applicable || 0);
 
   root.innerHTML = `
     <div class="kv-grid">
@@ -82,7 +84,7 @@ function renderExecutive(summary) {
       <div class="kpi"><div class="kpi-label">Full History Weight Coverage</div><div class="kpi-value">${pct(fullHistoryWeightCoverage)}</div><div class="kpi-sub">weight of applicable holdings</div></div>
       <div class="kpi"><div class="kpi-label">Any History Weight Coverage</div><div class="kpi-value">${pct(anyHistoryWeightCoverage)}</div><div class="kpi-sub">weight of applicable holdings</div></div>
       <div class="kpi"><div class="kpi-label">Sector Parent Coverage</div><div class="kpi-value">${pct(coverage.sector_parent_coverage_pct)}</div><div class="kpi-sub">${sectorParentAvailable}/${sectorParentRequired} sector groups requiring a parent</div></div>
-      <div class="kpi"><div class="kpi-label">Industry Parent Coverage</div><div class="kpi-value">${pct(coverage.industry_parent_coverage_pct)}</div><div class="kpi-sub">${industryParentAvailable}/${industryParentRequired} industry groups in rotation set</div></div>
+      <div class="kpi"><div class="kpi-label">Industry Parent Coverage</div><div class="kpi-value">${pct(coverage.industry_parent_coverage_pct)}</div><div class="kpi-sub">${industryParentAvailable}/${industryParentRequired} applicable industry groups (total=${industryParentTotal}, not applicable=${industryParentNotApplicable})</div></div>
       <div class="kpi"><div class="kpi-label">Fully Evaluated Weight</div><div class="kpi-value">${pct(coverage.portfolio_momentum_evaluable_weight_pct)}</div><div class="kpi-sub">weight where Security State is FULLY_EVALUATED</div></div>
       <div class="kpi"><div class="kpi-label">Coverage State</div><div class="kpi-value">${esc(coverage.portfolio_coverage_state || "UNAVAILABLE")}</div><div class="kpi-sub">derived from fully evaluated portfolio weight</div></div>
     </div>
