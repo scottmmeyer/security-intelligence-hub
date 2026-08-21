@@ -374,6 +374,21 @@
     "sensitivity_tags": ["INFLATION", "ENERGY", "INTERNATIONAL_TRADE"]
   },
   {
+    "event_id": "EST-TAX-2026-09-15",
+    "event_name": "Estimated Tax Payment Date",
+    "event_type": "TAX_PAYMENT",
+    "event_date": "2026-09-15",
+    "impact_level": "MEDIUM",
+    "consensus_expectation": "Quarterly estimated tax remittances by individuals and corporations.",
+    "source": "Internal Revenue Service",
+    "source_reference": "IRS Publication 509 (Tax Calendars), 2026",
+    "description": "Third estimated-tax installment for individuals and corporations; large tax-payment dates can temporarily move cash to the Treasury General Account.",
+    "mechanism": "Third estimated-tax installment for individuals and corporations; large tax-payment dates can temporarily move cash to the Treasury General Account",
+    "provenance": "data/mei/event_calendar.json curated static entry",
+    "verified_as_of": "2026-08-20",
+    "sensitivity_tags": ["LIQUIDITY", "TREASURY_CASH", "FUNDING"]
+  },
+  {
     "event_id": "RETAIL-SALES-AUG-2026",
     "event_name": "Retail Sales (August)",
     "event_type": "CONSUMER_SURVEY",
@@ -385,14 +400,20 @@
     "sensitivity_tags": ["CONSUMER_SPENDING", "INFLATION"]
   },
   {
-    "event_id": "FOMC-2026-09-17",
-    "event_name": "FOMC Rate Decision",
+    "event_id": "FOMC-2026-09-15-16",
+    "event_name": "FOMC Meeting",
     "event_type": "MONETARY_POLICY",
-    "event_date": "2026-09-17",
+    "event_date": "2026-09-15",
+    "start_date": "2026-09-15",
+    "end_date": "2026-09-16",
     "impact_level": "HIGH",
-    "consensus_expectation": "September FOMC; potential rate cut if inflation continues declining",
+    "consensus_expectation": "September FOMC policy meeting window with policy statement, SEP, and press conference on schedule.",
     "source": "Federal Reserve",
-    "description": "Federal Open Market Committee September policy statement, SEP dot plot, and press conference",
+    "source_reference": "Federal Reserve Board, 2026 FOMC meeting calendar",
+    "description": "Federal Open Market Committee policy meeting window (September 15-16), including Summary of Economic Projections and press conference.",
+    "mechanism": "Federal Open Market Committee policy meeting, including SEP and press conference",
+    "provenance": "data/mei/event_calendar.json curated static entry",
+    "verified_as_of": "2026-08-20",
     "sensitivity_tags": ["INTEREST_RATE", "CREDIT", "HOUSING", "TECHNOLOGY_CAPEX"]
   },
   {

@@ -1575,6 +1575,566 @@ def _market_regime_guardrail_payload(run_id: str | None = None) -> tuple[dict, i
         }, 200
 
 
+def _macro_unavailable_indicator(name: str, *, source: str, provenance: str, note: str = "") -> dict:
+    return {
+        "name": name,
+        "current_value": "UNAVAILABLE",
+        "change_1d": "UNAVAILABLE",
+        "change_5d": "UNAVAILABLE",
+        "change_20d": "UNAVAILABLE",
+        "as_of": None,
+        "freshness": "UNAVAILABLE",
+        "source": source,
+        "provenance": provenance,
+        "availability": "UNAVAILABLE",
+        "note": note,
+    }
+
+
+def _parse_iso_date(value: str) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _pct_delta(newer: float, older: float) -> float | None:
+    try:
+        if older == 0:
+            return None
+        return ((newer / older) - 1.0) * 100.0
+    except Exception:
+        return None
+
+
+def _format_pct(value: float | None) -> str:
+    if value is None:
+        return "UNAVAILABLE"
+    return f"{value:+.2f}%"
+
+
+def _format_abs(value: float | None, *, digits: int = 4) -> str:
+    if value is None:
+        return "UNAVAILABLE"
+    return f"{value:.{digits}f}"
+
+
+def _symbol_price_points(symbol: str) -> list[tuple[str, float]]:
+    path = _REPO_ROOT / "data" / "history" / "prices" / f"symbol={symbol}" / "prices.csv"
+    if not path.exists():
+        return []
+
+    rows: list[tuple[str, float]] = []
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            d = str(row.get("date") or "").strip()[:10]
+            if not d:
+                continue
+            try:
+                value = float(row.get("adjusted_close") or row.get("close") or "")
+            except Exception:
+                continue
+            rows.append((d, value))
+
+    # Keep only the latest observation for each date, then sort ascending.
+    latest_by_date: dict[str, float] = {}
+    for d, v in rows:
+        latest_by_date[d] = v
+    return sorted(latest_by_date.items(), key=lambda x: x[0])
+
+
+def _freshness_label(as_of_date: str | None, *, fresh_days: int = 3) -> str:
+    if not as_of_date:
+        return "UNAVAILABLE"
+    parsed = _parse_iso_date(as_of_date)
+    if parsed is None:
+        return "UNKNOWN"
+    lag = (date.today() - parsed).days
+    if lag <= fresh_days:
+        return "FRESH"
+    return "STALE"
+
+
+def _price_indicator(name: str, symbol: str, *, source_note: str, unit: str = "price") -> dict:
+    points = _symbol_price_points(symbol)
+    if not points:
+        return _macro_unavailable_indicator(
+            name,
+            source=f"data/history/prices/symbol={symbol}/prices.csv",
+            provenance=source_note,
+            note="No canonical symbol history partition is available.",
+        )
+
+    latest_date, latest_value = points[-1]
+    n = len(points)
+
+    c1 = _pct_delta(latest_value, points[n - 2][1]) if n >= 2 else None
+    c5 = _pct_delta(latest_value, points[n - 6][1]) if n >= 6 else None
+    c20 = _pct_delta(latest_value, points[n - 21][1]) if n >= 21 else None
+
+    if unit == "percent":
+        current_value = f"{_format_abs(latest_value, digits=2)}%"
+    elif unit == "usd":
+        current_value = f"${_format_abs(latest_value, digits=2)}"
+    else:
+        current_value = _format_abs(latest_value, digits=4)
+
+    return {
+        "name": name,
+        "symbol": symbol,
+        "current_value": current_value,
+        "change_1d": _format_pct(c1),
+        "change_5d": _format_pct(c5),
+        "change_20d": _format_pct(c20),
+        "as_of": latest_date,
+        "freshness": _freshness_label(latest_date),
+        "source": f"data/history/prices/symbol={symbol}/prices.csv",
+        "provenance": source_note,
+        "availability": "AVAILABLE",
+        "note": "",
+    }
+
+
+def _latest_partition_identity(symbol: str) -> dict:
+    path = _REPO_ROOT / "data" / "history" / "prices" / f"symbol={symbol}" / "prices.csv"
+    if not path.exists():
+        return {
+            "symbol": symbol,
+            "exists": False,
+            "security_id": None,
+            "security_type": None,
+            "source_provider": None,
+            "as_of": None,
+        }
+
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            rows = [row for row in csv.DictReader(fh)]
+    except Exception:
+        rows = []
+
+    if not rows:
+        return {
+            "symbol": symbol,
+            "exists": True,
+            "security_id": None,
+            "security_type": None,
+            "source_provider": None,
+            "as_of": None,
+        }
+
+    latest = rows[-1]
+    return {
+        "symbol": symbol,
+        "exists": True,
+        "security_id": str(latest.get("security_id") or ""),
+        "security_type": str(latest.get("security_type") or ""),
+        "source_provider": str(latest.get("source_provider") or ""),
+        "as_of": str(latest.get("date") or ""),
+    }
+
+
+def _base_universe_identity(symbol: str) -> dict:
+    path = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                if str(row.get("symbol") or "").strip().upper() == symbol.strip().upper():
+                    return {
+                        "company_name": str(row.get("company_name") or "").strip(),
+                        "security_type": str(row.get("security_type") or "").strip(),
+                        "provider": str(row.get("provider") or "").strip(),
+                        "source_file": str(row.get("source_file") or "").strip(),
+                    }
+    except Exception:
+        return {}
+    return {}
+
+
+def _macro_wti_crude_indicator() -> dict:
+    # Fail closed on equity/commodity ticker collisions.
+    wti_identity = _latest_partition_identity("WTI")
+    wti_universe = _base_universe_identity("WTI")
+
+    proxy_candidates = [
+        ("USO", "WTI Crude Proxy (USO)", "United States Oil Fund security price / return as WTI-crude proxy"),
+        ("USL", "WTI Crude Proxy (USL)", "United States 12 Month Oil Fund security price / return as WTI-crude proxy"),
+        ("DBO", "WTI Crude Proxy (DBO)", "Invesco DB Oil Fund security price / return as WTI-crude proxy"),
+    ]
+
+    for symbol, label, proxy_measurement in proxy_candidates:
+        row = _price_indicator(label, symbol, source_note="Canonical history partition (if present)", unit="usd")
+        if row.get("availability") == "AVAILABLE":
+            row["provenance"] = (
+                f"instrument={symbol};proxy_target=WTI crude price movements;measurement={proxy_measurement};"
+                f"source={row.get('source')}"
+            )
+            row["note"] = "Proxy only: value is security price/return, not spot or futures settlement of crude oil."
+            return row
+
+    identity_parts: list[str] = []
+    company_name = str(wti_universe.get("company_name") or "").strip()
+    if company_name:
+        identity_parts.append(company_name)
+    if wti_identity.get("security_type"):
+        identity_parts.append(str(wti_identity.get("security_type")))
+    if wti_identity.get("security_id"):
+        identity_parts.append(str(wti_identity.get("security_id")))
+    identity_note = (" WTI partition identity: " + " | ".join(identity_parts) + ".") if identity_parts else ""
+
+    return _macro_unavailable_indicator(
+        "WTI Crude",
+        source="No canonical current WTI crude series/proxy is available.",
+        provenance="fail_closed_identity_guard; instrument=WTI resolves to equity security in canonical SIH artifacts",
+        note=(
+            "No canonical current WTI crude series/proxy is available."
+            f"{identity_note}"
+            " SIH does not relabel equity ticker WTI as crude oil."
+        ),
+    )
+
+
+def _curve_indicator(name: str, left: dict, right: dict) -> dict:
+    if left.get("availability") != "AVAILABLE" or right.get("availability") != "AVAILABLE":
+        return _macro_unavailable_indicator(
+            name,
+            source="Derived from rate indicators",
+            provenance="reporting_only_derived_from_available_rates",
+            note="Curve view requires both component yields.",
+        )
+
+    def _strip_percent(v: str) -> float | None:
+        raw = str(v or "").replace("%", "").strip()
+        try:
+            return float(raw)
+        except Exception:
+            return None
+
+    l_val = _strip_percent(str(left.get("current_value") or ""))
+    r_val = _strip_percent(str(right.get("current_value") or ""))
+    if l_val is None or r_val is None:
+        return _macro_unavailable_indicator(
+            name,
+            source="Derived from rate indicators",
+            provenance="reporting_only_derived_from_available_rates",
+            note="Curve view unavailable due to non-numeric component yields.",
+        )
+
+    spread = r_val - l_val
+    left_as_of = left.get("as_of")
+    right_as_of = right.get("as_of")
+    as_of = left_as_of if left_as_of == right_as_of else None
+
+    return {
+        "name": name,
+        "current_value": f"{spread:+.2f} pp",
+        "change_1d": "UNAVAILABLE",
+        "change_5d": "UNAVAILABLE",
+        "change_20d": "UNAVAILABLE",
+        "as_of": as_of,
+        "freshness": _freshness_label(as_of),
+        "source": "Derived from rate indicators",
+        "provenance": "reporting_only_derived_from_available_rates",
+        "availability": "AVAILABLE" if as_of else "PARTIAL",
+        "note": "Spread trend requires canonical historical curve series.",
+    }
+
+
+def _macro_event_window_payload() -> dict:
+    try:
+        import sys as _sys
+
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from src.mei.events import mei_events
+
+        payload = mei_events(_REPO_ROOT, days_ahead=45)
+        events = list(payload.get("events") or [])
+        today = _parse_iso_date(str(payload.get("as_of_date") or "")) or date.today()
+
+        source_path = _REPO_ROOT / "data" / "mei" / "event_calendar.json"
+        verified_date = datetime.fromtimestamp(source_path.stat().st_mtime, tz=timezone.utc).date().isoformat() if source_path.exists() else None
+
+        def _event_row(ev: dict) -> dict:
+            start_date = str(ev.get("start_date") or ev.get("event_date") or "").strip()
+            end_date = str(ev.get("end_date") or "").strip()
+            parsed_start = _parse_iso_date(start_date)
+            parsed_end = _parse_iso_date(end_date) if end_date else parsed_start
+            status = "UPCOMING"
+            if parsed_start and parsed_end:
+                if parsed_end < today:
+                    status = "PAST"
+                elif parsed_start <= today <= parsed_end:
+                    status = "TODAY"
+            display_date = start_date or "UNAVAILABLE"
+            if start_date and end_date:
+                display_date = f"{start_date} to {end_date}"
+            return {
+                "event": str(ev.get("event_name") or "UNAVAILABLE"),
+                "date": display_date,
+                "start_date": start_date or "UNAVAILABLE",
+                "end_date": end_date or "UNAVAILABLE",
+                "mechanism": str(ev.get("mechanism") or ev.get("description") or ev.get("event_type") or "UNAVAILABLE"),
+                "source": str(ev.get("source") or "UNAVAILABLE"),
+                "source_reference": str(ev.get("source_reference") or ev.get("source") or "UNAVAILABLE"),
+                "status": status,
+                "provenance": str(ev.get("provenance") or "data/mei/event_calendar.json via src/mei/events.py"),
+                "verified_as_of": str(ev.get("verified_as_of") or verified_date or "UNAVAILABLE"),
+                "event_type": str(ev.get("event_type") or "UNAVAILABLE"),
+            }
+
+        # Prefer FOMC and tax-payment events first; then other high/medium-impact entries.
+        priority_rows: list[dict] = []
+        seen_ids: set[str] = set()
+
+        for ev in events:
+            ev_id = str(ev.get("event_id") or "")
+            etype = str(ev.get("event_type") or "").upper()
+            ename = str(ev.get("event_name") or "").upper()
+            is_tax = "TAX" in etype or "TAX" in ename
+            is_fomc = etype == "MONETARY_POLICY" and "FOMC" in ename
+            if is_tax or is_fomc:
+                priority_rows.append(_event_row(ev))
+                if ev_id:
+                    seen_ids.add(ev_id)
+
+        for ev in events:
+            ev_id = str(ev.get("event_id") or "")
+            if ev_id and ev_id in seen_ids:
+                continue
+            impact = str(ev.get("impact_level") or "").upper()
+            if impact in {"HIGH", "MEDIUM"}:
+                priority_rows.append(_event_row(ev))
+                if ev_id:
+                    seen_ids.add(ev_id)
+
+        priority_rows = priority_rows[:8]
+
+        missing_tax = not any("TAX" in str(row.get("event_type") or "").upper() or "TAX" in str(row.get("event") or "").upper() for row in priority_rows)
+        notes: list[str] = []
+        if missing_tax:
+            notes.append("No tax-payment events are present in the current canonical MEI event calendar window.")
+        notes.append("Canonical MEI event calendar is a curated/static artifact (not an automatic live feed).")
+
+        return {
+            "events": priority_rows,
+            "as_of": str(payload.get("as_of_date") or date.today().isoformat()),
+            "window_end": str(payload.get("window_end") or ""),
+            "source": "data/mei/event_calendar.json",
+            "provenance": "src/mei/events.py",
+            "retrieval_verified_date": verified_date,
+            "availability": "AVAILABLE",
+            "notes": notes,
+        }
+    except Exception as exc:
+        return {
+            "events": [],
+            "as_of": date.today().isoformat(),
+            "window_end": "",
+            "source": "data/mei/event_calendar.json",
+            "provenance": "src/mei/events.py",
+            "retrieval_verified_date": None,
+            "availability": "UNAVAILABLE",
+            "notes": [f"Event calendar unavailable: {exc}"],
+        }
+
+
+def _macro_market_confirmation_payload() -> dict:
+    try:
+        import sys as _sys
+
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from src.pis.momentum_intelligence import pis_momentum_summary
+
+        summary = pis_momentum_summary(repo_root=_REPO_ROOT)
+
+        sector_rows = list(summary.get("sector_rotation") or [])
+        tech_row = next((r for r in sector_rows if str(r.get("sector") or "").strip().upper() == "TECHNOLOGY"), {})
+        fi_row = next(
+            (
+                r
+                for r in sector_rows
+                if "FIXED" in str(r.get("sector") or "").upper() or "BOND" in str(r.get("sector") or "").upper()
+            ),
+            {},
+        )
+
+        return {
+            "market_state": str(
+                (((summary.get("market_momentum") or {}).get("market_absolute_momentum") or {}).get("state"))
+                or "UNAVAILABLE"
+            ),
+            "broad_market_relative_level": "UNAVAILABLE",
+            "broad_market_relative_change": "UNAVAILABLE",
+            "broad_market_breadth": str((tech_row.get("breadth") or {}).get("state") or "UNAVAILABLE"),
+            "fixed_income_state": str(fi_row.get("classification") or "UNAVAILABLE"),
+            "fixed_income_change": str((fi_row.get("relative_to_market") or {}).get("change") or "UNAVAILABLE"),
+            "technology_breadth": str((tech_row.get("breadth") or {}).get("state") or "UNAVAILABLE"),
+            "portfolio_momentum_condition": str((summary.get("coverage") or {}).get("portfolio_coverage_state") or "UNAVAILABLE"),
+            "as_of": str(summary.get("snapshot_date") or ""),
+            "freshness": _freshness_label(str(summary.get("snapshot_date") or ""), fresh_days=5),
+            "source": "/api/pis/momentum/summary",
+            "provenance": "src/pis/momentum_intelligence.py::pis_momentum_summary",
+            "availability": "AVAILABLE" if isinstance(summary, dict) and summary else "UNAVAILABLE",
+            "note": "Values are reused from canonical Momentum outputs with no reclassification.",
+        }
+    except Exception as exc:
+        return {
+            "market_state": "UNAVAILABLE",
+            "broad_market_relative_level": "UNAVAILABLE",
+            "broad_market_relative_change": "UNAVAILABLE",
+            "broad_market_breadth": "UNAVAILABLE",
+            "fixed_income_state": "UNAVAILABLE",
+            "fixed_income_change": "UNAVAILABLE",
+            "technology_breadth": "UNAVAILABLE",
+            "portfolio_momentum_condition": "UNAVAILABLE",
+            "as_of": None,
+            "freshness": "UNAVAILABLE",
+            "source": "/api/pis/momentum/summary",
+            "provenance": "src/pis/momentum_intelligence.py::pis_momentum_summary",
+            "availability": "UNAVAILABLE",
+            "note": f"Momentum summary unavailable: {exc}",
+        }
+
+
+def _macro_liquidity_context_payload(run_id: str | None = None) -> tuple[dict, int]:
+    """Display-only macro/liquidity context payload.
+
+    Governance: reporting-only. Never affects scoring, recommendations,
+    deployment eligibility/ranking, allocation, or execution.
+    """
+
+    rates_2y = _price_indicator(
+        "US 2Y Treasury",
+        "^FVX",
+        source_note="Canonical history partition (if present)",
+        unit="percent",
+    )
+    rates_10y = _price_indicator(
+        "US 10Y Treasury",
+        "^TNX",
+        source_note="Canonical history partition (if present)",
+        unit="percent",
+    )
+    rates_30y = _price_indicator(
+        "US 30Y Treasury",
+        "^TYX",
+        source_note="Canonical history partition (if present)",
+        unit="percent",
+    )
+    curve_2s10s = _curve_indicator("2s10s Curve", rates_2y, rates_10y)
+    curve_10s30s = _curve_indicator("10s30s Curve", rates_10y, rates_30y)
+
+    credit_hyg = _price_indicator("HYG", "HYG", source_note="Canonical history partition (if present)", unit="usd")
+    credit_lqd = _price_indicator("LQD", "LQD", source_note="Canonical history partition (if present)", unit="usd")
+    credit_spread = _macro_unavailable_indicator(
+        "IG/HY Spread",
+        source="No canonical spread artifact found",
+        provenance="reporting_only_no_synthetic_spread",
+        note="No canonical IG/HY spread series is currently published in SIH artifacts.",
+    )
+
+    vix = _price_indicator("VIX", "^VIX", source_note="Canonical history partition (if present)")
+    dxy = _price_indicator("DXY", "DX-Y.NYB", source_note="Canonical history partition (if present)")
+
+    wti = _macro_wti_crude_indicator()
+    brent = _price_indicator("Brent Proxy (BNO)", "BNO", source_note="Canonical history partition (if present)", unit="usd")
+    if brent.get("availability") == "AVAILABLE":
+        brent["provenance"] = (
+            "instrument=BNO;proxy_target=Brent crude price movements;"
+            "measurement=BNO security price/return;source=data/history/prices/symbol=BNO/prices.csv"
+        )
+        brent["note"] = "Proxy only: value is BNO security price/return, not spot Brent barrel price."
+    else:
+        brent["note"] = "Brent proxy unavailable from canonical BNO partition."
+
+    liquidity_rows = [
+        _macro_unavailable_indicator(
+            "Treasury General Account (TGA)",
+            source="No canonical SIH current artifact",
+            provenance="reporting_only",
+            note="No TGA current series is currently wired into Portfolio Alignment artifacts.",
+        ),
+        _macro_unavailable_indicator(
+            "Reserve Balances",
+            source="No canonical SIH current artifact",
+            provenance="reporting_only",
+            note="No reserve-balance current series is currently wired into Portfolio Alignment artifacts.",
+        ),
+        _macro_unavailable_indicator(
+            "ON RRP",
+            source="No canonical SIH current artifact",
+            provenance="reporting_only",
+            note="No ON RRP current series is currently wired into Portfolio Alignment artifacts.",
+        ),
+        _macro_unavailable_indicator(
+            "SOFR / Repo",
+            source="No canonical SIH current artifact",
+            provenance="reporting_only",
+            note="No SOFR/repo current series is currently wired into Portfolio Alignment artifacts.",
+        ),
+        _macro_unavailable_indicator(
+            "IORB-SOFR Relationship",
+            source="No canonical SIH current artifact",
+            provenance="reporting_only",
+            note="No canonical IORB/SOFR relationship artifact is currently published.",
+        ),
+    ]
+
+    event_window = _macro_event_window_payload()
+    momentum_confirmation = _macro_market_confirmation_payload()
+    guardrail, _ = _market_regime_guardrail_payload(run_id=run_id)
+
+    return {
+        "status": "ok",
+        "reporting_only": True,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id or _latest_completed_run_id(),
+        "title": "Macro & Liquidity Context",
+        "subtitle": "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk.",
+        "sections": {
+            "rates": [rates_2y, rates_10y, rates_30y, curve_2s10s, curve_10s30s],
+            "credit_funding": [credit_hyg, credit_lqd, credit_spread, vix, dxy, wti, brent],
+            "liquidity": liquidity_rows,
+            "market_confirmation": momentum_confirmation,
+            "event_window": event_window,
+        },
+        "current_portfolio_posture": {
+            "regime": str(guardrail.get("regime") or "UNKNOWN"),
+            "safe_to_deploy": bool(guardrail.get("safe_to_deploy")),
+            "deployment": str(guardrail.get("deployment_posture") or "CAUTION_DEPLOY"),
+            "cash": str(guardrail.get("cash_posture") or "HOLD_EXCESS"),
+            "source": "/api/market-regime-guardrail/latest",
+            "provenance": "src/portfolio/regime/market_regime_guardrail.py",
+        },
+        "how_to_read_macro_stress": {
+            "lines": [
+                "Rates rising alone = tighter financial conditions, but not systemic confirmation.",
+                "Rates rising + credit widening = stronger stress confirmation.",
+                "Rates rising + credit widening + funding/liquidity deterioration = materially stronger defensive evidence.",
+                "Add deteriorating breadth / Momentum = market internals are confirming macro pressure.",
+                "Stable credit + stable funding + improving breadth = macro narrative may not be translating into systemic market stress.",
+            ],
+            "governance": "Static operator guidance only. No buy/sell/trim trigger is generated.",
+        },
+        "guardrails": {
+            "scoring_impact": "none",
+            "macro_panel_affects_scoring": "NO",
+            "macro_panel_affects_recommendations": "NO",
+            "macro_panel_affects_cw_das": "NO",
+            "macro_panel_affects_deployment": "NO",
+            "macro_panel_affects_allocation": "NO",
+            "macro_panel_affects_execution": "NO",
+        },
+    }, 200
+
+
 def _persist_fetched_scores(symbol: str, zacks_result: dict, danelfin_result: dict) -> None:
     """Persist freshly-fetched scores into the signal files and analytical_universe.csv.
 
@@ -2893,6 +3453,31 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
             query = self.path.split("?", 1)[1] if "?" in self.path else ""
             run_id = (parse_qs(query).get("run_id", [""])[0] or "").strip()
             payload, status = _market_regime_guardrail_payload(run_id=run_id or None)
+            self._json_response(payload, status)
+        elif path == "/api/portfolio/macro-liquidity-context":
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            run_id = (parse_qs(query).get("run_id", [""])[0] or "").strip()
+            try:
+                payload, status = _macro_liquidity_context_payload(run_id=run_id or None)
+            except Exception as exc:
+                payload = {
+                    "status": "degraded",
+                    "reporting_only": True,
+                    "title": "Macro & Liquidity Context",
+                    "subtitle": "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk.",
+                    "error": str(exc),
+                    "sections": {
+                        "rates": [],
+                        "credit_funding": [],
+                        "liquidity": [],
+                        "market_confirmation": {"availability": "UNAVAILABLE"},
+                        "event_window": {"events": [], "availability": "UNAVAILABLE"},
+                    },
+                    "guardrails": {
+                        "scoring_impact": "none",
+                    },
+                }
+                status = 200
             self._json_response(payload, status)
         elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
             # GET /api/operator/policies         → all active policies

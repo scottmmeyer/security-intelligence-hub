@@ -1081,7 +1081,13 @@ async function loadMarketRegimeGuardrail(data) {
   const el = document.getElementById("marketContextContainer");
   if (!el) return;
 
-  el.innerHTML = `<div class="mrg-card"><div class="mrg-loading">Loading market regime guardrail…</div></div>`;
+  el.innerHTML = `
+    <div id="marketRegimeCardSlot" class="mrg-card"><div class="mrg-loading">Loading market regime guardrail…</div></div>
+    <div id="macroLiquidityCardSlot" class="mrg-card"><div class="mrg-loading">…</div></div>
+  `;
+
+  const regimeSlot = document.getElementById("marketRegimeCardSlot");
+  const macroSlot = document.getElementById("macroLiquidityCardSlot");
 
   try {
     const runId = (data && data.run_id) ? String(data.run_id).trim() : "";
@@ -1094,9 +1100,9 @@ async function loadMarketRegimeGuardrail(data) {
     if (!resp.ok || !payload || typeof payload !== "object") {
       throw new Error("guardrail payload unavailable");
     }
-    el.innerHTML = renderMarketRegimeGuardrailCard(payload);
+    if (regimeSlot) regimeSlot.outerHTML = renderMarketRegimeGuardrailCard(payload);
   } catch (_) {
-    el.innerHTML = renderMarketRegimeGuardrailCard({
+    if (regimeSlot) regimeSlot.outerHTML = renderMarketRegimeGuardrailCard({
       regime: "UNKNOWN",
       severity: "LOW",
       deployment_posture: "CAUTION_DEPLOY",
@@ -1120,6 +1126,48 @@ async function loadMarketRegimeGuardrail(data) {
       safe_to_deploy: false,
       scoring_impact: "none",
     });
+  }
+
+  try {
+    const runId = (data && data.run_id) ? String(data.run_id).trim() : "";
+    const url = runId
+      ? `/api/portfolio/macro-liquidity-context?run_id=${encodeURIComponent(runId)}`
+      : "/api/portfolio/macro-liquidity-context";
+    const resp = await fetch(url);
+    const payload = await resp.json();
+    if (!resp.ok || !payload || typeof payload !== "object") {
+      throw new Error("macro liquidity context unavailable");
+    }
+    if (macroSlot) macroSlot.outerHTML = renderMacroLiquidityContextCard(payload);
+  } catch (_) {
+    if (macroSlot) {
+      macroSlot.outerHTML = renderMacroLiquidityContextCard({
+        title: "Macro & Liquidity Context",
+        subtitle: "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk.",
+        sections: {
+          rates: [],
+          credit_funding: [],
+          liquidity: [],
+          market_confirmation: { availability: "UNAVAILABLE" },
+          event_window: { events: [], availability: "UNAVAILABLE", notes: ["Event calendar unavailable."] },
+        },
+        current_portfolio_posture: {
+          regime: "UNKNOWN",
+          safe_to_deploy: false,
+          deployment: "CAUTION_DEPLOY",
+          cash: "HOLD_EXCESS",
+        },
+        how_to_read_macro_stress: {
+          lines: [
+            "Rates rising alone = tighter financial conditions, but not systemic confirmation.",
+            "Rates rising + credit widening = stronger stress confirmation.",
+            "Rates rising + credit widening + funding/liquidity deterioration = materially stronger defensive evidence.",
+            "Add deteriorating breadth / Momentum = market internals are confirming macro pressure.",
+            "Stable credit + stable funding + improving breadth = macro narrative may not be translating into systemic market stress.",
+          ],
+        },
+      });
+    }
   }
 }
 
@@ -1185,6 +1233,185 @@ function renderMarketRegimeGuardrailCard(g) {
       ${operatorGuidance ? `<div class="mrg-freshness">Action Guidance: ${escHtml(operatorGuidance)}</div>` : ""}
       ${evidence.length ? `<ul class="mrg-list">${evidence.slice(0, 4).map(e => `<li>${escHtml(String(e))}</li>`).join("")}</ul>` : ""}
       ${checks.length ? `<ul class="mrg-checks">${checks.slice(0, 4).map(c => `<li>${escHtml(String(c))}</li>`).join("")}</ul>` : ""}
+    </div>
+  `;
+}
+
+function _macroCell(v) {
+  const raw = String(v == null ? "UNAVAILABLE" : v).trim();
+  return escHtml(raw || "UNAVAILABLE");
+}
+
+function _macroIndicatorRowHtml(indicator) {
+  const name = escHtml(String(indicator && indicator.name ? indicator.name : "UNAVAILABLE"));
+  const value = _macroCell(indicator && indicator.current_value);
+  const c1 = _macroCell(indicator && indicator.change_1d);
+  const c5 = _macroCell(indicator && indicator.change_5d);
+  const c20 = _macroCell(indicator && indicator.change_20d);
+  const asOf = _macroCell(indicator && indicator.as_of);
+  const freshness = _macroCell(indicator && indicator.freshness);
+  const source = _macroCell(indicator && indicator.source);
+  const provenance = _macroCell(indicator && indicator.provenance);
+  const availability = _macroCell(indicator && indicator.availability);
+  const note = _macroCell(indicator && indicator.note);
+
+  return `
+    <tr>
+      <td>${name}</td>
+      <td>${value}</td>
+      <td>${c1}</td>
+      <td>${c5}</td>
+      <td>${c20}</td>
+      <td>${asOf}</td>
+      <td>${freshness}</td>
+      <td>${source}</td>
+      <td>${provenance}</td>
+      <td>${availability}</td>
+      <td>${note}</td>
+    </tr>
+  `;
+}
+
+function _macroTableHtml(title, rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  return `
+    <div class="mlc-section">
+      <div class="mlc-section-title">${escHtml(title)}</div>
+      <div class="mlc-table-wrap">
+        <table class="mlc-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Current Value</th>
+              <th>Change 1D</th>
+              <th>Change 5D</th>
+              <th>Change 20D</th>
+              <th>As Of</th>
+              <th>Freshness</th>
+              <th>Source</th>
+              <th>Provenance</th>
+              <th>Availability</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${safeRows.length ? safeRows.map(_macroIndicatorRowHtml).join("") : `<tr><td colspan="11">UNAVAILABLE</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function _macroMarketConfirmationHtml(m) {
+  const row = (k, v) => `<div><span class="mlc-k">${escHtml(k)}</span><span class="mlc-v">${_macroCell(v)}</span></div>`;
+  return `
+    <div class="mlc-section">
+      <div class="mlc-section-title">Market Confirmation</div>
+      <div class="mlc-grid">
+        ${row("Market State", m && m.market_state)}
+        ${row("Broad Market Relative Level", m && m.broad_market_relative_level)}
+        ${row("Broad Market Relative Change", m && m.broad_market_relative_change)}
+        ${row("Broad Market Breadth", m && m.broad_market_breadth)}
+        ${row("Fixed Income State", m && m.fixed_income_state)}
+        ${row("Fixed Income Change", m && m.fixed_income_change)}
+        ${row("Technology Breadth", m && m.technology_breadth)}
+        ${row("Portfolio Momentum Condition", m && m.portfolio_momentum_condition)}
+        ${row("As Of", m && m.as_of)}
+        ${row("Freshness", m && m.freshness)}
+        ${row("Source", m && m.source)}
+        ${row("Provenance", m && m.provenance)}
+      </div>
+      <div class="mlc-footnote">${_macroCell(m && m.note)}</div>
+    </div>
+  `;
+}
+
+function _macroEventWindowHtml(ev) {
+  const rows = Array.isArray(ev && ev.events) ? ev.events : [];
+  const notes = Array.isArray(ev && ev.notes) ? ev.notes : [];
+  return `
+    <div class="mlc-section">
+      <div class="mlc-section-title">Event Window</div>
+      <div class="mlc-table-wrap">
+        <table class="mlc-table">
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Date</th>
+              <th>Mechanism</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Provenance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map((r) => `
+              <tr>
+                <td>${_macroCell(r.event)}</td>
+                <td>${_macroCell(r.date)}</td>
+                <td>${_macroCell(r.mechanism)}</td>
+                <td>${_macroCell(r.source)}</td>
+                <td>${_macroCell(r.status)}</td>
+                <td>${_macroCell(r.provenance)}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="6">UNAVAILABLE</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <div class="mlc-footnote">As Of: ${_macroCell(ev && ev.as_of)} · Window End: ${_macroCell(ev && ev.window_end)} · Source: ${_macroCell(ev && ev.source)}</div>
+      ${notes.length ? `<ul class="mlc-notes">${notes.map((n) => `<li>${escHtml(String(n))}</li>`).join("")}</ul>` : ""}
+      <div class="mlc-footnote">Large tax-payment dates can temporarily move cash into the Treasury General Account and tighten private-system liquidity. The event alone does not predict market direction.</div>
+    </div>
+  `;
+}
+
+function renderMacroLiquidityContextCard(payload) {
+  const title = escHtml(String(payload && payload.title ? payload.title : "Macro & Liquidity Context"));
+  const subtitle = escHtml(String(payload && payload.subtitle ? payload.subtitle : "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk."));
+  const sections = (payload && payload.sections) || {};
+  const rates = Array.isArray(sections.rates) ? sections.rates : [];
+  const creditFunding = Array.isArray(sections.credit_funding) ? sections.credit_funding : [];
+  const liquidity = Array.isArray(sections.liquidity) ? sections.liquidity : [];
+  const marketConfirmation = sections.market_confirmation || {};
+  const eventWindow = sections.event_window || {};
+  const posture = (payload && payload.current_portfolio_posture) || {};
+  const guidance = (payload && payload.how_to_read_macro_stress) || {};
+  const guidanceLines = Array.isArray(guidance.lines) ? guidance.lines : [];
+
+  return `
+    <div class="mlc-card">
+      <div class="mlc-header">
+        <div class="mlc-title">${title}</div>
+        <span class="mlc-badge">Display-only</span>
+      </div>
+      <div class="mlc-subtitle">${subtitle}</div>
+      <div class="mlc-warning">Narrative context only. No automatic scoring, recommendation, CW-DAS, deployment, allocation, or execution changes.</div>
+
+      <div class="mlc-section">
+        <div class="mlc-section-title">Current Portfolio Posture</div>
+        <div class="mlc-grid">
+          <div><span class="mlc-k">Regime</span><span class="mlc-v">${_macroCell(posture.regime)}</span></div>
+          <div><span class="mlc-k">Safe to Deploy</span><span class="mlc-v">${posture.safe_to_deploy ? "Yes" : "No"}</span></div>
+          <div><span class="mlc-k">Deployment</span><span class="mlc-v">${_macroCell(posture.deployment)}</span></div>
+          <div><span class="mlc-k">Cash</span><span class="mlc-v">${_macroCell(posture.cash)}</span></div>
+          <div><span class="mlc-k">Source</span><span class="mlc-v">${_macroCell(posture.source)}</span></div>
+        </div>
+      </div>
+
+      ${_macroTableHtml("Rates", rates)}
+      ${_macroTableHtml("Credit / Funding", creditFunding)}
+      ${_macroTableHtml("Liquidity", liquidity)}
+      ${_macroMarketConfirmationHtml(marketConfirmation)}
+      ${_macroEventWindowHtml(eventWindow)}
+
+      <div class="mlc-section">
+        <div class="mlc-section-title">How to Read Macro Stress</div>
+        <ul class="mlc-notes">
+          ${guidanceLines.map((line) => `<li>${escHtml(String(line))}</li>`).join("")}
+        </ul>
+        <div class="mlc-footnote">${_macroCell(guidance.governance)}</div>
+      </div>
     </div>
   `;
 }

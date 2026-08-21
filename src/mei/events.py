@@ -49,15 +49,19 @@ def _load_events(repo_root: Optional[Path] = None) -> list[dict]:
 
 def _in_window(event: dict, start: date, end: date) -> bool:
     try:
-        d = date.fromisoformat(str(event.get("event_date", "")))
-        return start <= d <= end
+        start_raw = str(event.get("start_date") or event.get("event_date") or "")
+        end_raw = str(event.get("end_date") or start_raw)
+        event_start = date.fromisoformat(start_raw)
+        event_end = date.fromisoformat(end_raw)
+        return event_start <= end and event_end >= start
     except ValueError:
         return False
 
 
 def _days_away(event: dict, today: date) -> int:
     try:
-        return (date.fromisoformat(str(event["event_date"])) - today).days
+        start_raw = str(event.get("start_date") or event.get("event_date") or "")
+        return (date.fromisoformat(start_raw) - today).days
     except (KeyError, ValueError):
         return 9999
 

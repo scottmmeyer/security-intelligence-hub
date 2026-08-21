@@ -8,7 +8,7 @@ from contextlib import ExitStack, closing
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer
+from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer, _macro_liquidity_context_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +70,59 @@ def test_market_regime_guardrail_endpoint_returns_display_only_contract() -> Non
     assert result["deployment_posture"] == "ONLY_NON_STRESSED_SECTORS"
 
 
+def test_macro_liquidity_context_endpoint_returns_display_only_contract() -> None:
+    payload = {
+        "status": "ok",
+        "reporting_only": True,
+        "title": "Macro & Liquidity Context",
+        "subtitle": "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk.",
+        "sections": {
+            "rates": [],
+            "credit_funding": [],
+            "liquidity": [],
+            "market_confirmation": {"availability": "UNAVAILABLE"},
+            "event_window": {"events": []},
+        },
+        "guardrails": {
+            "scoring_impact": "none",
+            "macro_panel_affects_scoring": "NO",
+            "macro_panel_affects_recommendations": "NO",
+            "macro_panel_affects_cw_das": "NO",
+            "macro_panel_affects_deployment": "NO",
+            "macro_panel_affects_allocation": "NO",
+            "macro_panel_affects_execution": "NO",
+        },
+    }
+
+    result = _fetch_json(
+        "/api/portfolio/macro-liquidity-context",
+        patchers=[
+            patch("scripts.run_outcome_ui._macro_liquidity_context_payload", return_value=(payload, 200)),
+        ],
+    )
+
+    assert result["title"] == "Macro & Liquidity Context"
+    assert result["reporting_only"] is True
+    assert result["guardrails"]["scoring_impact"] == "none"
+    assert "macro_score" not in result
+    assert "liquidity_score" not in result
+    assert "risk_score" not in result
+
+
+def test_macro_liquidity_context_endpoint_fails_closed_on_error() -> None:
+    result = _fetch_json(
+        "/api/portfolio/macro-liquidity-context",
+        patchers=[
+            patch("scripts.run_outcome_ui._macro_liquidity_context_payload", side_effect=RuntimeError("boom")),
+        ],
+    )
+
+    assert result["status"] == "degraded"
+    assert result["reporting_only"] is True
+    assert result["title"] == "Macro & Liquidity Context"
+    assert result["guardrails"]["scoring_impact"] == "none"
+
+
 def test_market_regime_guardrail_ui_hooks_are_present() -> None:
     app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
 
@@ -87,12 +140,83 @@ def test_market_regime_guardrail_ui_hooks_are_present() -> None:
     assert "market_proxies_ts || \"unavailable\"" in app_js
     assert "Run Refresh Current Holdings + Buy Candidates" in app_js
     assert "REFRESH_MARKET_PROXIES" in app_js or "operator_action" in app_js
+    assert "/api/portfolio/macro-liquidity-context" in app_js
+    assert "Macro & Liquidity Context" in app_js
+    assert "How to Read Macro Stress" in app_js
+    assert "No automatic scoring, recommendation, CW-DAS, deployment, allocation, or execution changes" in app_js
 
 
 def test_market_regime_guardrail_container_exists() -> None:
     html = (ROOT / "ui" / "portfolio_alignment" / "index.html").read_text(encoding="utf-8")
 
     assert 'id="marketContextContainer"' in html
+
+
+def test_macro_wti_crude_fails_closed_on_equity_identity_collision() -> None:
+    payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("credit_funding") or []))
+    names = {str(r.get("name") or "") for r in rows}
+    assert "WTI" not in names
+
+    wti_row = next((r for r in rows if str(r.get("name") or "") == "WTI Crude"), None)
+    assert wti_row is not None
+    assert wti_row.get("availability") == "UNAVAILABLE"
+    assert "No canonical current WTI crude series/proxy is available." in str(wti_row.get("note") or "")
+    assert "W&T Offshore" in str(wti_row.get("note") or "")
+
+
+def test_macro_bno_is_explicit_proxy_not_spot_brent() -> None:
+    payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("credit_funding") or []))
+    bno_row = next((r for r in rows if str(r.get("name") or "") == "Brent Proxy (BNO)"), None)
+    assert bno_row is not None
+    assert "proxy_target=Brent crude price movements" in str(bno_row.get("provenance") or "")
+    assert "BNO security price/return" in str(bno_row.get("note") or "")
+
+
+def test_canonical_event_calendar_has_correct_sep_fomc_window_and_tax_event() -> None:
+    calendar_path = ROOT / "data" / "mei" / "event_calendar.json"
+    events = json.loads(calendar_path.read_text(encoding="utf-8"))
+
+    assert not any(
+        "FOMC" in str(ev.get("event_name") or "").upper() and str(ev.get("event_date") or "") == "2026-09-17"
+        for ev in events
+    )
+
+    fomc_sep = next(
+        (
+            ev
+            for ev in events
+            if "FOMC" in str(ev.get("event_name") or "").upper()
+            and str(ev.get("start_date") or "") == "2026-09-15"
+            and str(ev.get("end_date") or "") == "2026-09-16"
+        ),
+        None,
+    )
+    assert fomc_sep is not None
+    assert str(fomc_sep.get("source") or "") == "Federal Reserve"
+    assert str(fomc_sep.get("source_reference") or "")
+    assert str(fomc_sep.get("provenance") or "")
+    assert str(fomc_sep.get("verified_as_of") or "")
+
+    tax_sep = next(
+        (
+            ev
+            for ev in events
+            if str(ev.get("event_date") or "") == "2026-09-15"
+            and "TAX" in str(ev.get("event_type") or "").upper()
+        ),
+        None,
+    )
+    assert tax_sep is not None
+    assert str(tax_sep.get("source") or "") == "Internal Revenue Service"
+    assert "estimated-tax" in str(tax_sep.get("description") or "").lower()
+    assert "recommendation" not in tax_sep
+    assert "action" not in tax_sep
 
 
 def test_signal_refresh_status_returns_market_proxy_replay_publish() -> None:
