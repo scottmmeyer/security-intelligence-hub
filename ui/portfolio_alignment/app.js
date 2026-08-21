@@ -3272,6 +3272,185 @@ function toggleNbaSection(id) {
 // State for view-all toggle and breakdown expansion
 let _dqShowAll = false;
 const DQ_DEFAULT_ROWS = 10;
+let _dqMomentumBySymbol = null;
+let _dqMomentumMeta = null;
+let _dqMomentumFetchInFlight = false;
+let _dqMomentumStatus = "idle";
+
+function _dqMomentumParDate(data) {
+  const v = _safeVersionedValue(data || {}, "snapshot_date");
+  const s = v != null ? String(v).trim() : "";
+  return s || null;
+}
+
+function _dqMomentumContextKey(data) {
+  const runId = String((data && data.run_id) || "").trim() || "NO_RUN_ID";
+  const parDate = _dqMomentumParDate(data) || "NO_PAR_DATE";
+  return `${runId}|${parDate}`;
+}
+
+function _dqMomentumConfidence(row) {
+  const horizons = (((row || {}).absolute_security_momentum || {}).horizons) || {};
+  for (const h of ["1M", "3M", "1W", "6M", "12M"]) {
+    const c = horizons[h] && horizons[h].confidence;
+    if (c && c !== "UNAVAILABLE") return String(c);
+  }
+  return "UNAVAILABLE";
+}
+
+function _dqMomentumAsOf(row) {
+  const horizons = (((row || {}).absolute_security_momentum || {}).horizons) || {};
+  const dates = [];
+  for (const h of ["1W", "1M", "3M", "6M", "12M"]) {
+    const d = horizons[h] && horizons[h].as_of_date;
+    if (d) dates.push(String(d));
+  }
+  if (!dates.length) return "UNAVAILABLE";
+  dates.sort();
+  return dates[dates.length - 1];
+}
+
+function _dqMomentumState(row) {
+  if (!row || typeof row !== "object") return "UNAVAILABLE";
+  const abs = String((((row.absolute_security_momentum || {}).state) || "")).toUpperCase();
+  if (abs && abs !== "UNAVAILABLE") return abs;
+  const rel = String(row.relative_momentum_change || "").toUpperCase();
+  return rel || "UNAVAILABLE";
+}
+
+function _dqMomentumLevel(row) {
+  if (!row || typeof row !== "object") return "UNAVAILABLE";
+  const level = String((((row.absolute_security_momentum || {}).state) || "")).toUpperCase();
+  return level || "UNAVAILABLE";
+}
+
+function _dqMomentumChange(row) {
+  if (!row || typeof row !== "object") return "UNAVAILABLE";
+  const change = String(row.relative_momentum_change || "").toUpperCase();
+  return change || "UNAVAILABLE";
+}
+
+function _dqMomentumDisplayField(value) {
+  const v = String(value || "").toUpperCase();
+  return (v && v !== "UNAVAILABLE") ? v : "—";
+}
+
+function _dqMomentumBadge(symbol) {
+  if (_dqMomentumStatus === "loading" || _dqMomentumStatus === "idle") {
+    return `<span class="dq-status" title="Momentum context is loading.">…</span>`;
+  }
+
+  if (_dqMomentumStatus === "unavailable" && _dqMomentumMeta && _dqMomentumMeta.compatible === false) {
+    const parDate = _dqMomentumMeta.par_portfolio_date || "UNAVAILABLE";
+    const momDate = _dqMomentumMeta.snapshot_date || "UNAVAILABLE";
+    const tooltip = `Momentum unavailable for this run due to provenance mismatch.\nPAR portfolio date: ${parDate}\nMomentum snapshot date: ${momDate}\n\nMomentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.`;
+    return `<span class="dq-status dq-status-OW_NODE" title="${escHtml(tooltip)}">UNAVAILABLE</span>`;
+  }
+
+  if (_dqMomentumStatus === "unavailable") {
+    return `<span class="dq-status dq-status-OW_NODE" title="Momentum unavailable for current symbol in canonical momentum summary.">UNAVAILABLE</span>`;
+  }
+
+  const momentumRow = _dqMomentumBySymbol && _dqMomentumBySymbol[String(symbol || "").toUpperCase()];
+  if (!momentumRow) {
+    return `<span class="dq-status dq-status-OW_NODE" title="Momentum unavailable for current symbol in canonical momentum summary.">UNAVAILABLE</span>`;
+  }
+
+  const level = _dqMomentumLevel(momentumRow);
+  const change = _dqMomentumChange(momentumRow);
+  const state = _dqMomentumState(momentumRow);
+  const confirmation = String(momentumRow.confirmation_state || "UNAVAILABLE");
+  const extension = String(momentumRow.extension_state || "UNAVAILABLE");
+  const trajectory = String(momentumRow.relative_momentum_change || "UNAVAILABLE");
+  const confidence = _dqMomentumConfidence(momentumRow);
+  const asOf = _dqMomentumAsOf(momentumRow);
+  const provenance = String(momentumRow.history_label || momentumRow.evaluation_status || ((_dqMomentumMeta || {}).provenance) || "UNAVAILABLE");
+
+  const isPositiveLevel = ["STRONG", "IMPROVING", "POSITIVE"].includes(level);
+  const isNegativeLevel = ["WEAK", "WEAKENING", "NEGATIVE"].includes(level);
+  const isDeterioratingChange = ["FADING", "WEAKENING", "NEGATIVE", "REVERSING"].includes(change);
+  const hasLevel = level !== "UNAVAILABLE";
+  const hasChange = change !== "UNAVAILABLE";
+  const cls = (!hasLevel && !hasChange)
+    ? "dq-status-OW_NODE"
+    : ((isPositiveLevel && !isDeterioratingChange)
+      ? "dq-replay-yes"
+      : (isNegativeLevel ? "dq-replay-no" : "dq-status-DEPLOYABLE"));
+
+  const compactDisplay = `${_dqMomentumDisplayField(level)} · ${_dqMomentumDisplayField(change)}`;
+
+  const tooltip = `Momentum State: ${level}\nMomentum Change: ${change}\nExtension: ${extension}\nConfirmation: ${confirmation}\nConfidence: ${confidence}\nAs-of: ${asOf}\nProvenance: ${provenance}\nTrajectory: ${trajectory}\n\nMomentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.`;
+  return `<span class="${cls}" title="${escHtml(tooltip)}">${escHtml(compactDisplay)}</span>`;
+}
+
+function _dqEnsureMomentumContext(queueForRender, tbodyId) {
+  if (_dqMomentumStatus === "ready" && _dqMomentumBySymbol) return;
+  if (_dqMomentumStatus === "unavailable") return;
+  if (_dqMomentumFetchInFlight) return;
+  _dqMomentumFetchInFlight = true;
+  _dqMomentumStatus = "loading";
+  const contextKey = (_dqMomentumMeta && _dqMomentumMeta.context_key) || _dqMomentumContextKey(_analysisResult || {});
+
+  const rerender = () => {
+    if (Array.isArray(queueForRender)) {
+      const limit = _dqShowAll ? queueForRender.length : DQ_DEFAULT_ROWS;
+      _dqRenderTableRows(queueForRender, tbodyId || "dq-queue-table-body", limit);
+      return;
+    }
+    const dq = _analysisResult && _analysisResult.deployment_queue;
+    if (dq && Array.isArray(dq.queue)) {
+      const limit = _dqShowAll ? dq.queue.length : DQ_DEFAULT_ROWS;
+      _dqRenderTableRows(dq.queue, "dq-queue-table-body", limit);
+    }
+  };
+
+  fetch("/api/pis/momentum/summary")
+    .then(resp => resp.ok ? resp.json() : Promise.resolve(null))
+    .then(summary => {
+      const parDate = _dqMomentumParDate(_analysisResult);
+      const momDateRaw = summary && summary.snapshot_date != null ? String(summary.snapshot_date).trim() : "";
+      const momDate = momDateRaw || null;
+      const compatible = !!parDate && !!momDate && parDate === momDate;
+
+      const rows = (((summary || {}).portfolio_momentum_map || {}).holdings) || [];
+      const map = {};
+      if (compatible) {
+        for (const row of rows) {
+          const sym = String((row || {}).symbol || "").trim().toUpperCase();
+          if (!sym) continue;
+          map[sym] = row;
+        }
+        _dqMomentumStatus = "ready";
+      } else {
+        _dqMomentumStatus = "unavailable";
+      }
+      _dqMomentumBySymbol = map;
+      _dqMomentumMeta = {
+        context_key: contextKey,
+        snapshot_date: momDate,
+        par_portfolio_date: parDate,
+        generated_at_utc: (summary || {}).generated_at_utc || null,
+        provenance: "CURRENT_RUNTIME",
+        compatible,
+      };
+      rerender();
+    })
+    .catch(() => {
+      _dqMomentumBySymbol = {};
+      _dqMomentumStatus = "unavailable";
+      _dqMomentumMeta = {
+        context_key: contextKey,
+        provenance: "UNAVAILABLE",
+        par_portfolio_date: _dqMomentumParDate(_analysisResult),
+        snapshot_date: null,
+        compatible: false,
+      };
+      rerender();
+    })
+    .finally(() => {
+      _dqMomentumFetchInFlight = false;
+    });
+}
 
 function _dqEmptyStateHtml(data, dq, plan, queue) {
   const planRecs = plan.recommendations || [];
@@ -3342,6 +3521,21 @@ function renderDeploymentQueue(data) {
   const plan = data.deployment_plan || {};
   const planRecs = plan.recommendations || [];
   const hasQueue = queue.length > 0;
+
+  const momentumContextKey = _dqMomentumContextKey(data);
+  const priorContextKey = (_dqMomentumMeta && _dqMomentumMeta.context_key) || null;
+  if (priorContextKey !== momentumContextKey) {
+    _dqMomentumBySymbol = null;
+    _dqMomentumStatus = "idle";
+    _dqMomentumMeta = {
+      context_key: momentumContextKey,
+      par_portfolio_date: _dqMomentumParDate(data),
+      snapshot_date: null,
+      generated_at_utc: null,
+      provenance: "PENDING",
+      compatible: false,
+    };
+  }
 
   if (!hasQueue) {
     el.innerHTML = `<div class="dq-panel">
@@ -3479,6 +3673,7 @@ function renderDeploymentQueue(data) {
         <th>Tier</th>
         <th>Wt% / Proj</th>
         <th>Composite</th>
+        <th>Momentum<br><span style="font-size:0.68rem;color:var(--muted);font-weight:600">State / Change</span></th>
         <th>Replay</th>
         <th>Add $</th>
         <th>Status</th>
@@ -3544,6 +3739,21 @@ function renderDeploymentQueue(data) {
       <div class="da-action-section-header">Recommended Actions — Top 10</div>
       ${actionCardsHtml}
     </div>
+    <div style="font-size:0.75rem;color:var(--muted);margin:6px 0 2px 0;">Momentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.</div>
+    <details style="margin:6px 0 8px 0;font-size:0.75rem;color:var(--muted);">
+      <summary style="cursor:pointer;color:var(--accent);font-weight:700;">How to Read Momentum (Buy-Timing Context)</summary>
+      <div style="margin-top:6px;line-height:1.5;">
+        <div><strong>State / Change field contract:</strong> First value is the canonical absolute momentum <strong>state</strong>; second value is canonical relative momentum <strong>change</strong>.</div>
+        <div><strong>STRONG + IMPROVING</strong>: Strong leadership getting stronger. Most favorable buying confirmation when valuation, portfolio headroom, and other canonical evidence also agree.</div>
+        <div><strong>STRONG + NEUTRAL/STABLE</strong>: Healthy leadership without improving slope. Selective buying, no urgency to chase.</div>
+        <div><strong>STRONG + FADING/WEAKENING</strong>: Strong current leadership but deteriorating timing. Exercise caution on new buys and prefer pullback/reset or renewed improvement.</div>
+        <div><strong>WEAK + IMPROVING</strong>: Early turn or improving setup, but leadership is not yet strong. Wait for confirmation or use greater caution.</div>
+        <div><strong>WEAK + NEUTRAL/STABLE</strong>: Limited momentum support for a new entry.</div>
+        <div><strong>WEAK + FADING/WEAKENING</strong>: Poor timing confirmation for a new buy.</div>
+        <div><strong>EXTENDED</strong>: Increase chase-risk caution regardless of strong current leadership.</div>
+        <div style="margin-top:4px;"><strong>Rule:</strong> Momentum should influence timing/aggressiveness, not underlying conviction.</div>
+      </div>
+    </details>
     ${tableHtml}
     ${blockedHtml}
     <div class="dp-generate-row">
@@ -3554,7 +3764,8 @@ function renderDeploymentQueue(data) {
     </div>
   </div>`;
 
-  // Render initial rows
+  // Render initial rows with explicit loading state while momentum context is in flight.
+  _dqEnsureMomentumContext(queue, tableId);
   _dqRenderTableRows(queue, tableId, DQ_DEFAULT_ROWS);
 }
 
@@ -3774,12 +3985,13 @@ function _dqRenderTableRows(queue, tbodyId, limit) {
       <td><span class="dq-tier dq-tier-${tierShort}">${tierShort}</span></td>
       <td style="text-align:right;white-space:nowrap">${wtDisp}</td>
       <td style="text-align:right;font-weight:600">${c.composite_score != null ? parseFloat(c.composite_score).toFixed(2) : "—"}</td>
+      <td>${_dqMomentumBadge(sym)}</td>
       <td><span class="${c.replay_supported ? "dq-replay-yes" : "dq-replay-no"}">${c.replay_supported ? "YES" : "NO"}</span></td>
       <td style="text-align:right">${addAmtDisp}</td>
       <td><span class="dq-status dq-status-${status}">${_dqStatusLabel(status)}</span></td>
     </tr>
     <tr class="dq-breakdown-row" id="${bdId}">
-      <td colspan="9">
+      <td colspan="10">
         <div class="dq-signal-profile-header">Signal Profile — ${escHtml(sym)}</div>
         <div class="dq-signal-grid">
           <div class="dq-sig-card dq-sig-ucf">
