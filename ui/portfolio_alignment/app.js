@@ -57,10 +57,71 @@ function _saveResult(data) {
   try { localStorage.setItem(_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
 }
 function _loadSavedResult() {
-  try { return JSON.parse(localStorage.getItem(_STORAGE_KEY)); } catch (_) { return null; }
+  try {
+    const stored = localStorage.getItem(_STORAGE_KEY);
+    _debugLog("localStorage.getItem() returned: " + (stored ? "YES (data exists)" : "NO (null)"));
+    const result = stored ? JSON.parse(stored) : null;
+    _debugLog("Parsed result: " + (result ? "OK" : "NO"));
+    return result;
+  } catch (err) {
+    _debugLog("_loadSavedResult() error: " + err.message);
+    return null;
+  }
 }
 function _clearSavedResult() {
   try { localStorage.removeItem(_STORAGE_KEY); } catch (_) {}
+}
+
+// Phase 23.2D — Backend fallback for browser storage durability
+// If localStorage is empty, restore from canonical backend run.
+async function _loadLatestRunFromBackend() {
+  try {
+    _debugLog("🔄 localStorage empty; fetching run list from backend...");
+    const manifestResp = await fetch("/api/portfolio/runs");
+    if (!manifestResp.ok) {
+      _debugLog("⚠ /api/portfolio/runs returned " + manifestResp.status);
+      return null;
+    }
+    const manifest = await manifestResp.json();
+    if (!manifest.portfolios || !Array.isArray(manifest.portfolios) || manifest.portfolios.length === 0) {
+      _debugLog("ℹ No runs in manifest (empty backend)");
+      return null;
+    }
+    // Find latest by created_at_utc (ISO string comparison works lexicographically)
+    let latest = null;
+    for (const run of manifest.portfolios) {
+      if (!latest || (run.created_at_utc > latest.created_at_utc)) {
+        latest = run;
+      }
+    }
+    if (!latest) {
+      _debugLog("ℹ Could not determine latest run");
+      return null;
+    }
+    _debugLog("✓ Latest run: " + latest.run_id + " (created: " + latest.created_at_utc + ")");
+    // Fetch full run data
+    return await _loadRunFromBackend(latest.run_id);
+  } catch (err) {
+    _debugLog("✗ Backend fallback error: " + err.message);
+    return null;
+  }
+}
+
+async function _loadRunFromBackend(runId) {
+  try {
+    _debugLog("📥 Fetching run " + runId + " from backend...");
+    const runResp = await fetch("/api/portfolio/runs/" + encodeURIComponent(runId));
+    if (!runResp.ok) {
+      _debugLog("⚠ /api/portfolio/runs/" + runId + " returned " + runResp.status);
+      return null;
+    }
+    const runData = await runResp.json();
+    _debugLog("✓ Loaded run " + runId + " from backend (" + (runData.holding_count || "?") + " holdings)");
+    return runData;
+  } catch (err) {
+    _debugLog("✗ Failed to load run: " + err.message);
+    return null;
+  }
 }
 
 function _safeVersionedValue(data, key) {
@@ -78,6 +139,63 @@ function _safeVersionedValue(data, key) {
     }
   }
   return undefined;
+}
+
+function _normalizeRestoredRunData(data) {
+  if (!data || typeof data !== "object") return data;
+
+  const snapshot = data.snapshot && typeof data.snapshot === "object" ? data.snapshot : {};
+  const runMetadata = data.run_metadata && typeof data.run_metadata === "object" ? data.run_metadata : {};
+  const concentration = data.concentration && typeof data.concentration === "object" ? data.concentration : {};
+
+  const pickFirst = (...values) => {
+    for (const value of values) {
+      if (value !== undefined && value !== null && value !== "" && value !== "null" && value !== "undefined") {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
+  const toFiniteNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const normalized = { ...data };
+
+  normalized.run_id = pickFirst(normalized.run_id, snapshot.run_id, runMetadata.run_id, data.analysis_id, data.id) || normalized.run_id || "";
+  normalized.snapshot_date = pickFirst(normalized.snapshot_date, snapshot.snapshot_date, runMetadata.snapshot_date, data.snapshotDate, snapshot.snapshotDate) || "";
+  normalized.account_name = pickFirst(normalized.account_name, snapshot.account_name, runMetadata.account_name, data.accountName, snapshot.accountName) || "Portfolio";
+  normalized.holding_count = pickFirst(normalized.holding_count, normalized.holdings_count, snapshot.holding_count, snapshot.holdings_count, runMetadata.holding_count, runMetadata.holdings_count, data.holdings, data.holdings_count);
+  normalized.holding_count = normalized.holding_count != null ? toFiniteNumber(normalized.holding_count) ?? normalized.holding_count : normalized.holding_count;
+  normalized.recommendation_count = pickFirst(
+    normalized.recommendation_count,
+    snapshot.recommendation_count,
+    runMetadata.recommendation_count,
+    Array.isArray(data.recommendations) ? data.recommendations.length : undefined,
+    data.recommendationCount,
+    snapshot.recommendationCount,
+    runMetadata.recommendationCount,
+  );
+  normalized.recommendation_count = normalized.recommendation_count != null ? toFiniteNumber(normalized.recommendation_count) ?? normalized.recommendation_count : normalized.recommendation_count;
+  normalized.total_market_value = pickFirst(normalized.total_market_value, snapshot.total_market_value, runMetadata.total_market_value, data.portfolio_value, snapshot.portfolio_value, runMetadata.portfolio_value);
+  normalized.overall_alignment_score = pickFirst(normalized.overall_alignment_score, snapshot.overall_alignment_score, runMetadata.overall_alignment_score, data.alignment_score, snapshot.alignment_score, runMetadata.alignment_score);
+  normalized.concentration_tier = pickFirst(normalized.concentration_tier, concentration.concentration_tier, snapshot.concentration_tier, runMetadata.concentration_tier, data.concentration_tier, data.mandate_type, snapshot.mandate_type, runMetadata.mandate_type);
+  normalized.mandate_type = pickFirst(normalized.mandate_type, normalized.mandate, snapshot.mandate_type, snapshot.mandate, runMetadata.mandate_type, runMetadata.mandate, data.mandate_type, data.mandate);
+  normalized.source_format = pickFirst(normalized.source_format, snapshot.source_format, runMetadata.source_format, data.sourceFormat, snapshot.sourceFormat, runMetadata.sourceFormat) || "CSV";
+
+  if (!Array.isArray(normalized.alignment) && Array.isArray(data.alignment_snapshot)) {
+    normalized.alignment = data.alignment_snapshot;
+  }
+  if (!Array.isArray(normalized.recommendations) && Array.isArray(data.recommendations_snapshot)) {
+    normalized.recommendations = data.recommendations_snapshot;
+  }
+  if (!Array.isArray(normalized.security_overlays) && Array.isArray(data.security_overlays_snapshot)) {
+    normalized.security_overlays = data.security_overlays_snapshot;
+  }
+
+  return normalized;
 }
 
 function _getAccountName(data) {
@@ -122,58 +240,109 @@ function _getMandateLabel(data) {
   return value != null && value !== "" && value !== "null" && value !== "undefined" ? String(value) : "CONCENTRATED_ALPHA";
 }
 
+function _debugLog(msg) {
+  console.log("[APP DEBUG]", msg);
+  // Fallback to direct DOM manipulation
+  const content = document.getElementById("debugContent");
+  if (content) {
+    content.textContent = (content.textContent || "") + "\n" + msg;
+    const lines = content.textContent.split("\n").filter(l => l.trim());
+    if (lines.length > 15) {
+      content.textContent = lines.slice(-15).join("\n");
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  // Default date = today
-  const dateInput = document.getElementById("snapshotDate");
-  dateInput.value = new Date().toISOString().slice(0, 10);
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    _debugLog("📍 DOMContentLoaded fired");
 
-  setupUploadZone();
+    // Default date = today
+    const dateInput = document.getElementById("snapshotDate");
+    dateInput.value = new Date().toISOString().slice(0, 10);
 
-  document.getElementById("analyzeBtn").addEventListener("click", runAnalysis);
-  document.getElementById("clearBtn").addEventListener("click", clearAll);
+    setupUploadZone();
 
-  // Re-enable Analyze button (or prompt re-upload) when mandate changes
-  document.getElementById("mandateSelect").addEventListener("change", () => {
-    if (_fileContent) {
-      document.getElementById("analyzeBtn").disabled = false;
-      showStatus("info", "Mandate changed — click Analyze to re-run with the new mandate.");
-    } else if (_analysisResult) {
-      showStatus("warning", "Mandate changed — re-upload your portfolio CSV to analyze with the new mandate.");
+    document.getElementById("analyzeBtn").addEventListener("click", runAnalysis);
+    document.getElementById("clearBtn").addEventListener("click", clearAll);
+
+    // Re-enable Analyze button (or prompt re-upload) when mandate changes
+    document.getElementById("mandateSelect").addEventListener("change", () => {
+      if (_fileContent) {
+        document.getElementById("analyzeBtn").disabled = false;
+        showStatus("info", "Mandate changed — click Analyze to re-run with the new mandate.");
+      } else if (_analysisResult) {
+        showStatus("warning", "Mandate changed — re-upload your portfolio CSV to analyze with the new mandate.");
+      }
+    });
+
+    // Phase 23.0A — load persisted tax state
+    loadTaxState();
+
+    // Phase 23.0C — load persisted strategic exits
+    loadStrategicExits();
+
+    // Phase 23.2 — load persisted operator policies
+    loadOperatorPolicies();
+
+    // Tax input live-compute
+    ["taxNetRealizedYTD", "taxPotentialLosses", "taxCarryforward"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("input", updateTaxComputed);
+    });
+
+    // Restore last analysis if available
+    const saved = _normalizeRestoredRunData(_loadSavedResult());
+    _debugLog("Attempting to render saved result...");
+    if (saved) {
+      _debugLog("✓ Saved result found, rendering...");
+      _analysisResult = saved;
+      const ts = _getPortfolioDate(saved);
+      const savedMandate = _getMandateLabel(saved);
+      const mandateSel = document.getElementById("mandateSelect");
+      if (mandateSel) mandateSel.value = savedMandate;
+      showStatus("info",
+        `Showing last analysis — <strong>${_getAccountName(saved)}</strong> ` +
+        `(${_getHoldingCount(saved) ?? "—"} holdings, ${ts}, mandate: <strong>${savedMandate}</strong>). ` +
+        `Upload a new file to re-analyze.`);
+      document.getElementById("clearBtn").style.display = "inline-block";
+      try {
+        renderResults(saved);
+        _debugLog("✓ renderResults() completed");
+      } catch (err) {
+        _debugLog("✗ renderResults() error: " + err.message);
+      }
+    } else {
+      _debugLog("ℹ localStorage empty; trying backend fallback...");
+      const backendRun = _normalizeRestoredRunData(await _loadLatestRunFromBackend());
+      if (backendRun) {
+        _debugLog("✓ Backend run restored: " + (backendRun.run_id || "unknown"));
+        _analysisResult = backendRun;
+        const ts = _getPortfolioDate(backendRun);
+        const restoredMandate = _getMandateLabel(backendRun);
+        const mandateSel = document.getElementById("mandateSelect");
+        if (mandateSel) mandateSel.value = restoredMandate;
+        showStatus("info",
+          `Showing restored analysis — <strong>${_getAccountName(backendRun)}</strong> ` +
+          `(${_getHoldingCount(backendRun) ?? "—"} holdings, ${ts}, mandate: <strong>${restoredMandate}</strong>). ` +
+          `Upload a new file to re-analyze.`);
+        document.getElementById("clearBtn").style.display = "inline-block";
+        try {
+          renderResults(backendRun);
+          _debugLog("✓ renderResults() completed");
+        } catch (err) {
+          _debugLog("✗ renderResults() error: " + err.message);
+        }
+      } else {
+        _debugLog("ℹ No backend run available; showing empty state");
+      }
     }
-  });
-
-  // Phase 23.0A — load persisted tax state
-  loadTaxState();
-
-  // Phase 23.0C — load persisted strategic exits
-  loadStrategicExits();
-
-  // Phase 23.2 — load persisted operator policies
-  loadOperatorPolicies();
-
-  // Tax input live-compute
-  ["taxNetRealizedYTD","taxPotentialLosses","taxCarryforward"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener("input", updateTaxComputed);
-  });
-
-  // Restore last analysis if available
-  const saved = _loadSavedResult();
-  if (saved) {
-    _analysisResult = saved;
-    const ts = _getPortfolioDate(saved);
-    const savedMandate = _getMandateLabel(saved);
-    const mandateSel = document.getElementById("mandateSelect");
-    if (mandateSel) mandateSel.value = savedMandate;
-    showStatus("info",
-      `Showing last analysis — <strong>${_getAccountName(saved)}</strong> ` +
-      `(${_getHoldingCount(saved) ?? "—"} holdings, ${ts}, mandate: <strong>${savedMandate}</strong>). ` +
-      `Upload a new file to re-analyze.`);
-    document.getElementById("clearBtn").style.display = "inline-block";
-    renderResults(saved);
+  } catch (err) {
+    _debugLog("✗ BOOT ERROR: " + err.message);
+    console.error("Boot error:", err);
   }
 });
 
@@ -181,7 +350,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // Upload zone
 // ─────────────────────────────────────────────────────────────────────────────
 function setupUploadZone() {
-  const zone  = document.getElementById("uploadZone");
+  const zone = document.getElementById("uploadZone");
   const input = document.getElementById("fileInput");
 
   input.addEventListener("change", () => {
@@ -209,7 +378,7 @@ function loadFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
     _fileContent = e.target.result;
-    showStatus("success", `✓  Loaded <strong>${file.name}</strong> (${(file.size/1024).toFixed(1)} KB). Set the portfolio date and click Analyze.`);
+    showStatus("success", `✓  Loaded <strong>${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB). Set the portfolio date and click Analyze.`);
     document.getElementById("analyzeBtn").disabled = false;
     document.getElementById("clearBtn").style.display = "inline-block";
   };
@@ -247,9 +416,9 @@ async function runAnalysis() {
       return;
     }
 
-    _analysisResult = data;
+    _analysisResult = _normalizeRestoredRunData(data);
     setLoading(false);
-    _saveResult(data);
+    _saveResult(_analysisResult);
 
     const warnText = data.warnings && data.warnings.length
       ? `  <br>⚠ ${data.warnings.length} normalization warning(s): ${data.warnings.join("; ")}`
@@ -259,7 +428,7 @@ async function runAnalysis() {
       `Run ID: <strong>${data.run_id}</strong>${warnText}`
     );
 
-    renderResults(data);
+    renderResults(_analysisResult);
   } catch (err) {
     setLoading(false);
     showStatus("error", `Network error: ${err.message}`);
@@ -1272,6 +1441,24 @@ function _macroIndicatorRowHtml(indicator) {
   `;
 }
 
+function _macroUnavailableRowHtml(indicator) {
+  const name = escHtml(String(indicator && indicator.name ? indicator.name : "UNAVAILABLE"));
+  const availability = _macroCell(indicator && indicator.availability);
+  const reason = _macroCell(indicator && indicator.note);
+  const requiredSource = _macroCell(indicator && indicator.source);
+
+  return `
+    <tr class="mlc-row-unavailable">
+      <td>${name}</td>
+      <td colspan="10">
+        <div><strong>Status:</strong> ${availability}</div>
+        <div><strong>Reason:</strong> ${reason}</div>
+        <div><strong>Required Source / Series:</strong> ${requiredSource}</div>
+      </td>
+    </tr>
+  `;
+}
+
 function _macroTableHtml(title, rows) {
   const safeRows = Array.isArray(rows) ? rows : [];
   return `
@@ -1295,7 +1482,10 @@ function _macroTableHtml(title, rows) {
             </tr>
           </thead>
           <tbody>
-            ${safeRows.length ? safeRows.map(_macroIndicatorRowHtml).join("") : `<tr><td colspan="11">UNAVAILABLE</td></tr>`}
+            ${safeRows.length ? safeRows.map((row) => {
+              const availability = String((row && row.availability) || "").toUpperCase();
+              return availability === "UNAVAILABLE" ? _macroUnavailableRowHtml(row) : _macroIndicatorRowHtml(row);
+            }).join("") : `<tr><td colspan="11">UNAVAILABLE</td></tr>`}
           </tbody>
         </table>
       </div>

@@ -689,9 +689,14 @@ def _danelfin_capture_queue_payload() -> dict[str, object]:
 
 def _capture_cors_origin(handler: http.server.BaseHTTPRequestHandler) -> str | None:
     origin = str(handler.headers.get("Origin") or "").strip()
+
     if not origin:
         return None
     if origin.startswith("chrome-extension://"):
+        return origin
+    if origin.startswith("vscode-webview://"):
+        return origin
+    if origin.startswith("vscode://"):
         return origin
     if origin in {"http://127.0.0.1:8765", "http://localhost:8765"}:
         return origin
@@ -1622,6 +1627,262 @@ def _format_abs(value: float | None, *, digits: int = 4) -> str:
     return f"{value:.{digits}f}"
 
 
+_MACRO_HISTORY_ROOT = _REPO_ROOT / "data" / "history" / "macro_liquidity"
+_MACRO_SERIES_POINTS_CACHE: dict[str, dict[str, object]] = {}
+_MACRO_SERIES_POINTS_CACHE_LOCK = threading.Lock()
+_MACRO_SERIES_CACHE_STATS = {"hits": 0, "misses": 0}
+_MACRO_MOMENTUM_CACHE: dict[str, object] = {"signature": None, "payload": None}
+_MACRO_MOMENTUM_CACHE_LOCK = threading.Lock()
+_RATE_LIKE_SERIES_IDS = {
+    "DGS2",
+    "DGS10",
+    "DGS30",
+    "BAMLC0A0CM",
+    "BAMLH0A0HYM2",
+    "SOFR",
+    "IORB",
+}
+
+
+def _path_stat_token(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except Exception:
+        return None
+    return (int(st.st_mtime_ns), int(st.st_size))
+
+
+def _latest_mtime_ns_for_glob(pattern: str) -> int:
+    latest = 0
+    try:
+        for p in _REPO_ROOT.glob(pattern):
+            try:
+                ts = int(p.stat().st_mtime_ns)
+            except Exception:
+                continue
+            if ts > latest:
+                latest = ts
+    except Exception:
+        return 0
+    return latest
+
+
+def _macro_momentum_dependency_signature() -> tuple:
+    watched = [
+        _REPO_ROOT / "data" / "current" / "security_prices.csv",
+        _REPO_ROOT / "data" / "current" / "benchmark_returns.csv",
+        _REPO_ROOT / "data" / "current" / "market_regime_proxy_price_history.csv",
+        _REPO_ROOT / "data" / "current" / "analytical_universe.csv",
+        _REPO_ROOT / "data" / "history" / "pis" / "pis_snapshot_index.csv",
+        _REPO_ROOT / "data" / "signals" / "fmp" / "latest" / "latest_fmp_income_growth.csv",
+    ]
+    base = tuple((str(p.relative_to(_REPO_ROOT)), _path_stat_token(p)) for p in watched)
+    glob_part = (
+        _latest_mtime_ns_for_glob("data/signals/zacks/*_zacks.csv"),
+        _latest_mtime_ns_for_glob("data/signals/danelfin/*_danelfin*.csv"),
+        _latest_mtime_ns_for_glob("data/signals/yahoo/*_yahoo_supplemental.csv"),
+        _latest_mtime_ns_for_glob("data/signals/fmp/daily/fmp_grades_consensus_*.csv"),
+        _latest_mtime_ns_for_glob("data/portfolio_ingestion/analysis_runs/*.json"),
+    )
+    return base + glob_part
+
+
+def _macro_bp_delta(newer: float, older: float) -> str:
+    change_bp = int(round((newer - older) * 100.0))
+    if change_bp > 0:
+        return f"+{change_bp} bp"
+    return f"{change_bp} bp"
+
+
+def _is_rate_like_series(series_id: str) -> bool:
+    return str(series_id or "").strip().upper() in _RATE_LIKE_SERIES_IDS
+
+
+def _macro_series_points(series_id: str) -> list[tuple[str, float, dict[str, str]]]:
+    path = _MACRO_HISTORY_ROOT / f"series_id={series_id}" / "observations.csv"
+    if not path.exists():
+        return []
+
+    token = _path_stat_token(path)
+    cache_key = str(path)
+    with _MACRO_SERIES_POINTS_CACHE_LOCK:
+        cached = _MACRO_SERIES_POINTS_CACHE.get(cache_key)
+        if cached and cached.get("token") == token:
+            _MACRO_SERIES_CACHE_STATS["hits"] = int(_MACRO_SERIES_CACHE_STATS.get("hits") or 0) + 1
+            return list(cached.get("points") or [])
+
+    latest_by_date: dict[str, tuple[float, dict[str, str]]] = {}
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            obs = str(row.get("observation_date") or "").strip()[:10]
+            if not obs:
+                continue
+            try:
+                value = float(str(row.get("value") or "").strip())
+            except Exception:
+                continue
+            latest_by_date[obs] = (value, {k: str(v or "") for k, v in row.items()})
+
+    points: list[tuple[str, float, dict[str, str]]] = []
+    for obs_date, (value, row) in latest_by_date.items():
+        points.append((obs_date, value, row))
+    points.sort(key=lambda x: x[0])
+
+    with _MACRO_SERIES_POINTS_CACHE_LOCK:
+        _MACRO_SERIES_POINTS_CACHE[cache_key] = {"token": token, "points": list(points)}
+        _MACRO_SERIES_CACHE_STATS["misses"] = int(_MACRO_SERIES_CACHE_STATS.get("misses") or 0) + 1
+    return points
+
+
+def _macro_expected_update(series_row: dict[str, str]) -> str:
+    expected = str(series_row.get("expected_update_frequency") or "").strip().lower()
+    if expected:
+        return expected
+    frequency = str(series_row.get("frequency") or "").strip().lower()
+    if "week" in frequency:
+        return "weekly"
+    return "business_daily"
+
+
+def _macro_freshness_from_observation(observation_date: str, expected_update_frequency: str) -> str:
+    parsed = _parse_iso_date(observation_date)
+    if parsed is None:
+        return "UNKNOWN"
+    age_days = (date.today() - parsed).days
+    if expected_update_frequency == "weekly":
+        return "FRESH" if age_days <= 10 else "STALE"
+    return "FRESH" if age_days <= 4 else "STALE"
+
+
+def _macro_change_fields(
+    points: list[tuple[str, float, dict[str, str]]],
+    expected_update_frequency: str,
+    *,
+    change_display_unit: str,
+) -> tuple[str, str, str]:
+    if not points:
+        return "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE"
+    n = len(points)
+    latest = points[-1][1]
+
+    def _daily_steps() -> tuple[float | None, float | None, float | None]:
+        c1 = (latest - points[n - 2][1]) if n >= 2 else None
+        c5 = (latest - points[n - 6][1]) if n >= 6 else None
+        c20 = (latest - points[n - 21][1]) if n >= 21 else None
+        return c1, c5, c20
+
+    def _weekly_steps() -> tuple[float | None, float | None, float | None]:
+        c1 = None
+        c5 = (latest - points[n - 2][1]) if n >= 2 else None
+        c20 = (latest - points[n - 5][1]) if n >= 5 else None
+        return c1, c5, c20
+
+    c1_raw, c5_raw, c20_raw = _weekly_steps() if expected_update_frequency == "weekly" else _daily_steps()
+
+    if change_display_unit == "bp":
+        c1 = _macro_bp_delta(latest, points[n - 2][1]) if c1_raw is not None and n >= 2 else "UNAVAILABLE"
+        if expected_update_frequency == "weekly":
+            c1 = "UNAVAILABLE"
+        c5 = _macro_bp_delta(latest, points[n - 2][1]) if c5_raw is not None and ((expected_update_frequency == "weekly" and n >= 2) or (expected_update_frequency != "weekly" and n >= 6)) else "UNAVAILABLE"
+        c20 = _macro_bp_delta(latest, points[n - 5][1]) if c20_raw is not None and expected_update_frequency == "weekly" and n >= 5 else (
+            _macro_bp_delta(latest, points[n - 21][1]) if c20_raw is not None and expected_update_frequency != "weekly" and n >= 21 else "UNAVAILABLE"
+        )
+        return c1, c5, c20
+
+    if expected_update_frequency == "weekly":
+        c1 = "UNAVAILABLE"
+        c5 = _format_pct(_pct_delta(latest, points[n - 2][1])) if c5_raw is not None and n >= 2 else "UNAVAILABLE"
+        c20 = _format_pct(_pct_delta(latest, points[n - 5][1])) if c20_raw is not None and n >= 5 else "UNAVAILABLE"
+        return c1, c5, c20
+
+    c1 = _format_pct(_pct_delta(latest, points[n - 2][1])) if c1_raw is not None and n >= 2 else "UNAVAILABLE"
+    c5 = _format_pct(_pct_delta(latest, points[n - 6][1])) if c5_raw is not None and n >= 6 else "UNAVAILABLE"
+    c20 = _format_pct(_pct_delta(latest, points[n - 21][1])) if c20_raw is not None and n >= 21 else "UNAVAILABLE"
+    return c1, c5, c20
+
+
+def _macro_format_value(value: float, units: str) -> str:
+    u = str(units or "").strip().lower()
+    if u == "percent":
+        return f"{value:.2f}%"
+    if "usd per barrel" in u:
+        return f"${value:.2f}"
+    if "millions" in u:
+        return f"{value:,.0f}M"
+    if "billions" in u:
+        return f"{value:,.2f}B"
+    return f"{value:.2f}"
+
+
+def _macro_series_indicator(name: str, series_id: str) -> dict:
+    points = _macro_series_points(series_id)
+    source = f"data/history/macro_liquidity/series_id={series_id}/observations.csv"
+    if not points:
+        return _macro_unavailable_indicator(
+            name,
+            source=source,
+            provenance=f"required_authoritative_series=FRED:{series_id}",
+            note=f"Canonical FRED {series_id} artifact is not materialized.",
+        )
+
+    runtime_cutoff = date.today()
+    selected = _latest_valid_macro_point_on_or_before(points, cutoff_date=runtime_cutoff)
+    if selected is None:
+        selected = points[-1]
+    as_of, value, row = selected
+    identity_series = str(row.get("series_id") or "")
+    provider = str(row.get("source_provider") or "")
+    if identity_series != series_id or provider.upper() != "FRED":
+        return _macro_unavailable_indicator(
+            name,
+            source=source,
+            provenance="fail_closed_source_identity_guard",
+            note=(
+                f"Source identity mismatch for {name}. Expected FRED {series_id}; "
+                f"found provider={provider or 'UNAVAILABLE'} series_id={identity_series or 'UNAVAILABLE'}."
+            ),
+        )
+
+    units = str(row.get("units") or "UNAVAILABLE")
+    expected_update = _macro_expected_update(row)
+    change_display_unit = "bp" if _is_rate_like_series(series_id) else "percent"
+    change_1d, change_5d, change_20d = _macro_change_fields(
+        points,
+        expected_update,
+        change_display_unit=change_display_unit,
+    )
+    as_of_date = str(row.get("observation_date") or as_of)
+    freshness = _macro_freshness_from_observation(as_of_date, expected_update)
+
+    output = {
+        "name": name,
+        "series_id": series_id,
+        "current_value": _macro_format_value(value, units),
+        "change_1d": change_1d,
+        "change_5d": change_5d,
+        "change_20d": change_20d,
+        "as_of": as_of_date,
+        "freshness": freshness,
+        "source": source,
+        "provenance": str(row.get("provenance") or f"provider=FRED;series_id={series_id}"),
+        "change_display_unit": change_display_unit,
+        "availability": "AVAILABLE",
+        "note": (
+            f"Provider={provider}; series_id={series_id}; frequency={row.get('frequency') or 'UNAVAILABLE'}; "
+            f"units={units}; expected_update_frequency={expected_update}."
+        ),
+    }
+    if series_id == "IORB":
+        latest_published = points[-1][0]
+        if latest_published > as_of_date:
+            output["effective_through"] = latest_published
+            output["note"] = (
+                f"Provider={provider}; series_id={series_id}; frequency={row.get('frequency') or 'UNAVAILABLE'}; "
+                f"units={units}; expected_update_frequency={expected_update}; effective_through={latest_published}."
+            )
+    return output
+
+
 def _symbol_price_points(symbol: str) -> list[tuple[str, float]]:
     path = _REPO_ROOT / "data" / "history" / "prices" / f"symbol={symbol}" / "prices.csv"
     if not path.exists():
@@ -1656,6 +1917,34 @@ def _freshness_label(as_of_date: str | None, *, fresh_days: int = 3) -> str:
     if lag <= fresh_days:
         return "FRESH"
     return "STALE"
+
+
+def _latest_valid_macro_point_on_or_before(points: list[tuple[str, float, dict[str, str]]], *, cutoff_date: date | None = None) -> tuple[str, float, dict[str, str]] | None:
+    limit = cutoff_date or date.today()
+    cutoff_iso = limit.isoformat()
+    latest: tuple[str, float, dict[str, str]] | None = None
+    for obs_date, value, row in points:
+        if obs_date <= cutoff_iso:
+            if latest is None or obs_date > latest[0]:
+                latest = (obs_date, value, row)
+    return latest
+
+
+def _exact_common_date_points(left_series_id: str, right_series_id: str) -> tuple[str, float, float] | None:
+    left_points = _macro_series_points(left_series_id)
+    right_points = _macro_series_points(right_series_id)
+    if not left_points or not right_points:
+        return None
+
+    cutoff = date.today().isoformat()
+    left_by_date = {obs_date: value for obs_date, value, _ in left_points if obs_date <= cutoff}
+    right_by_date = {obs_date: value for obs_date, value, _ in right_points if obs_date <= cutoff}
+    common_dates = sorted(set(left_by_date) & set(right_by_date))
+    if not common_dates:
+        return None
+
+    as_of = common_dates[-1]
+    return as_of, float(left_by_date[as_of]), float(right_by_date[as_of])
 
 
 def _price_indicator(name: str, symbol: str, *, source_note: str, unit: str = "price") -> dict:
@@ -1799,12 +2088,12 @@ def _macro_wti_crude_indicator() -> dict:
     )
 
 
-def _curve_indicator(name: str, left: dict, right: dict) -> dict:
+def _curve_indicator(name: str, left: dict, right: dict, *, left_series_id: str, right_series_id: str) -> dict:
     if left.get("availability") != "AVAILABLE" or right.get("availability") != "AVAILABLE":
         return _macro_unavailable_indicator(
             name,
-            source="Derived from rate indicators",
-            provenance="reporting_only_derived_from_available_rates",
+            source=f"Derived from {left_series_id} and {right_series_id}",
+            provenance=f"reporting_only_derived_from={left_series_id},{right_series_id}",
             note="Curve view requires both component yields.",
         )
 
@@ -1820,29 +2109,132 @@ def _curve_indicator(name: str, left: dict, right: dict) -> dict:
     if l_val is None or r_val is None:
         return _macro_unavailable_indicator(
             name,
-            source="Derived from rate indicators",
-            provenance="reporting_only_derived_from_available_rates",
+            source=f"Derived from {left_series_id} and {right_series_id}",
+            provenance=f"reporting_only_derived_from={left_series_id},{right_series_id}",
             note="Curve view unavailable due to non-numeric component yields.",
         )
 
-    spread = r_val - l_val
+    spread_bp = (r_val - l_val) * 100.0
     left_as_of = left.get("as_of")
     right_as_of = right.get("as_of")
-    as_of = left_as_of if left_as_of == right_as_of else None
+    if left_as_of != right_as_of:
+        return _macro_unavailable_indicator(
+            name,
+            source=f"Derived from {left_series_id} and {right_series_id}",
+            provenance=f"reporting_only_derived_same_date_required={left_series_id},{right_series_id}",
+            note="Component observation dates are not aligned; curve remains fail-closed.",
+        )
+
+    as_of = left_as_of
 
     return {
         "name": name,
-        "current_value": f"{spread:+.2f} pp",
+        "current_value": f"{spread_bp:+.1f} bp",
         "change_1d": "UNAVAILABLE",
         "change_5d": "UNAVAILABLE",
         "change_20d": "UNAVAILABLE",
         "as_of": as_of,
         "freshness": _freshness_label(as_of),
-        "source": "Derived from rate indicators",
-        "provenance": "reporting_only_derived_from_available_rates",
-        "availability": "AVAILABLE" if as_of else "PARTIAL",
-        "note": "Spread trend requires canonical historical curve series.",
+        "source": f"Derived from {left_series_id} and {right_series_id}",
+        "provenance": f"reporting_only_derived_same_date={as_of};components={left_series_id},{right_series_id}",
+        "availability": "AVAILABLE",
+        "note": "Display-only derived spread in basis points from same-date authoritative rate series.",
     }
+
+
+def _derived_difference_indicator(name: str, left: dict, right: dict, *, left_series_id: str, right_series_id: str) -> dict:
+    if left.get("availability") != "AVAILABLE" or right.get("availability") != "AVAILABLE":
+        return _macro_unavailable_indicator(
+            name,
+            source=f"Derived from {left_series_id} and {right_series_id}",
+            provenance=f"reporting_only_derived_from={left_series_id},{right_series_id}",
+            note="Derived view requires both component series.",
+        )
+
+    if left_series_id == "IORB" and right_series_id == "SOFR":
+        common = _exact_common_date_points(left_series_id, right_series_id)
+        if common is None:
+            return _macro_unavailable_indicator(
+                name,
+                source=f"Derived from {left_series_id} and {right_series_id}",
+                provenance=f"fail_closed_no_common_valid_date={left_series_id},{right_series_id}",
+                note="No same-date valid IORB/SOFR observation exists on or before runtime.",
+            )
+        as_of_date, left_value, right_value = common
+        diff_bp = (left_value - right_value) * 100.0
+        return {
+            "name": name,
+            "current_value": f"{diff_bp:+.1f} bp",
+            "change_1d": "UNAVAILABLE",
+            "change_5d": "UNAVAILABLE",
+            "change_20d": "UNAVAILABLE",
+            "as_of": as_of_date,
+            "freshness": _freshness_label(as_of_date, fresh_days=4),
+            "source": f"Derived from {left_series_id} and {right_series_id}",
+            "provenance": f"reporting_only_derived_common_date={as_of_date};components={left_series_id},{right_series_id};rule=latest_common_valid_date",
+            "availability": "AVAILABLE",
+            "note": "Display-only derived spread in basis points from the latest exact same-date valid IORB/SOFR pair on or before runtime.",
+        }
+
+    def _extract_percent(v: str) -> float | None:
+        raw = str(v or "").replace("%", "").replace("bp", "").strip()
+        try:
+            return float(raw)
+        except Exception:
+            return None
+
+    l_val = _extract_percent(str(left.get("current_value") or ""))
+    r_val = _extract_percent(str(right.get("current_value") or ""))
+    left_as_of = str(left.get("as_of") or "")
+    right_as_of = str(right.get("as_of") or "")
+    if l_val is None or r_val is None or not left_as_of or left_as_of != right_as_of:
+        return _macro_unavailable_indicator(
+            name,
+            source=f"Derived from {left_series_id} and {right_series_id}",
+            provenance=f"reporting_only_derived_same_date_required={left_series_id},{right_series_id}",
+            note="Components are missing or not aligned to the same observation date.",
+        )
+
+    diff_bp = (l_val - r_val) * 100.0
+    return {
+        "name": name,
+        "current_value": f"{diff_bp:+.1f} bp",
+        "change_1d": "UNAVAILABLE",
+        "change_5d": "UNAVAILABLE",
+        "change_20d": "UNAVAILABLE",
+        "as_of": left_as_of,
+        "freshness": _freshness_label(left_as_of, fresh_days=4),
+        "source": f"Derived from {left_series_id} and {right_series_id}",
+        "provenance": f"reporting_only_derived_same_date={left_as_of};components={left_series_id},{right_series_id}",
+        "availability": "AVAILABLE",
+        "note": "Display-only derived spread in basis points.",
+    }
+
+
+def _macro_wti_crude_authoritative_indicator() -> dict:
+    row = _macro_series_indicator("WTI Crude", "DCOILWTICO")
+    if row.get("availability") == "AVAILABLE":
+        return row
+
+    # Include identity guard evidence to prevent equity ticker collision.
+    wti_identity = _latest_partition_identity("WTI")
+    wti_universe = _base_universe_identity("WTI")
+    identity_parts: list[str] = []
+    company_name = str(wti_universe.get("company_name") or "").strip()
+    if company_name:
+        identity_parts.append(company_name)
+    if wti_identity.get("security_type"):
+        identity_parts.append(str(wti_identity.get("security_type")))
+    if wti_identity.get("security_id"):
+        identity_parts.append(str(wti_identity.get("security_id")))
+    identity_note = (" WTI partition identity: " + " | ".join(identity_parts) + ".") if identity_parts else ""
+    row["note"] = (
+        f"{row.get('note') or ''}"
+        " SIH does not relabel equity ticker WTI as crude oil."
+        f"{identity_note}"
+    ).strip()
+    row["provenance"] = str(row.get("provenance") or "") + ";fail_closed_identity_guard=WTI_equity_not_used_as_crude"
+    return row
 
 
 def _macro_event_window_payload() -> dict:
@@ -1945,6 +2337,13 @@ def _macro_event_window_payload() -> dict:
 
 
 def _macro_market_confirmation_payload() -> dict:
+    signature = _macro_momentum_dependency_signature()
+    with _MACRO_MOMENTUM_CACHE_LOCK:
+        cached_signature = _MACRO_MOMENTUM_CACHE.get("signature")
+        cached_payload = _MACRO_MOMENTUM_CACHE.get("payload")
+        if cached_signature == signature and isinstance(cached_payload, dict):
+            return copy.deepcopy(cached_payload)
+
     try:
         import sys as _sys
 
@@ -1965,7 +2364,7 @@ def _macro_market_confirmation_payload() -> dict:
             {},
         )
 
-        return {
+        payload = {
             "market_state": str(
                 (((summary.get("market_momentum") or {}).get("market_absolute_momentum") or {}).get("state"))
                 or "UNAVAILABLE"
@@ -1984,6 +2383,10 @@ def _macro_market_confirmation_payload() -> dict:
             "availability": "AVAILABLE" if isinstance(summary, dict) and summary else "UNAVAILABLE",
             "note": "Values are reused from canonical Momentum outputs with no reclassification.",
         }
+        with _MACRO_MOMENTUM_CACHE_LOCK:
+            _MACRO_MOMENTUM_CACHE["signature"] = signature
+            _MACRO_MOMENTUM_CACHE["payload"] = copy.deepcopy(payload)
+        return payload
     except Exception as exc:
         return {
             "market_state": "UNAVAILABLE",
@@ -2010,40 +2413,36 @@ def _macro_liquidity_context_payload(run_id: str | None = None) -> tuple[dict, i
     deployment eligibility/ranking, allocation, or execution.
     """
 
-    rates_2y = _price_indicator(
-        "US 2Y Treasury",
-        "^FVX",
-        source_note="Canonical history partition (if present)",
-        unit="percent",
-    )
-    rates_10y = _price_indicator(
-        "US 10Y Treasury",
-        "^TNX",
-        source_note="Canonical history partition (if present)",
-        unit="percent",
-    )
-    rates_30y = _price_indicator(
-        "US 30Y Treasury",
-        "^TYX",
-        source_note="Canonical history partition (if present)",
-        unit="percent",
-    )
-    curve_2s10s = _curve_indicator("2s10s Curve", rates_2y, rates_10y)
-    curve_10s30s = _curve_indicator("10s30s Curve", rates_10y, rates_30y)
+    rates_2y = _macro_series_indicator("US 2Y Treasury", "DGS2")
+    rates_10y = _macro_series_indicator("US 10Y Treasury", "DGS10")
+    rates_30y = _macro_series_indicator("US 30Y Treasury", "DGS30")
+    curve_2s10s = _curve_indicator("2s10s Curve", rates_2y, rates_10y, left_series_id="DGS2", right_series_id="DGS10")
+    curve_10s30s = _curve_indicator("10s30s Curve", rates_10y, rates_30y, left_series_id="DGS10", right_series_id="DGS30")
 
     credit_hyg = _price_indicator("HYG", "HYG", source_note="Canonical history partition (if present)", unit="usd")
     credit_lqd = _price_indicator("LQD", "LQD", source_note="Canonical history partition (if present)", unit="usd")
-    credit_spread = _macro_unavailable_indicator(
-        "IG/HY Spread",
-        source="No canonical spread artifact found",
-        provenance="reporting_only_no_synthetic_spread",
-        note="No canonical IG/HY spread series is currently published in SIH artifacts.",
+    ig_oas = _macro_series_indicator("US IG OAS", "BAMLC0A0CM")
+    hy_oas = _macro_series_indicator("US HY OAS", "BAMLH0A0HYM2")
+    hy_ig_diff = _derived_difference_indicator(
+        "HY-IG OAS Differential",
+        hy_oas,
+        ig_oas,
+        left_series_id="BAMLH0A0HYM2",
+        right_series_id="BAMLC0A0CM",
     )
 
-    vix = _price_indicator("VIX", "^VIX", source_note="Canonical history partition (if present)")
-    dxy = _price_indicator("DXY", "DX-Y.NYB", source_note="Canonical history partition (if present)")
+    vix = _macro_series_indicator("VIX", "VIXCLS")
+    dxy = _macro_unavailable_indicator(
+        "DXY",
+        source="No exact canonical DXY artifact available",
+        provenance="fail_closed_no_exact_dxy_series",
+        note="DXY remains UNAVAILABLE unless an exact DXY canonical series is materialized.",
+    )
 
-    wti = _macro_wti_crude_indicator()
+    broad_usd = _macro_series_indicator("Broad U.S. Dollar Index", "DTWEXBGS")
+
+    wti = _macro_wti_crude_authoritative_indicator()
+    brent_crude = _macro_series_indicator("Brent Crude", "DCOILBRENTEU")
     brent = _price_indicator("Brent Proxy (BNO)", "BNO", source_note="Canonical history partition (if present)", unit="usd")
     if brent.get("availability") == "AVAILABLE":
         brent["provenance"] = (
@@ -2054,38 +2453,22 @@ def _macro_liquidity_context_payload(run_id: str | None = None) -> tuple[dict, i
     else:
         brent["note"] = "Brent proxy unavailable from canonical BNO partition."
 
-    liquidity_rows = [
-        _macro_unavailable_indicator(
-            "Treasury General Account (TGA)",
-            source="No canonical SIH current artifact",
-            provenance="reporting_only",
-            note="No TGA current series is currently wired into Portfolio Alignment artifacts.",
-        ),
-        _macro_unavailable_indicator(
-            "Reserve Balances",
-            source="No canonical SIH current artifact",
-            provenance="reporting_only",
-            note="No reserve-balance current series is currently wired into Portfolio Alignment artifacts.",
-        ),
-        _macro_unavailable_indicator(
-            "ON RRP",
-            source="No canonical SIH current artifact",
-            provenance="reporting_only",
-            note="No ON RRP current series is currently wired into Portfolio Alignment artifacts.",
-        ),
-        _macro_unavailable_indicator(
-            "SOFR / Repo",
-            source="No canonical SIH current artifact",
-            provenance="reporting_only",
-            note="No SOFR/repo current series is currently wired into Portfolio Alignment artifacts.",
-        ),
-        _macro_unavailable_indicator(
-            "IORB-SOFR Relationship",
-            source="No canonical SIH current artifact",
-            provenance="reporting_only",
-            note="No canonical IORB/SOFR relationship artifact is currently published.",
-        ),
-    ]
+    tga = _macro_series_indicator("Treasury General Account (TGA)", "WTREGEN")
+    reserves = _macro_series_indicator("Reserve Balances", "WRESBAL")
+    on_rrp = _macro_series_indicator("ON RRP", "RRPONTSYD")
+    sofr = _macro_series_indicator("SOFR", "SOFR")
+    iorb = _macro_series_indicator("IORB", "IORB")
+    iorb_sofr = _derived_difference_indicator(
+        "IORB-SOFR Relationship",
+        iorb,
+        sofr,
+        left_series_id="IORB",
+        right_series_id="SOFR",
+    )
+
+    liquidity_rows = [tga, reserves, on_rrp, sofr, iorb, iorb_sofr]
+
+    credit_rows = [credit_hyg, credit_lqd, ig_oas, hy_oas, hy_ig_diff, vix, dxy, broad_usd, wti, brent_crude, brent]
 
     event_window = _macro_event_window_payload()
     momentum_confirmation = _macro_market_confirmation_payload()
@@ -2100,7 +2483,7 @@ def _macro_liquidity_context_payload(run_id: str | None = None) -> tuple[dict, i
         "subtitle": "Display-only confirmation of rates, credit, liquidity, volatility, breadth, and known event risk.",
         "sections": {
             "rates": [rates_2y, rates_10y, rates_30y, curve_2s10s, curve_10s30s],
-            "credit_funding": [credit_hyg, credit_lqd, credit_spread, vix, dxy, wti, brent],
+            "credit_funding": credit_rows,
             "liquidity": liquidity_rows,
             "market_confirmation": momentum_confirmation,
             "event_window": event_window,

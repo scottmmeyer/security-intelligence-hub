@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import csv
 import json
 import socket
 import threading
 import urllib.request
+from datetime import date
 from contextlib import ExitStack, closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from scripts.run_outcome_ui import _Handler, _ThreadingTCPServer, _macro_liquidity_context_payload
+from scripts.run_outcome_ui import (
+    _Handler,
+    _ThreadingTCPServer,
+    _macro_liquidity_context_payload,
+    _macro_series_points,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,9 +170,9 @@ def test_macro_wti_crude_fails_closed_on_equity_identity_collision() -> None:
 
     wti_row = next((r for r in rows if str(r.get("name") or "") == "WTI Crude"), None)
     assert wti_row is not None
-    assert wti_row.get("availability") == "UNAVAILABLE"
-    assert "No canonical current WTI crude series/proxy is available." in str(wti_row.get("note") or "")
-    assert "W&T Offshore" in str(wti_row.get("note") or "")
+    assert "symbol=WTI" not in str(wti_row.get("source") or "")
+    if wti_row.get("availability") == "UNAVAILABLE":
+        assert "SIH does not relabel equity ticker WTI as crude oil" in str(wti_row.get("note") or "")
 
 
 def test_macro_bno_is_explicit_proxy_not_spot_brent() -> None:
@@ -176,6 +184,198 @@ def test_macro_bno_is_explicit_proxy_not_spot_brent() -> None:
     assert bno_row is not None
     assert "proxy_target=Brent crude price movements" in str(bno_row.get("provenance") or "")
     assert "BNO security price/return" in str(bno_row.get("note") or "")
+
+
+def test_macro_us_2y_uses_dgs2_not_fvx() -> None:
+    payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("rates") or []))
+    row = next((r for r in rows if str(r.get("name") or "") == "US 2Y Treasury"), None)
+    assert row is not None
+    assert "^FVX" not in str(row.get("source") or "")
+    assert "DGS2" in str(row.get("source") or "")
+
+
+def test_macro_dxy_is_fail_closed_without_exact_dxy_series() -> None:
+    payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("credit_funding") or []))
+    row = next((r for r in rows if str(r.get("name") or "") == "DXY"), None)
+    assert row is not None
+    assert row.get("availability") == "UNAVAILABLE"
+    assert "exact DXY canonical series" in str(row.get("note") or "")
+
+
+def test_macro_missing_series_remains_unavailable_not_zero() -> None:
+    with patch("scripts.run_outcome_ui._macro_series_points", return_value=[]):
+        payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rates = list(((payload.get("sections") or {}).get("rates") or []))
+    row = next((r for r in rates if str(r.get("name") or "") == "US 2Y Treasury"), None)
+    assert row is not None
+    assert row.get("current_value") == "UNAVAILABLE"
+    assert row.get("availability") == "UNAVAILABLE"
+
+
+def test_curve_requires_same_observation_date() -> None:
+    def _points(series_id: str):
+        if series_id == "DGS2":
+            return [("2026-08-20", 3.8, {"series_id": "DGS2", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"})]
+        if series_id == "DGS10":
+            return [("2026-08-19", 4.2, {"series_id": "DGS10", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-19", "provenance": "p"})]
+        if series_id == "DGS30":
+            return [("2026-08-19", 4.6, {"series_id": "DGS30", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-19", "provenance": "p"})]
+        return []
+
+    with patch("scripts.run_outcome_ui._macro_series_points", side_effect=_points):
+        payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("rates") or []))
+    curve = next((r for r in rows if str(r.get("name") or "") == "2s10s Curve"), None)
+    assert curve is not None
+    assert curve.get("availability") == "UNAVAILABLE"
+
+
+def test_hy_ig_oas_differential_derives_from_same_date_series() -> None:
+    def _points(series_id: str):
+        if series_id == "BAMLH0A0HYM2":
+            return [("2026-08-20", 3.0, {"series_id": "BAMLH0A0HYM2", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"})]
+        if series_id == "BAMLC0A0CM":
+            return [("2026-08-20", 1.2, {"series_id": "BAMLC0A0CM", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"})]
+        return []
+
+    with patch("scripts.run_outcome_ui._macro_series_points", side_effect=_points):
+        payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("credit_funding") or []))
+    diff = next((r for r in rows if str(r.get("name") or "") == "HY-IG OAS Differential"), None)
+    assert diff is not None
+    assert diff.get("availability") == "AVAILABLE"
+    assert "bp" in str(diff.get("current_value") or "")
+
+
+def test_rate_like_series_changes_render_in_basis_points() -> None:
+    def _points(series_id: str):
+        if series_id == "DGS10":
+            return [
+                ("2026-08-19", 4.65, {"series_id": "DGS10", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-19", "provenance": "p"}),
+                ("2026-08-20", 4.69, {"series_id": "DGS10", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"}),
+            ]
+        if series_id == "SOFR":
+            return [
+                ("2026-08-19", 3.62, {"series_id": "SOFR", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-19", "provenance": "p"}),
+                ("2026-08-20", 3.63, {"series_id": "SOFR", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"}),
+            ]
+        return []
+
+    with patch("scripts.run_outcome_ui._macro_series_points", side_effect=_points):
+        payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    rates = list(((payload.get("sections") or {}).get("rates") or []))
+    ten_year = next((r for r in rates if str(r.get("name") or "") == "US 10Y Treasury"), None)
+    assert ten_year is not None
+    assert str(ten_year.get("change_1d") or "") == "+4 bp"
+
+    liquidity = list(((payload.get("sections") or {}).get("liquidity") or []))
+    sofr = next((r for r in liquidity if str(r.get("name") or "") == "SOFR"), None)
+    assert sofr is not None
+    assert str(sofr.get("change_1d") or "") == "+1 bp"
+
+
+def test_non_rate_series_changes_remain_percent() -> None:
+    payload, status = _macro_liquidity_context_payload()
+    assert status == 200
+    rows = list(((payload.get("sections") or {}).get("credit_funding") or []))
+    vix = next((r for r in rows if str(r.get("name") or "") == "VIX"), None)
+    if vix and vix.get("availability") == "AVAILABLE":
+        assert "%" in str(vix.get("change_1d") or "") or str(vix.get("change_1d") or "") == "UNAVAILABLE"
+
+
+def test_iorb_uses_runtime_cutoff_and_common_date_for_sofr_relationship() -> None:
+    def _points(series_id: str):
+        if series_id == "SOFR":
+            return [
+                ("2026-08-19", 3.62, {"series_id": "SOFR", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-19", "provenance": "p"}),
+                ("2026-08-20", 3.63, {"series_id": "SOFR", "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"}),
+            ]
+        if series_id == "IORB":
+            return [
+                ("2026-08-19", 3.65, {"series_id": "IORB", "source_provider": "FRED", "units": "Percent", "frequency": "Daily, 7-Day", "expected_update_frequency": "daily_7_day_administered_rate", "observation_date": "2026-08-19", "provenance": "p"}),
+                ("2026-08-20", 3.65, {"series_id": "IORB", "source_provider": "FRED", "units": "Percent", "frequency": "Daily, 7-Day", "expected_update_frequency": "daily_7_day_administered_rate", "observation_date": "2026-08-20", "provenance": "p"}),
+                ("2026-08-21", 3.65, {"series_id": "IORB", "source_provider": "FRED", "units": "Percent", "frequency": "Daily, 7-Day", "expected_update_frequency": "daily_7_day_administered_rate", "observation_date": "2026-08-21", "provenance": "p"}),
+                ("2026-08-22", 3.65, {"series_id": "IORB", "source_provider": "FRED", "units": "Percent", "frequency": "Daily, 7-Day", "expected_update_frequency": "daily_7_day_administered_rate", "observation_date": "2026-08-22", "provenance": "p"}),
+                ("2026-08-24", 3.65, {"series_id": "IORB", "source_provider": "FRED", "units": "Percent", "frequency": "Daily, 7-Day", "expected_update_frequency": "daily_7_day_administered_rate", "observation_date": "2026-08-24", "provenance": "p"}),
+            ]
+        # Keep other required series available so payload builds normally.
+        if series_id in {"DGS2", "DGS10", "DGS30", "BAMLC0A0CM", "BAMLH0A0HYM2", "VIXCLS", "DCOILWTICO", "DCOILBRENTEU", "WTREGEN", "WRESBAL", "RRPONTSYD", "DTWEXBGS"}:
+            return [("2026-08-20", 1.0, {"series_id": series_id, "source_provider": "FRED", "units": "Percent", "frequency": "Business Daily", "expected_update_frequency": "business_daily", "observation_date": "2026-08-20", "provenance": "p"})]
+        return []
+
+    with patch("scripts.run_outcome_ui._macro_series_points", side_effect=_points):
+        payload, status = _macro_liquidity_context_payload()
+
+    assert status == 200
+    liquidity = list(((payload.get("sections") or {}).get("liquidity") or []))
+    iorb = next((r for r in liquidity if str(r.get("name") or "") == "IORB"), None)
+    rel = next((r for r in liquidity if str(r.get("name") or "") == "IORB-SOFR Relationship"), None)
+
+    assert iorb is not None
+    assert iorb.get("availability") == "AVAILABLE"
+    assert str(iorb.get("as_of") or "") == date.today().isoformat()
+    assert "Daily, 7-Day" in str(iorb.get("note") or "") or "daily_7_day_administered_rate" in str(iorb.get("note") or "")
+    assert "IORB" in str(iorb.get("source") or "")
+
+    assert rel is not None
+    assert rel.get("availability") == "AVAILABLE"
+    assert str(rel.get("as_of") or "") == "2026-08-20"
+    assert "bp" in str(rel.get("current_value") or "")
+    assert "+2" in str(rel.get("current_value") or "") or "2.0" in str(rel.get("current_value") or "")
+
+
+def test_iorb_metadata_semantics_are_not_business_day_only() -> None:
+    with (ROOT / "data" / "current" / "macro_liquidity_series.csv").open("r", encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+
+    iorb = next(row for row in rows if row.get("series_id") == "IORB")
+    assert iorb["frequency"] == "Daily, 7-Day"
+    assert iorb["expected_update_frequency"] == "daily_7_day_administered_rate"
+    assert "business" not in iorb["frequency"].lower()
+    assert "business_daily" not in iorb["expected_update_frequency"].lower()
+
+
+def test_macro_series_points_cache_invalidates_on_mtime_change() -> None:
+    with TemporaryDirectory() as td:
+        root = Path(td)
+        series_dir = root / "series_id=DGS2"
+        series_dir.mkdir(parents=True, exist_ok=True)
+        path = series_dir / "observations.csv"
+        path.write_text(
+            "series_id,display_name,source_provider,source_agency,units,frequency,expected_update_frequency,observation_date,value,materialized_at_utc,availability,freshness_state,age_days,source_url,series_url,artifact_path,provenance\n"
+            "DGS2,US 2Y Treasury,FRED,Federal Reserve,Percent,Business Daily,business_daily,2026-08-19,4.10,ts,AVAILABLE,FRESH,0,u,s,a,p\n",
+            encoding="utf-8",
+        )
+
+        with patch("scripts.run_outcome_ui._MACRO_HISTORY_ROOT", root):
+            p1 = _macro_series_points("DGS2")
+            p2 = _macro_series_points("DGS2")
+            assert p1[-1][0] == "2026-08-19"
+            assert p2[-1][0] == "2026-08-19"
+
+            # Update file and ensure cache invalidates via mtime/size token.
+            path.write_text(
+                "series_id,display_name,source_provider,source_agency,units,frequency,expected_update_frequency,observation_date,value,materialized_at_utc,availability,freshness_state,age_days,source_url,series_url,artifact_path,provenance\n"
+                "DGS2,US 2Y Treasury,FRED,Federal Reserve,Percent,Business Daily,business_daily,2026-08-19,4.10,ts,AVAILABLE,FRESH,0,u,s,a,p\n"
+                "DGS2,US 2Y Treasury,FRED,Federal Reserve,Percent,Business Daily,business_daily,2026-08-20,4.19,ts,AVAILABLE,FRESH,0,u,s,a,p\n",
+                encoding="utf-8",
+            )
+            p3 = _macro_series_points("DGS2")
+            assert p3[-1][0] == "2026-08-20"
 
 
 def test_canonical_event_calendar_has_correct_sep_fomc_window_and_tax_event() -> None:
@@ -217,6 +417,27 @@ def test_canonical_event_calendar_has_correct_sep_fomc_window_and_tax_event() ->
     assert "estimated-tax" in str(tax_sep.get("description") or "").lower()
     assert "recommendation" not in tax_sep
     assert "action" not in tax_sep
+
+
+def test_ui_restore_normalizes_backend_run_wrapper() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+    assert "function _normalizeRestoredRunData" in app_js
+    assert "holdings_count" in app_js
+    assert "holding_count" in app_js
+    assert "snapshot_date = pickFirst" in app_js
+    assert "recommendation_count = pickFirst" in app_js
+    assert "concentration_tier = pickFirst" in app_js
+    assert "mandate_type = pickFirst" in app_js
+    assert "_analysisResult = _normalizeRestoredRunData(data);" in app_js
+    assert "const backendRun = _normalizeRestoredRunData(await _loadLatestRunFromBackend());" in app_js
+
+
+def test_ui_boot_has_no_removed_debug_helper_dependency() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "_addDebugMsg" not in app_js
+    assert "const saved = _normalizeRestoredRunData(_loadSavedResult());" in app_js
+    assert "const backendRun = _normalizeRestoredRunData(await _loadLatestRunFromBackend());" in app_js
 
 
 def test_signal_refresh_status_returns_market_proxy_replay_publish() -> None:
