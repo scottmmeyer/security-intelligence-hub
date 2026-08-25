@@ -253,30 +253,75 @@ function renderMethodology(methodology) {
   `;
 }
 
-async function main() {
+function setLoadingState(elId, text) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `<span class="muted">${esc(text)}</span>`;
+}
+
+function setSectionError(elId, message) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `<span class="muted">${esc(message)}</span>`;
+}
+
+async function fetchJson(url, timeoutMs = 120000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const [summaryRes, methodRes] = await Promise.all([
-      fetch("/api/pis/momentum/summary"),
-      fetch("/api/pis/momentum/methodology"),
-    ]);
-    const summary = await summaryRes.json();
-    const methodology = await methodRes.json();
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadMethodology() {
+  const elId = "methodology";
+  setLoadingState(elId, "Loading Momentum philosophy...");
+  try {
+    const methodology = await fetchJson("/api/pis/momentum/methodology", 30000);
+    renderMethodology(methodology);
+  } catch (err) {
+    setSectionError(elId, `Momentum philosophy unavailable: ${esc(err?.message || err)}`);
+  }
+}
+
+async function loadSummary() {
+  const ids = ["executive", "market", "mu", "sectors", "industries", "portfolio"];
+  for (const id of ids) {
+    setLoadingState(id, "Loading Momentum analysis...");
+  }
+
+  const pendingTimer = setTimeout(() => {
+    for (const id of ids) {
+      setLoadingState(id, "Momentum analysis is still being prepared...");
+    }
+  }, 15000);
+
+  try {
+    const summary = await fetchJson("/api/pis/momentum/summary", 180000);
     renderExecutive(summary);
     renderMarket(summary);
     renderMu(summary);
     renderSectorTable(summary);
     renderIndustryTable(summary);
     renderPortfolio(summary);
-    renderMethodology(methodology);
   } catch (err) {
-    const ids = ["executive", "market", "mu", "sectors", "industries", "portfolio", "methodology"];
+    const message = `Momentum analysis unavailable.`;
     for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) {
-        el.innerHTML = `<span class="muted">Failed to load momentum reporting payload: ${esc(err?.message || err)}</span>`;
-      }
+      setSectionError(id, message);
     }
+  } finally {
+    clearTimeout(pendingTimer);
   }
+}
+
+async function main() {
+  await Promise.allSettled([loadMethodology(), loadSummary()]);
 }
 
 main();

@@ -1987,3 +1987,19 @@ def test_momentum_ui_uses_relative_level_label_and_market_help_text() -> None:
     assert "| MKT:${esc(r.relative_strength_level || \"UNAVAILABLE\")}" not in app_js
     assert "Market Relative Coverage measures availability of direct benchmark-relative security evidence only." in app_js
     assert "Relative Level is the selected relative-strength context for this security." in app_js
+
+
+def test_momentum_ui_uses_independent_section_loading_and_explicit_summary_states() -> None:
+    app_js = (REPO_ROOT / "ui" / "momentum_intelligence" / "app.js").read_text(encoding="utf-8")
+    server_js = (REPO_ROOT / "scripts" / "run_outcome_ui.py").read_text(encoding="utf-8")
+
+    assert "Promise.all(" not in app_js
+    assert "Promise.allSettled" in app_js
+    assert "Loading Momentum analysis..." in app_js
+    assert "Momentum analysis is still being prepared..." in app_js
+    assert "Momentum analysis unavailable." in app_js
+    assert "loadSummary" in app_js
+    assert "loadMethodology" in app_js
+    assert "renderExecutive(summary);" in app_js and "renderMethodology(methodology);" in app_js
+    assert "_PIS_MOMENTUM_CACHE[\"signature\"]" in server_js
+    assert "_macro_momentum_dependency_signature" in server_js

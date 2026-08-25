@@ -1633,6 +1633,9 @@ _MACRO_SERIES_POINTS_CACHE_LOCK = threading.Lock()
 _MACRO_SERIES_CACHE_STATS = {"hits": 0, "misses": 0}
 _MACRO_MOMENTUM_CACHE: dict[str, object] = {"signature": None, "payload": None}
 _MACRO_MOMENTUM_CACHE_LOCK = threading.Lock()
+_PIS_MOMENTUM_CACHE: dict[str, object] = {"signature": None, "computed_at_utc": None, "payload": None}
+_PIS_MOMENTUM_CACHE_LOCK = threading.Lock()
+_PIS_MOMENTUM_CACHE_TTL_SECONDS = 60
 _RATE_LIKE_SERIES_IDS = {
     "DGS2",
     "DGS10",
@@ -2334,6 +2337,47 @@ def _macro_event_window_payload() -> dict:
             "availability": "UNAVAILABLE",
             "notes": [f"Event calendar unavailable: {exc}"],
         }
+
+
+def _pis_momentum_summary_cached() -> dict:
+    signature = _macro_momentum_dependency_signature()
+    now = datetime.now(timezone.utc).timestamp()
+    with _PIS_MOMENTUM_CACHE_LOCK:
+        cached_signature = _PIS_MOMENTUM_CACHE.get("signature")
+        cached_at = _PIS_MOMENTUM_CACHE.get("computed_at_utc")
+        cached_payload = _PIS_MOMENTUM_CACHE.get("payload")
+        if (
+            cached_signature == signature
+            and isinstance(cached_payload, dict)
+            and isinstance(cached_at, (int, float))
+        ):
+            age_seconds = now - float(cached_at)
+            if age_seconds < _PIS_MOMENTUM_CACHE_TTL_SECONDS:
+                return copy.deepcopy(cached_payload)
+
+    try:
+        import sys as _sys
+
+        if str(_REPO_ROOT) not in _sys.path:
+            _sys.path.insert(0, str(_REPO_ROOT))
+        from src.pis.momentum_intelligence import pis_momentum_summary
+
+        payload = pis_momentum_summary(repo_root=_REPO_ROOT)
+        if not isinstance(payload, dict):
+            raise TypeError("pis_momentum_summary did not return a dict")
+
+        with _PIS_MOMENTUM_CACHE_LOCK:
+            _PIS_MOMENTUM_CACHE["signature"] = signature
+            _PIS_MOMENTUM_CACHE["computed_at_utc"] = now
+            _PIS_MOMENTUM_CACHE["payload"] = copy.deepcopy(payload)
+        return payload
+    except Exception:
+        with _PIS_MOMENTUM_CACHE_LOCK:
+            cached_signature = _PIS_MOMENTUM_CACHE.get("signature")
+            cached_payload = _PIS_MOMENTUM_CACHE.get("payload")
+            if cached_signature == signature and isinstance(cached_payload, dict):
+                return copy.deepcopy(cached_payload)
+        raise
 
 
 def _macro_market_confirmation_payload() -> dict:
@@ -3483,7 +3527,7 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
     if path == "/api/pis/compliance/summary":
         return pis_compliance_summary(repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/summary":
-        return pis_momentum_summary(repo_root=_REPO_ROOT)
+        return _pis_momentum_summary_cached()
     if path == "/api/pis/momentum/methodology":
         return pis_momentum_methodology(repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/history":
