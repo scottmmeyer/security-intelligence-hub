@@ -4,6 +4,7 @@ import csv
 import json
 import socket
 import threading
+from datetime import date, timedelta
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -641,6 +642,8 @@ def test_browser_capture_diagnostic_status_records_terminal_error(isolated_repo:
 
 
 def test_danelfin_capture_queue_endpoint_builds_deterministic_jobs(isolated_repo: Path) -> None:
+    today = date.today().isoformat()
+    stale_day = (date.today() - timedelta(days=5)).isoformat()
     analysis_runs_dir = isolated_repo / "data" / "portfolio_ingestion" / "analysis_runs"
     base_universe = isolated_repo / "data" / "current" / "base_equity_universe.csv"
     _write_holdings_csv(
@@ -662,10 +665,10 @@ def test_danelfin_capture_queue_endpoint_builds_deterministic_jobs(isolated_repo
     _write_csv(
         isolated_repo / "data" / "signals" / "danelfin" / "latest_danelfin.csv",
         [
-            {"symbol": "AAA", "danelfin_raw": "9", "danelfin_score": "4.5000", "sourced_date": "2026-08-18"},
-            {"symbol": "BBB", "danelfin_raw": "8", "danelfin_score": "4.0000", "sourced_date": "2026-08-18"},
-            {"symbol": "CCC", "danelfin_raw": "5", "danelfin_score": "2.5000", "sourced_date": "2026-08-13"},
-            {"symbol": "EEE", "danelfin_raw": "", "danelfin_score": "", "sourced_date": "2026-08-18"},
+            {"symbol": "AAA", "danelfin_raw": "9", "danelfin_score": "4.5000", "sourced_date": today},
+            {"symbol": "BBB", "danelfin_raw": "8", "danelfin_score": "4.0000", "sourced_date": today},
+            {"symbol": "CCC", "danelfin_raw": "5", "danelfin_score": "2.5000", "sourced_date": stale_day},
+            {"symbol": "EEE", "danelfin_raw": "", "danelfin_score": "", "sourced_date": today},
         ],
     )
 

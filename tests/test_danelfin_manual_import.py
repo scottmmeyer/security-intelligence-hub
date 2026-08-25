@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -71,9 +72,10 @@ def test_blank_symbol_is_rejected(tmp_path):
 
 
 def test_future_source_date_is_rejected(tmp_path):
+    future_date = (date.today() + timedelta(days=1)).isoformat()
     with pytest.raises(ValueError):
         import_manual_danelfin_observations(
-            [{"symbol": "MSFT", "danelfin_raw": 3, "sourced_date": "2026-08-18"}],
+            [{"symbol": "MSFT", "danelfin_raw": 3, "sourced_date": future_date}],
             output_dir=tmp_path,
         )
 

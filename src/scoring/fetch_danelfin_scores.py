@@ -52,6 +52,20 @@ _FETCH_STATUS_NETWORK_ERROR = "NETWORK_ERROR"
 _FETCH_STATUS_OTHER_ERROR = "OTHER_FETCH_ERROR"
 
 _OUTPUT_HEADERS = ["symbol", "danelfin_raw", "danelfin_score", "sourced_date"]
+_ATTEMPT_HEADERS = [
+    "symbol",
+    "attempt_date",
+    "direct_status",
+    "http_status",
+    "detail",
+    "browser_fallback_requested",
+    "browser_fallback_completed",
+    "final_status",
+    "promoted_to_latest",
+    "latest_sourced_date",
+    "latest_danelfin_raw",
+    "latest_danelfin_score",
+]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_OUTPUT_DIR = _REPO_ROOT / "data" / "signals" / "danelfin"
 
@@ -246,7 +260,7 @@ def _request_browser_fallback_for_blocked_symbols(symbols: list[str], *, verbose
     try:
         body = _post_json(
             "http://127.0.0.1:8765/api/danelfin/browser-capture/production-queue/prepare",
-            {"symbols": symbols, "source": "refresh_requests_blocked"},
+            {"symbols": symbols, "source": "refresh_requests_blocked_or_no_primary"},
             timeout=10,
         )
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
@@ -318,6 +332,7 @@ def fetch_danelfin_scores_for_symbols(
     today = date.today().isoformat()
     output_path = output_dir / f"{today}_danelfin.csv"
     latest_path = output_dir / "latest_danelfin.csv"
+    attempts_path = output_dir / f"{today}_danelfin_attempts.csv"
 
     symbol_list = [str(s).strip().upper() for s in symbols if str(s).strip()]
     force_retry = {str(s).strip().upper() for s in (force_retry_symbols or set()) if str(s).strip()}
@@ -341,7 +356,8 @@ def fetch_danelfin_scores_for_symbols(
         "browser_jobs_failed": 0,
         "browser_primary_fields_success": 0,
     }
-    blocked_symbols: list[str] = []
+    fallback_symbols: list[str] = []
+    attempt_records: dict[str, dict[str, str]] = {}
 
     for symbol in symbol_list:
         row = archived_rows.get(symbol)
@@ -382,9 +398,10 @@ def fetch_danelfin_scores_for_symbols(
             stats["requests_success"] += 1
         elif result.status == _FETCH_STATUS_BLOCKED:
             stats["requests_blocked"] += 1
-            blocked_symbols.append(sym)
+            fallback_symbols.append(sym)
         elif result.status == _FETCH_STATUS_NO_PRIMARY:
             stats["requests_no_primary_fields"] += 1
+            fallback_symbols.append(sym)
         elif result.status == _FETCH_STATUS_NETWORK_ERROR:
             stats["requests_network_error"] += 1
         else:
@@ -398,10 +415,42 @@ def fetch_danelfin_scores_for_symbols(
             "danelfin_score": f"{danelfin_score:.4f}" if danelfin_score is not None else "",
             "sourced_date": today,
         }
-        archived_rows[sym] = row
-        latest_rows[sym] = row
+        existing_best = _best_valid_danelfin_row(latest_rows.get(sym), archived_rows.get(sym))
+        promoted_to_latest = False
+        final_status = "UNAVAILABLE_FAILED"
+
+        if _is_valid_danelfin_row(row):
+            archived_rows[sym] = row
+            latest_rows[sym] = row
+            promoted_to_latest = True
+            final_status = "VALID_DIRECT"
+        elif existing_best is not None:
+            archived_rows[sym] = existing_best
+            latest_rows[sym] = existing_best
+            final_status = "PRESERVED_PRIOR_VALID"
+        else:
+            # Keep latest cache as "valid scores only" when acquisition fails and no prior valid exists.
+            archived_rows.pop(sym, None)
+            latest_rows.pop(sym, None)
+
         _write_csv(output_path, list(archived_rows.values()))
         _write_csv(latest_path, list(latest_rows.values()))
+
+        chosen_row = latest_rows.get(sym)
+        attempt_records[sym] = {
+            "symbol": sym,
+            "attempt_date": today,
+            "direct_status": result.status,
+            "http_status": str(result.http_status or ""),
+            "detail": str(result.detail or ""),
+            "browser_fallback_requested": "1" if sym in fallback_symbols else "0",
+            "browser_fallback_completed": "0",
+            "final_status": final_status,
+            "promoted_to_latest": "1" if promoted_to_latest else "0",
+            "latest_sourced_date": str((chosen_row or {}).get("sourced_date", "")),
+            "latest_danelfin_raw": str((chosen_row or {}).get("danelfin_raw", "")),
+            "latest_danelfin_score": str((chosen_row or {}).get("danelfin_score", "")),
+        }
 
         if verbose:
             if danelfin_raw is not None:
@@ -412,22 +461,48 @@ def fetch_danelfin_scores_for_symbols(
         if i < len(pending_symbols):
             time.sleep(random.uniform(delay_min, delay_max))
 
-    fallback_stats = _request_browser_fallback_for_blocked_symbols(blocked_symbols, verbose=verbose)
+    fallback_stats = _request_browser_fallback_for_blocked_symbols(fallback_symbols, verbose=verbose)
     for key, value in fallback_stats.items():
         if key in stats and isinstance(value, int):
             stats[key] += value
         else:
             stats[key] = value
 
-    if blocked_symbols and int(fallback_stats.get("browser_jobs_completed") or 0) > 0:
+    if fallback_symbols and int(fallback_stats.get("browser_jobs_completed") or 0) > 0:
         archived_rows = _load_rows_by_symbol(output_path)
         latest_rows = _load_rows_by_symbol(latest_path)
-        for symbol in blocked_symbols:
+        for symbol in fallback_symbols:
             latest_row = latest_rows.get(symbol)
             if latest_row is not None:
-                archived_rows[symbol] = latest_row
+                if _is_valid_danelfin_row(latest_row):
+                    archived_rows[symbol] = latest_row
+                    rec = attempt_records.get(symbol)
+                    if rec is not None:
+                        rec["browser_fallback_completed"] = "1"
+                        rec["final_status"] = "VALID_BROWSER_FALLBACK"
+                        rec["promoted_to_latest"] = "1"
+                        rec["latest_sourced_date"] = str(latest_row.get("sourced_date", ""))
+                        rec["latest_danelfin_raw"] = str(latest_row.get("danelfin_raw", ""))
+                        rec["latest_danelfin_score"] = str(latest_row.get("danelfin_score", ""))
+                else:
+                    archived_rows.pop(symbol, None)
+                    latest_rows.pop(symbol, None)
+                    rec = attempt_records.get(symbol)
+                    if rec is not None:
+                        rec["browser_fallback_completed"] = "1"
+                        rec["final_status"] = "UNAVAILABLE_FAILED"
+                        rec["promoted_to_latest"] = "0"
+                        rec["latest_sourced_date"] = ""
+                        rec["latest_danelfin_raw"] = ""
+                        rec["latest_danelfin_score"] = ""
+            else:
+                rec = attempt_records.get(symbol)
+                if rec is not None:
+                    rec["browser_fallback_completed"] = "1"
         _write_csv(output_path, list(archived_rows.values()))
         _write_csv(latest_path, list(latest_rows.values()))
+
+    _write_attempt_csv(attempts_path, list(attempt_records.values()))
 
     rows = list(archived_rows.values())
 
@@ -448,7 +523,31 @@ def fetch_danelfin_scores_for_symbols(
 def _is_danelfin_row_successful_today(row: dict[str, str], today: str) -> bool:
     if str(row.get("sourced_date", "")).strip() != today:
         return False
-    return bool(str(row.get("danelfin_score", "")).strip() or str(row.get("danelfin_raw", "")).strip())
+    return _is_valid_danelfin_row(row)
+
+
+def _is_valid_danelfin_row(row: dict[str, str] | None) -> bool:
+    if not row:
+        return False
+    raw_text = str(row.get("danelfin_raw", "")).strip()
+    score_text = str(row.get("danelfin_score", "")).strip()
+    if not raw_text or not score_text:
+        return False
+    try:
+        raw_value = int(raw_text)
+        score_value = float(score_text)
+    except (TypeError, ValueError):
+        return False
+    if not 1 <= raw_value <= 10:
+        return False
+    return abs(score_value - round(raw_value / 2.0, 4)) < 1e-9
+
+
+def _best_valid_danelfin_row(*rows: dict[str, str] | None) -> dict[str, str] | None:
+    valid_rows = [row for row in rows if _is_valid_danelfin_row(row)]
+    if not valid_rows:
+        return None
+    return max(valid_rows, key=lambda row: str(row.get("sourced_date", "")).strip())
 
 
 # ---------------------------------------------------------------------------
@@ -470,10 +569,9 @@ def load_latest_danelfin_scores(
     with latest_path.open("r", encoding="utf-8", newline="") as handle:
         for row in csv.DictReader(handle):
             sym = str(row.get("symbol", "")).strip().upper()
-            raw_score = str(row.get("danelfin_score", "")).strip()
-            if sym and raw_score:
+            if sym and _is_valid_danelfin_row(row):
                 try:
-                    result[sym] = float(raw_score)
+                    result[sym] = float(str(row.get("danelfin_score", "")).strip())
                 except ValueError:
                     pass
     return result
@@ -515,6 +613,18 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle, fieldnames=_OUTPUT_HEADERS, extrasaction="ignore", restval=""
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_attempt_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=_ATTEMPT_HEADERS,
+            extrasaction="ignore",
+            restval="",
         )
         writer.writeheader()
         writer.writerows(rows)

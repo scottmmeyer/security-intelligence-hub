@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import date
 
 import requests
@@ -58,7 +59,7 @@ def test_success_path_does_not_request_browser_fallback(tmp_path, monkeypatch) -
     assert called == [[]]
 
 
-def test_no_primary_fields_does_not_request_browser_fallback(tmp_path, monkeypatch) -> None:
+def test_no_primary_fields_requests_browser_fallback(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(danelfin.requests, "get", lambda *args, **kwargs: _Resp(200, "<html>plain page</html>"))
 
     called: list[list[str]] = []
@@ -80,7 +81,7 @@ def test_no_primary_fields_does_not_request_browser_fallback(tmp_path, monkeypat
 
     assert stats["requests_no_primary_fields"] == 1
     assert stats["requests_blocked"] == 0
-    assert called == [[]]
+    assert called == [["NVDA"]]
 
 
 def test_network_error_does_not_request_browser_fallback(tmp_path, monkeypatch) -> None:
@@ -148,6 +149,103 @@ def test_blocked_request_invokes_single_production_prepare(tmp_path, monkeypatch
     assert stats["browser_jobs_prepared"] == 1
     assert stats["browser_jobs_claimed"] == 1
     assert stats["browser_jobs_completed"] == 1
+
+
+def test_no_primary_preserves_prior_valid_score_and_date(tmp_path, monkeypatch) -> None:
+    today = date.today().isoformat()
+    prior_rows = [{"symbol": "NVDA", "danelfin_raw": "7", "danelfin_score": "3.5000", "sourced_date": "2026-08-19"}]
+    danelfin._write_csv(tmp_path / "latest_danelfin.csv", prior_rows)
+    danelfin._write_csv(tmp_path / f"{today}_danelfin.csv", prior_rows)
+
+    monkeypatch.setattr(danelfin.requests, "get", lambda *args, **kwargs: _Resp(200, "<html>plain page</html>"))
+    monkeypatch.setattr(
+        danelfin,
+        "_request_browser_fallback_for_blocked_symbols",
+        lambda symbols, *, verbose: {"browser_fallback_requested": 1},
+    )
+
+    danelfin.fetch_danelfin_scores_for_symbols(
+        ["NVDA"],
+        output_dir=tmp_path,
+        delay_min=0,
+        delay_max=0,
+        verbose=False,
+    )
+
+    rows = list(csv.DictReader((tmp_path / "latest_danelfin.csv").open("r", encoding="utf-8", newline="")))
+    assert rows == prior_rows
+
+
+def test_no_primary_with_no_prior_does_not_promote_blank_row(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(danelfin.requests, "get", lambda *args, **kwargs: _Resp(200, "<html>plain page</html>"))
+    monkeypatch.setattr(
+        danelfin,
+        "_request_browser_fallback_for_blocked_symbols",
+        lambda symbols, *, verbose: {"browser_fallback_requested": 1},
+    )
+
+    danelfin.fetch_danelfin_scores_for_symbols(
+        ["NVDA"],
+        output_dir=tmp_path,
+        delay_min=0,
+        delay_max=0,
+        verbose=False,
+    )
+
+    latest_path = tmp_path / "latest_danelfin.csv"
+    rows = list(csv.DictReader(latest_path.open("r", encoding="utf-8", newline="")))
+    assert rows == []
+    assert danelfin.load_latest_danelfin_scores(tmp_path) == {}
+    attempts_rows = list(csv.DictReader((tmp_path / f"{date.today().isoformat()}_danelfin_attempts.csv").open("r", encoding="utf-8", newline="")))
+    assert attempts_rows[0]["symbol"] == "NVDA"
+    assert attempts_rows[0]["direct_status"] == "NO_PRIMARY_FIELDS"
+    assert attempts_rows[0]["final_status"] == "UNAVAILABLE_FAILED"
+    assert attempts_rows[0]["promoted_to_latest"] == "0"
+
+
+def test_browser_fallback_failure_preserves_prior_valid_score(tmp_path, monkeypatch) -> None:
+    today = date.today().isoformat()
+    prior_rows = [{"symbol": "NVDA", "danelfin_raw": "7", "danelfin_score": "3.5000", "sourced_date": "2026-08-19"}]
+    danelfin._write_csv(tmp_path / "latest_danelfin.csv", prior_rows)
+    danelfin._write_csv(tmp_path / f"{today}_danelfin.csv", prior_rows)
+
+    monkeypatch.setattr(danelfin.requests, "get", lambda *args, **kwargs: _Resp(403, "forbidden"))
+    monkeypatch.setattr(
+        danelfin,
+        "_request_browser_fallback_for_blocked_symbols",
+        lambda symbols, *, verbose: {
+            "browser_fallback_requested": 1,
+            "browser_jobs_prepared": 1,
+            "browser_jobs_claimed": 1,
+            "browser_jobs_completed": 1,
+            "browser_jobs_failed": 1,
+        },
+    )
+
+    danelfin.fetch_danelfin_scores_for_symbols(
+        ["NVDA"],
+        output_dir=tmp_path,
+        delay_min=0,
+        delay_max=0,
+        verbose=False,
+    )
+
+    rows = list(csv.DictReader((tmp_path / "latest_danelfin.csv").open("r", encoding="utf-8", newline="")))
+    assert rows == prior_rows
+
+
+def test_loader_ignores_invalid_rows_even_with_score_text(tmp_path) -> None:
+    danelfin._write_csv(
+        tmp_path / "latest_danelfin.csv",
+        [
+            {"symbol": "GOOD", "danelfin_raw": "8", "danelfin_score": "4.0000", "sourced_date": "2026-08-25"},
+            {"symbol": "BAD1", "danelfin_raw": "", "danelfin_score": "4.0000", "sourced_date": "2026-08-25"},
+            {"symbol": "BAD2", "danelfin_raw": "14", "danelfin_score": "7.0000", "sourced_date": "2026-08-25"},
+            {"symbol": "BAD3", "danelfin_raw": "8", "danelfin_score": "4.5000", "sourced_date": "2026-08-25"},
+        ],
+    )
+
+    assert danelfin.load_latest_danelfin_scores(tmp_path) == {"GOOD": 4.0}
 
 
 def test_provider_ordering_unchanged() -> None:
