@@ -338,6 +338,8 @@ def test_momentum_loading_then_ready_renders_level_and_change():
         momentum_cells = page.locator("#dq-queue-table-body tr.dq-data-row td:nth-child(7) span")
         assert momentum_cells.nth(0).inner_text().strip() == "STRONG · FADING"
         assert momentum_cells.nth(1).inner_text().strip() == "WEAK · ACCELERATING"
+        assert "State is the canonical relative-strength level selected from available relative context" in momentum_cells.nth(0).get_attribute("title")
+        assert "State is not necessarily market-relative" in momentum_cells.nth(0).get_attribute("title")
 
         header = page.locator(".dq-table thead tr th").nth(6).inner_text()
         assert "Momentum" in header

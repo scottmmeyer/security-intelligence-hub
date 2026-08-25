@@ -24,6 +24,9 @@ from src.pis.momentum_intelligence import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _write_csv(path: Path, headers: list[str], rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -1975,3 +1978,12 @@ def test_single_security_equity_industry_stays_applicable_but_unavailable(tmp_pa
     assert row["parent_applicable"] is True
     assert row["parent_available"] is False
     assert row["parent_blocker"] == "INSUFFICIENT_CONSTITUENTS"
+
+
+def test_momentum_ui_uses_relative_level_label_and_market_help_text() -> None:
+    app_js = (REPO_ROOT / "ui" / "momentum_intelligence" / "app.js").read_text(encoding="utf-8")
+
+    assert "| REL:${esc(r.relative_strength_level || \"UNAVAILABLE\")}" in app_js
+    assert "| MKT:${esc(r.relative_strength_level || \"UNAVAILABLE\")}" not in app_js
+    assert "Market Relative Coverage measures availability of direct benchmark-relative security evidence only." in app_js
+    assert "Relative Level is the selected relative-strength context for this security." in app_js

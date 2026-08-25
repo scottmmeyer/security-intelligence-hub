@@ -3796,7 +3796,7 @@ function _dqMomentumBadge(symbol) {
 
   const compactDisplay = `${_dqMomentumDisplayField(level)} · ${_dqMomentumDisplayField(change)}`;
 
-  const tooltip = `Momentum State: ${level}\nMomentum Change: ${change}\nExtension: ${extension}\nConfirmation: ${confirmation}\nConfidence: ${confidence}\nAs-of: ${asOf}\nProvenance: ${provenance}\nTrajectory: ${trajectory}\n\nMomentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.`;
+  const tooltip = `State is the canonical relative-strength level selected from available relative context; Change is the canonical relative-momentum change. State is not necessarily market-relative.\n\nMomentum State: ${level}\nMomentum Change: ${change}\nExtension: ${extension}\nConfirmation: ${confirmation}\nConfidence: ${confidence}\nAs-of: ${asOf}\nProvenance: ${provenance}\nTrajectory: ${trajectory}\n\nMomentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.`;
   return `<span class="${cls}" title="${escHtml(tooltip)}">${escHtml(compactDisplay)}</span>`;
 }
 

@@ -102,6 +102,7 @@ function renderExecutive(summary) {
         </table>
       </div>
     </div>
+    <p class="muted" style="margin-top:8px;">Market Relative Coverage measures availability of direct benchmark-relative security evidence only. Sector- and industry-relative evidence may still be available when market-relative coverage is unavailable.</p>
     <p class="muted" style="margin-top:10px;">Momentum is explanatory only and does not create buy/sell/add/trim actions.</p>
   `;
 }
@@ -204,7 +205,7 @@ function renderPortfolio(summary) {
         ${esc(r.security_state)}
         <div class="layer-summary mono muted">
           ABS:${esc(r.absolute_security_momentum?.state || "UNAVAILABLE")}
-          | MKT:${esc(r.relative_strength_level || "UNAVAILABLE")}
+          | REL:${esc(r.relative_strength_level || "UNAVAILABLE")}
           | SEC:${esc(relativeLevelFromHorizons(r.security_vs_sector))}
           | IND:${esc(relativeLevelFromHorizons(r.security_vs_industry))}
         </div>
@@ -248,6 +249,7 @@ function renderMethodology(methodology) {
     <p><strong>Caution State:</strong> ${esc(methodology.confirmation_logic?.caution_state || "—")}</p>
     <p><strong>Potential Early State:</strong> ${esc(methodology.confirmation_logic?.potential_early_state || "—")}</p>
     <p><strong>Risk State:</strong> ${esc(methodology.confirmation_logic?.risk_state || "—")}</p>
+    <p class="muted">Relative Level is the selected relative-strength context for this security. It may reflect industry, sector, or market-relative evidence depending on available canonical parent data. It is not necessarily market-relative.</p>
   `;
 }
 
