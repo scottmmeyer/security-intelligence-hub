@@ -54,12 +54,13 @@ def _write_csv(path: Path, headers: list[str], rows: list[dict[str, object]]) ->
 
 def _seed_manifest_and_holdings(repo_root: Path) -> None:
     run_id = "PAR-TEST-001"
+    snapshot_date = date.today().isoformat()
     manifest = {
         "portfolios": [
             {
                 "run_id": run_id,
-                "snapshot_date": "2026-07-15",
-                "created_at_utc": "2026-07-15T12:00:00Z",
+                "snapshot_date": snapshot_date,
+                "created_at_utc": f"{snapshot_date}T12:00:00Z",
                 "status": "COMPLETE",
             }
         ]
@@ -173,7 +174,7 @@ def _write_legacy_snapshots(repo_root: Path, series_by_symbol: dict[str, list[tu
 
 def test_fetch_requests_exact_four_symbols_and_publishes_on_61_plus(tmp_path: Path) -> None:
     repo_root = tmp_path
-    start = date(2026, 3, 1)
+    start = date.today() - timedelta(days=69)
     provider = _FakeProvider(
         {
             "XLK": _symbol_series(start, 70, 100),
@@ -197,7 +198,7 @@ def test_fetch_requests_exact_four_symbols_and_publishes_on_61_plus(tmp_path: Pa
 
 def test_fetch_fails_with_sixty_observations(tmp_path: Path) -> None:
     repo_root = tmp_path
-    start = date(2026, 3, 1)
+    start = date.today() - timedelta(days=59)
     provider = _FakeProvider(
         {
             "XLK": _symbol_series(start, 60, 100),
@@ -255,7 +256,7 @@ def test_builder_prefers_dedicated_history_and_keeps_replay_hashes(tmp_path: Pat
     repo_root = tmp_path
     _seed_manifest_and_holdings(repo_root)
 
-    start = date(2026, 3, 1)
+    start = date.today() - timedelta(days=69)
     _write_dedicated_history(
         repo_root,
         {
@@ -296,7 +297,7 @@ def test_builder_uses_legacy_snapshot_fallback_when_dedicated_missing(tmp_path: 
     repo_root = tmp_path
     _seed_manifest_and_holdings(repo_root)
 
-    start = date(2026, 3, 1)
+    start = date.today() - timedelta(days=69)
     _write_legacy_snapshots(
         repo_root,
         {
@@ -310,6 +311,68 @@ def test_builder_uses_legacy_snapshot_fallback_when_dedicated_missing(tmp_path: 
     result = build_market_regime_proxy_artifacts(repo_root=repo_root)
     assert result["status"] == "completed"
     assert result["input_source"] == LEGACY_YAHOO_SNAPSHOT_FALLBACK_SOURCE
+
+
+def test_builder_accepts_exact_freshness_boundary(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    _seed_manifest_and_holdings(repo_root)
+
+    boundary_latest = date.today() - timedelta(days=2)
+    series = {
+        "XLK": [((boundary_latest - timedelta(days=i)).isoformat(), 100.0 + i) for i in range(70)],
+        "XLE": [((boundary_latest - timedelta(days=i)).isoformat(), 110.0 + i) for i in range(70)],
+        "XLB": [((boundary_latest - timedelta(days=i)).isoformat(), 120.0 + i) for i in range(70)],
+        "XLI": [((boundary_latest - timedelta(days=i)).isoformat(), 130.0 + i) for i in range(70)],
+    }
+    _write_dedicated_history(repo_root, series)
+
+    result = build_market_regime_proxy_artifacts(repo_root=repo_root)
+
+    assert result["status"] == "completed"
+    assert result["published"] is True
+    assert result["reason"] == "completed"
+
+
+def test_builder_rejects_one_day_past_freshness_boundary(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    _seed_manifest_and_holdings(repo_root)
+
+    stale_latest = date.today() - timedelta(days=3)
+    series = {
+        "XLK": [((stale_latest - timedelta(days=i)).isoformat(), 100.0 + i) for i in range(70)],
+        "XLE": [((stale_latest - timedelta(days=i)).isoformat(), 110.0 + i) for i in range(70)],
+        "XLB": [((stale_latest - timedelta(days=i)).isoformat(), 120.0 + i) for i in range(70)],
+        "XLI": [((stale_latest - timedelta(days=i)).isoformat(), 130.0 + i) for i in range(70)],
+    }
+    _write_dedicated_history(repo_root, series)
+
+    result = build_market_regime_proxy_artifacts(repo_root=repo_root)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "stale_proxy_history"
+    assert result["published"] is False
+    assert result["latest_proxy_date_after"] is None
+
+
+def test_builder_rejects_stale_proxy_history_even_when_valid_shape(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    _seed_manifest_and_holdings(repo_root)
+
+    stale_latest = date(2026, 7, 10)
+    series = {
+        "XLK": [((stale_latest - timedelta(days=i)).isoformat(), 100.0 + i) for i in range(70)],
+        "XLE": [((stale_latest - timedelta(days=i)).isoformat(), 110.0 + i) for i in range(70)],
+        "XLB": [((stale_latest - timedelta(days=i)).isoformat(), 120.0 + i) for i in range(70)],
+        "XLI": [((stale_latest - timedelta(days=i)).isoformat(), 130.0 + i) for i in range(70)],
+    }
+    _write_dedicated_history(repo_root, series)
+
+    result = build_market_regime_proxy_artifacts(repo_root=repo_root)
+
+    assert result["status"] == "failed"
+    assert result["reason"] == "stale_proxy_history"
+    assert result["published"] is False
+    assert result["latest_proxy_date_after"] is None
 
 
 def test_loader_and_guardrail_surface_dedicated_input_source(tmp_path: Path) -> None:

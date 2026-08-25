@@ -603,9 +603,18 @@ def build_market_regime_proxy_artifacts(
         portfolio_snapshot_ts=_latest_portfolio_snapshot_date(repo_root),
         threshold_days=2,
     )
+    freshness_status = str(freshness.get("freshness_status") or "UNKNOWN").upper()
 
     tech_proxy = (rotation_summary.get("proxy_returns") or {}).get("tech_returns") or {}
     hard_proxy = (rotation_summary.get("proxy_returns") or {}).get("hard_assets_returns") or {}
+
+    stale_reason = None
+    if freshness_status in {"STALE", "MISSING", "PARTIAL", "UNKNOWN"}:
+        stale_reason = "stale_proxy_history" if freshness_status == "STALE" else "proxy_freshness_unacceptable"
+        all_warnings.append(
+            f"{stale_reason}:{latest_common_date}:{_latest_portfolio_snapshot_date(repo_root)}:"
+            f"{freshness.get('proxy_lag_days')}d"
+        )
 
     summary_payload = {
         "status": "completed" if (not missing_inputs and latest_common_date and not all_warnings) else "failed",
@@ -683,9 +692,14 @@ def build_market_regime_proxy_artifacts(
     status = "completed"
     reason = "completed"
 
+    if freshness_status in {"STALE", "MISSING", "PARTIAL", "UNKNOWN"}:
+        reason = stale_reason or "proxy_freshness_unacceptable"
+        status = "failed"
+        schema_errors.append(reason)
+
     if schema_errors:
         status = "failed"
-        reason = "validation_failed"
+        reason = reason if reason != "completed" else "validation_failed"
     else:
         staged_inputs.replace(target_inputs)
         staged_summary.replace(target_summary)
