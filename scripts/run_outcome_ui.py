@@ -1876,12 +1876,18 @@ def _macro_series_indicator(name: str, series_id: str) -> dict:
         ),
     }
     if series_id == "IORB":
+        output["as_of"] = date.today().isoformat()
         latest_published = points[-1][0]
-        if latest_published > as_of_date:
-            output["effective_through"] = latest_published
+        output["effective_through"] = latest_published
+        if latest_published > output["as_of"]:
             output["note"] = (
                 f"Provider={provider}; series_id={series_id}; frequency={row.get('frequency') or 'UNAVAILABLE'}; "
                 f"units={units}; expected_update_frequency={expected_update}; effective_through={latest_published}."
+            )
+        else:
+            output["note"] = (
+                f"Provider={provider}; series_id={series_id}; frequency={row.get('frequency') or 'UNAVAILABLE'}; "
+                f"units={units}; expected_update_frequency={expected_update}; effective_through={latest_published}; runtime_cutoff={output['as_of']}."
             )
     return output
 

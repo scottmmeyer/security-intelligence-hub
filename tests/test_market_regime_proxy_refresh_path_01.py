@@ -11,6 +11,20 @@ from scripts import refresh_signals as refresh
 
 _REAL_REPO_ROOT = Path("/Users/scottmmeyer/Projects/security-intelligence-hub").resolve()
 _REAL_CURRENT_ROOT = (_REAL_REPO_ROOT / "data" / "current").resolve()
+
+
+def _z(**kwargs):
+    return False, {}
+
+
+def _d(**kwargs):
+    return False, {}
+
+
+def _y(**kwargs):
+    return False, {}
+
+
 _GUARDED_FILES = (
     "replay_inputs.csv",
     "replay_performance_series.csv",
@@ -203,6 +217,79 @@ def test_market_regime_proxy_only_does_not_run_broad_provider_refresh(monkeypatc
             "buy_candidate_cap": 50,
         },
     )
+
+    called = {"z": False, "d": False, "y": False}
+
+    def _z(**kwargs):
+        called["z"] = True
+        return False, {}
+
+    def _d(**kwargs):
+        called["d"] = True
+        return False, {}
+
+    def _y(**kwargs):
+        called["y"] = True
+        return False, {}
+
+
+def test_macro_liquidity_refresh_mode_invokes_materializer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        refresh,
+        "_run_macro_liquidity_refresh",
+        lambda **kwargs: {
+            "provider": "FRED",
+            "overall_status": "completed",
+            "series_requested": 14,
+            "series_succeeded": 14,
+            "series_failed": [],
+            "series_latest_dates": {"DGS2": "2026-08-25"},
+            "refresh_started_at": "2026-08-27T00:00:00Z",
+            "refresh_completed_at": "2026-08-27T00:00:05Z",
+        },
+    )
+
+    report = refresh.ensure_signals_fresh_with_report(
+        providers=("zacks",),
+        dry_run=False,
+        verbose=False,
+        refresh_mode="macro_liquidity_only",
+    )
+
+    macro = report.get("macro_liquidity") or {}
+    assert macro.get("overall_status") == "completed"
+    assert macro.get("provider") == "FRED"
+    assert report.get("triggered", {}).get("macro_liquidity") is True
+
+
+def test_macro_liquidity_refresh_failure_reports_failed_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        refresh,
+        "_run_macro_liquidity_refresh",
+        lambda **kwargs: {
+            "provider": "FRED",
+            "overall_status": "failed",
+            "series_requested": 14,
+            "series_succeeded": 9,
+            "series_failed": ["DGS2"],
+            "series_latest_dates": {"DGS2": "2026-08-21"},
+            "error": "materializer returned partial failure",
+            "refresh_started_at": "2026-08-27T00:00:00Z",
+            "refresh_completed_at": "2026-08-27T00:00:05Z",
+        },
+    )
+
+    report = refresh.ensure_signals_fresh_with_report(
+        providers=("zacks",),
+        dry_run=False,
+        verbose=False,
+        refresh_mode="macro_liquidity_only",
+    )
+
+    macro = report.get("macro_liquidity") or {}
+    assert macro.get("overall_status") == "failed"
+    assert macro.get("series_failed") == ["DGS2"]
+    assert report.get("triggered", {}).get("macro_liquidity") is False
 
     called = {"z": False, "d": False, "y": False}
 

@@ -68,6 +68,7 @@ REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES = "holdings_plus_buy_candidates"
 REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE = "rebuild_research_universe"
 REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW = "prepare_portfolio_review"
 REFRESH_MODE_MARKET_REGIME_PROXY_ONLY = "market_regime_proxy_only"
+REFRESH_MODE_MACRO_LIQUIDITY_ONLY = "macro_liquidity_only"
 
 _REFRESH_MODES = {
     REFRESH_MODE_STALE_ONLY,
@@ -76,6 +77,7 @@ _REFRESH_MODES = {
     REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE,
     REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
     REFRESH_MODE_MARKET_REGIME_PROXY_ONLY,
+    REFRESH_MODE_MACRO_LIQUIDITY_ONLY,
 }
 
 _MARKET_PROXY_BASE = ("SPY", "QQQ", "XLK", "XLF", "XLI", "XLV")
@@ -297,6 +299,7 @@ def _refresh_mode_label(refresh_mode: str) -> str:
         REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE: "rebuild_research_universe",
         REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW: "prepare_portfolio_review",
         REFRESH_MODE_MARKET_REGIME_PROXY_ONLY: "market_regime_proxy_only",
+        REFRESH_MODE_MACRO_LIQUIDITY_ONLY: "macro_liquidity_only",
     }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
 
 
@@ -489,6 +492,86 @@ def _evaluate_market_proxy_replay_freshness(*, threshold_days: int = 2) -> dict[
     except Exception as exc:
         status["warnings"].append(f"Unable to evaluate market proxy replay freshness: {exc}")
     return status
+
+
+def _macro_series_latest_observation(series_id: str) -> tuple[str, str] | None:
+    history_root = _REPO_ROOT / "data" / "history" / "macro_liquidity"
+    path = history_root / f"series_id={series_id}" / "observations.csv"
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except Exception:
+        return None
+    if not rows:
+        return None
+    latest = rows[-1]
+    obs = str(latest.get("observation_date") or "").strip()
+    value = str(latest.get("value") or "").strip()
+    if not obs or not value:
+        return None
+    return obs, value
+
+
+def _run_macro_liquidity_refresh(*, dry_run: bool = False, verbose: bool = True, collect_report: bool = True, report_path: Path | None = None) -> dict[str, object]:
+    """Run the canonical macro/liquidity materializer and return durable evidence."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    result: dict[str, object] = {
+        "provider": "FRED",
+        "overall_status": "failed",
+        "series_requested": [],
+        "series_succeeded": [],
+        "series_failed": [],
+        "series_latest_dates": {},
+        "refresh_started_at": started_at,
+        "refresh_completed_at": None,
+        "error": None,
+    }
+
+    if dry_run:
+        result["overall_status"] = "skipped_dry_run"
+        result["refresh_completed_at"] = datetime.now(timezone.utc).isoformat()
+        return result
+
+    try:
+        from scripts.materialize_macro_liquidity_series import SERIES_SPECS, materialize
+
+        result["series_requested"] = [spec.series_id for spec in SERIES_SPECS]
+        materialize_summary = materialize(max_observations=0)
+        if not isinstance(materialize_summary, dict):
+            raise TypeError("macro materialization did not return a summary dict")
+
+        series_failed: list[str] = []
+        series_succeeded: list[str] = []
+        series_latest_dates: dict[str, str] = {}
+        for spec in SERIES_SPECS:
+            latest = _macro_series_latest_observation(spec.series_id)
+            if latest is None:
+                series_failed.append(spec.series_id)
+                continue
+            obs_date, _value = latest
+            series_latest_dates[spec.series_id] = obs_date
+            series_succeeded.append(spec.series_id)
+
+        result["series_succeeded"] = series_succeeded
+        result["series_failed"] = series_failed
+        result["series_latest_dates"] = series_latest_dates
+        result["overall_status"] = "completed" if not series_failed else "failed"
+        result["refresh_completed_at"] = datetime.now(timezone.utc).isoformat()
+        if series_failed:
+            result["error"] = "macro materialization failed for one or more canonical series"
+        if verbose:
+            status = result["overall_status"]
+            print(f"[refresh_signals] macro_liquidity_only: {status} (succeeded={len(series_succeeded)}, failed={len(series_failed)})")
+        return result
+    except Exception as exc:  # pragma: no cover - defensive path
+        result["error"] = str(exc)
+        result["overall_status"] = "failed"
+        result["refresh_completed_at"] = datetime.now(timezone.utc).isoformat()
+        if verbose:
+            print(f"[refresh_signals] macro_liquidity_only: failed — {exc}")
+        return result
 
 
 def _market_proxy_bridge_run_id(snapshot_date: str) -> str:
@@ -1881,6 +1964,7 @@ def ensure_signals_fresh_with_report(
         return {
             "triggered": triggered,
             "providers": provider_report,
+            "macro_liquidity": provider_report.get("macro_liquidity"),
             "refresh_intent": resolved_mode,
             "scope_summary": scope_summary,
             "planned_symbol_samples": scope_plan.get("planned_symbol_samples") or {},
@@ -1925,6 +2009,20 @@ def ensure_signals_fresh_with_report(
                     "Dedicated proxy artifact build skipped because dedicated history fetch failed validation."
                 ]
 
+        runtime_status["running"] = False
+        runtime_status["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["current_stage"] = None
+        runtime_status["current_stage_provider"] = None
+        _persist_snapshot()
+        return _snapshot_report()
+
+    if resolved_mode == REFRESH_MODE_MACRO_LIQUIDITY_ONLY:
+        runtime_status["current_stage"] = "MACRO_LIQUIDITY"
+        runtime_status["current_stage_provider"] = "macro_liquidity"
+        _persist_snapshot()
+        macro_report = _run_macro_liquidity_refresh(dry_run=dry_run, verbose=verbose, collect_report=True, report_path=report_path)
+        triggered["macro_liquidity"] = bool(macro_report.get("overall_status") == "completed")
+        provider_report["macro_liquidity"] = {"triggered": triggered["macro_liquidity"], **macro_report}
         runtime_status["running"] = False
         runtime_status["completed_at"] = datetime.now(timezone.utc).isoformat()
         runtime_status["current_stage"] = None
