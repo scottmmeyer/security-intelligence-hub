@@ -2814,6 +2814,20 @@ function _buildRefreshOutcomeMessage(report) {
     );
   });
 
+  const publish = report.market_proxy_replay_publish || null;
+  if (publish) {
+    const reason = publish.reason || "replay artifacts were not regenerated";
+    const latestProxyDate = publish.latest_proxy_date_after || publish.latest_proxy_date || "unknown";
+    if (publish.status === "completed") {
+      rows.push(`Market proxy replay publish: completed · Latest proxy date: ${latestProxyDate}`);
+    } else {
+      rows.push(`Market proxy replay publish: warning - ${reason || "replay artifacts were not regenerated"}`);
+      if (publish.published === false) {
+        rows.push("Replay artifacts were not regenerated; Market Regime Guardrail may remain stale.");
+      }
+    }
+  }
+
   if (totalSubmitted === 0) {
     return "Refresh completed. No refresh required; holdings coverage already compliant or no stale/missing applicable holdings targeted.";
   }
