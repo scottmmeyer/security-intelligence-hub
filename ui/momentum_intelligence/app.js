@@ -19,6 +19,13 @@ function pct(v) {
   return typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(2)}%` : "—";
 }
 
+function pctCompact(v) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  if (v > 0) return `+${v.toFixed(1)}%`;
+  if (v < 0) return `${v.toFixed(1)}%`;
+  return "0.0%";
+}
+
 function relativeLevelFromHorizons(relativeHorizons) {
   if (!relativeHorizons || typeof relativeHorizons !== "object") {
     return "UNAVAILABLE";
@@ -231,6 +238,61 @@ function renderPortfolio(summary) {
   `;
 }
 
+function renderTrendStructure(summary) {
+  const root = document.getElementById("trendStructure");
+  if (!root) return;
+  const rowsData = (summary?.entry_timing_context?.holdings || []).map((row) => {
+    const symbol = row?.symbol || "";
+    const t = row?.trend_structure_context || {};
+    const history = String(t.history_status || "UNAVAILABLE");
+    const currentness = String(t.currentness_state || "MISSING");
+    const latestDate = t.latest_price_date || "—";
+    return {
+      symbol,
+      latestDate,
+      latestPrice: t.latest_price,
+      sma50: t.sma50,
+      vs50: t.price_vs_sma50_pct,
+      sma200: t.sma200,
+      vs200: t.price_vs_sma200_pct,
+      chg50: t.sma50_change_20d_pct,
+      chg200: t.sma200_change_20d_pct,
+      history,
+      currentness,
+    };
+  });
+
+  const rows = rowsData.map((r) => `
+    <tr>
+      <td>${esc(r.symbol)}</td>
+      <td>${esc(r.latestDate)}</td>
+      <td>${num(r.latestPrice, 4)}</td>
+      <td>${num(r.sma50, 4)}</td>
+      <td>${r.history === "AVAILABLE" ? pctCompact(r.vs50) : "—"}</td>
+      <td>${num(r.sma200, 4)}</td>
+      <td>${r.history === "AVAILABLE" ? pctCompact(r.vs200) : "—"}</td>
+      <td>${r.history === "AVAILABLE" ? pctCompact(r.chg50) : "—"}</td>
+      <td>${r.history === "AVAILABLE" ? pctCompact(r.chg200) : "—"}</td>
+      <td>${esc(r.history)}</td>
+      <td>${esc(r.currentness)}</td>
+    </tr>
+  `).join("");
+
+  root.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th><th>As of</th><th>Latest Price</th><th>SMA50</th><th>vs 50DMA</th><th>SMA200</th><th>vs 200DMA</th><th>50DMA 20D</th><th>200DMA 20D</th><th>History</th><th>Price data</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="11" class="muted">No trend-structure rows available.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <p class="muted" style="margin-top:8px;">50DMA and 200DMA are reporting-only timing context. They do not alter SIH scores, rankings, recommendations, allocation, or deployment eligibility.</p>
+  `;
+}
+
 function renderMethodology(methodology) {
   const root = document.getElementById("methodology");
   if (!methodology) {
@@ -291,7 +353,7 @@ async function loadMethodology() {
 }
 
 async function loadSummary() {
-  const ids = ["executive", "market", "mu", "sectors", "industries", "portfolio"];
+  const ids = ["executive", "market", "mu", "sectors", "industries", "portfolio", "trendStructure"];
   for (const id of ids) {
     setLoadingState(id, "Loading Momentum analysis...");
   }
@@ -310,6 +372,7 @@ async function loadSummary() {
     renderSectorTable(summary);
     renderIndustryTable(summary);
     renderPortfolio(summary);
+    renderTrendStructure(summary);
   } catch (err) {
     const message = `Momentum analysis unavailable.`;
     for (const id of ids) {

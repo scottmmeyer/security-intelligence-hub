@@ -3690,6 +3690,7 @@ function toggleNbaSection(id) {
 let _dqShowAll = false;
 const DQ_DEFAULT_ROWS = 10;
 let _dqMomentumBySymbol = null;
+let _dqTrendBySymbol = null;
 let _dqMomentumMeta = null;
 let _dqMomentumFetchInFlight = false;
 let _dqMomentumStatus = "idle";
@@ -3752,6 +3753,28 @@ function _dqMomentumDisplayField(value) {
   return (v && v !== "UNAVAILABLE") ? v : "—";
 }
 
+function _dqTimingPct(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (n > 0) return `+${n.toFixed(1)}%`;
+  if (n < 0) return `${n.toFixed(1)}%`;
+  return "0.0%";
+}
+
+function _dqTrendCompactDisplay(trend) {
+  if (!trend || typeof trend !== "object") return "UNAVAILABLE";
+  const historyStatus = String(trend.history_status || "UNAVAILABLE").toUpperCase();
+  if (historyStatus.startsWith("INSUFFICIENT_")) {
+    return "50D — · 200D —";
+  }
+  if (historyStatus !== "AVAILABLE") {
+    return "UNAVAILABLE";
+  }
+  const v50 = _dqTimingPct(trend.price_vs_sma50_pct);
+  const v200 = _dqTimingPct(trend.price_vs_sma200_pct);
+  return `50D ${v50} · 200D ${v200}`;
+}
+
 function _dqMomentumBadge(symbol) {
   if (_dqMomentumStatus === "loading" || _dqMomentumStatus === "idle") {
     return `<span class="dq-status" title="Momentum context is loading.">…</span>`;
@@ -3766,6 +3789,25 @@ function _dqMomentumBadge(symbol) {
 
   if (_dqMomentumStatus === "unavailable") {
     return `<span class="dq-status dq-status-OW_NODE" title="Momentum unavailable for current symbol in canonical momentum summary.">UNAVAILABLE</span>`;
+  }
+
+  const trend = _dqTrendBySymbol && _dqTrendBySymbol[String(symbol || "").toUpperCase()];
+  if (trend && typeof trend === "object") {
+    const historyStatus = String(trend.history_status || "UNAVAILABLE").toUpperCase();
+    const currentness = String(trend.currentness_state || trend.freshness_status || "MISSING").toUpperCase();
+    const asOf = String(trend.latest_price_date || "UNAVAILABLE");
+    const latestPrice = trend.latest_price != null ? Number(trend.latest_price).toFixed(4) : "UNAVAILABLE";
+    const sma50 = trend.sma50 != null ? Number(trend.sma50).toFixed(4) : "UNAVAILABLE";
+    const sma200 = trend.sma200 != null ? Number(trend.sma200).toFixed(4) : "UNAVAILABLE";
+    const d50 = _dqTimingPct(trend.price_vs_sma50_pct);
+    const d200 = _dqTimingPct(trend.price_vs_sma200_pct);
+    const c50 = _dqTimingPct(trend.sma50_change_20d_pct);
+    const c200 = _dqTimingPct(trend.sma200_change_20d_pct);
+    const source = String(trend.source || trend.provenance || "UNAVAILABLE");
+    const display = _dqTrendCompactDisplay(trend);
+    const cls = historyStatus === "AVAILABLE" ? "dq-status-DEPLOYABLE" : "dq-status-OW_NODE";
+    const tooltip = `Trend Structure\n\nvs 50DMA: ${d50}\nvs 200DMA: ${d200}\n50DMA 20D: ${c50}\n200DMA 20D: ${c200}\nPrice data: ${currentness}\nAs of: ${asOf}\nHistory: ${historyStatus}\nLatest price: ${latestPrice}\nSMA50: ${sma50}\nSMA200: ${sma200}\nSource: ${source}\n\n50DMA and 200DMA are reporting-only timing context.\nThey do not alter SIH scores, rankings, recommendations,\nallocation, or deployment eligibility.`;
+    return `<span class="dq-status ${cls}" title="${escHtml(tooltip)}">${escHtml(display)}</span>`;
   }
 
   const momentumRow = _dqMomentumBySymbol && _dqMomentumBySymbol[String(symbol || "").toUpperCase()];
@@ -3830,18 +3872,27 @@ function _dqEnsureMomentumContext(queueForRender, tbodyId) {
       const compatible = !!parDate && !!momDate && parDate === momDate;
 
       const rows = (((summary || {}).portfolio_momentum_map || {}).holdings) || [];
+      const trendRows = (((summary || {}).entry_timing_context || {}).holdings) || [];
       const map = {};
+      const trendMap = {};
       if (compatible) {
         for (const row of rows) {
           const sym = String((row || {}).symbol || "").trim().toUpperCase();
           if (!sym) continue;
           map[sym] = row;
         }
+        for (const row of trendRows) {
+          const sym = String((row || {}).symbol || "").trim().toUpperCase();
+          const trend = row && row.trend_structure_context;
+          if (!sym || !trend || typeof trend !== "object") continue;
+          trendMap[sym] = trend;
+        }
         _dqMomentumStatus = "ready";
       } else {
         _dqMomentumStatus = "unavailable";
       }
       _dqMomentumBySymbol = map;
+      _dqTrendBySymbol = trendMap;
       _dqMomentumMeta = {
         context_key: contextKey,
         snapshot_date: momDate,
@@ -3854,6 +3905,7 @@ function _dqEnsureMomentumContext(queueForRender, tbodyId) {
     })
     .catch(() => {
       _dqMomentumBySymbol = {};
+      _dqTrendBySymbol = {};
       _dqMomentumStatus = "unavailable";
       _dqMomentumMeta = {
         context_key: contextKey,
@@ -3943,6 +3995,7 @@ function renderDeploymentQueue(data) {
   const priorContextKey = (_dqMomentumMeta && _dqMomentumMeta.context_key) || null;
   if (priorContextKey !== momentumContextKey) {
     _dqMomentumBySymbol = null;
+    _dqTrendBySymbol = null;
     _dqMomentumStatus = "idle";
     _dqMomentumMeta = {
       context_key: momentumContextKey,
@@ -4157,6 +4210,7 @@ function renderDeploymentQueue(data) {
       ${actionCardsHtml}
     </div>
     <div style="font-size:0.75rem;color:var(--muted);margin:6px 0 2px 0;">Momentum is timing/confirmation context only and does not affect CW-DAS ranking or allocation.</div>
+    <div style="font-size:0.75rem;color:var(--muted);margin:2px 0 4px 0;">50DMA and 200DMA are reporting-only timing context. They do not alter SIH scores, rankings, recommendations, allocation, or deployment eligibility.</div>
     <details style="margin:6px 0 8px 0;font-size:0.75rem;color:var(--muted);">
       <summary style="cursor:pointer;color:var(--accent);font-weight:700;">How to Read Momentum (Buy-Timing Context)</summary>
       <div style="margin-top:6px;line-height:1.5;">

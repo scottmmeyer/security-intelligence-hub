@@ -4,9 +4,12 @@ import csv
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 from src.pis.momentum_intelligence import (
     MomentumSeries,
     _build_horizon_payload,
+    build_trend_structure_context,
     _classify_absolute_momentum_state,
     _classify_breadth_state,
     _classify_confirmation_state,
@@ -798,6 +801,97 @@ def test_missing_history_and_confidence_metadata() -> None:
     assert horizons["1W"]["history_available"] == 2
     assert horizons["1W"]["confidence"] in {"LOW", "UNAVAILABLE"}
     assert _series_confidence(10, 22) == "LOW"
+
+
+def test_build_trend_structure_context_calculates_sma50_sma200_and_20d_change() -> None:
+    points = [((date(2026, 1, 1) + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(220)]
+    as_of = "2026-08-08"
+    series = MomentumSeries(symbol="TEST", source="fixture", as_of_date=as_of, freshness_days=0, points=points)
+
+    ctx = build_trend_structure_context(series)
+
+    assert ctx["history_status"] == "AVAILABLE"
+    assert ctx["latest_price_date"] == as_of
+    assert ctx["latest_price"] == pytest.approx(319.0)
+    assert ctx["sma50"] == pytest.approx(294.5)
+    assert ctx["sma200"] == pytest.approx(219.5)
+    assert ctx["price_vs_sma50_pct"] == pytest.approx(((319.0 / 294.5) - 1.0) * 100.0)
+    assert ctx["price_vs_sma200_pct"] == pytest.approx(((319.0 / 219.5) - 1.0) * 100.0)
+    assert ctx["sma50_change_20d_pct"] == pytest.approx(((294.5 / 274.5) - 1.0) * 100.0)
+    assert ctx["sma200_change_20d_pct"] == pytest.approx(((219.5 / 199.5) - 1.0) * 100.0)
+    assert ctx["reporting_only"] is True
+
+
+def test_build_trend_structure_context_respects_as_of_cutoff() -> None:
+    as_of = "2026-03-15"
+    points = [
+        ("2026-01-01", 100.0),
+        ("2026-02-10", 110.0),
+        ("2026-03-10", 120.0),
+        ("2026-03-20", 999.0),
+        ("2026-03-25", 1000.0),
+    ]
+    series = MomentumSeries(symbol="CUT", source="fixture", as_of_date=as_of, freshness_days=0, points=points)
+
+    ctx = build_trend_structure_context(series, as_of_date=as_of)
+
+    assert ctx["latest_price_date"] == "2026-03-10"
+    assert ctx["latest_price"] == pytest.approx(120.0)
+    assert ctx["price_vs_sma50_pct"] == pytest.approx(0.0)
+    assert ctx["history_status"] in {"INSUFFICIENT_50", "INSUFFICIENT_200", "AVAILABLE"}
+
+
+def test_build_trend_structure_context_reports_insufficient_history() -> None:
+    points = [((date(2026, 1, 1) + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(49)]
+    series = MomentumSeries(symbol="SHORT", source="fixture", as_of_date="2026-02-18", freshness_days=0, points=points)
+
+    ctx = build_trend_structure_context(series)
+
+    assert ctx["history_status"] == "INSUFFICIENT_50"
+    assert ctx["currentness_state"] == "CURRENT"
+    assert ctx["sma50"] is None
+    assert ctx["sma200"] is None
+    assert ctx["reporting_only"] is True
+
+
+def test_entry_timing_context_exposes_history_and_top_trade_trend_exposure() -> None:
+    as_of = "2026-08-08"
+    points = [((date(2026, 1, 1) + timedelta(days=i)).isoformat(), 100.0 + i) for i in range(220)]
+    series = MomentumSeries(symbol="TEST", source="fixture", as_of_date=as_of, freshness_days=2, points=points)
+    ctx = build_trend_structure_context(series, as_of_date=as_of)
+    assert ctx["history_status"] == "AVAILABLE"
+    assert ctx["currentness_state"] == "CURRENT"
+    assert ctx["freshness_status"] == "CURRENT"
+    assert ctx["coverage_status"] == "CURRENT"
+
+    payload = {
+        "entry_timing_context": {
+            "holdings": [{"symbol": "TEST", "trend_structure_context": ctx}],
+            "top_trades_trend_exposure": {
+                "reporting_only": True,
+                "leaders": ["TEST"],
+                "laggards": [],
+                "neutral": [],
+                "insufficient_history": [],
+                "unavailable": [],
+                "per_symbol": [
+                    {
+                        "symbol": "TEST",
+                        "bucket": "LEADING",
+                        "history_status": "AVAILABLE",
+                        "currentness_state": "CURRENT",
+                        "price_vs_sma50_pct": 8.319185,
+                        "price_vs_sma200_pct": 45.330296,
+                    }
+                ],
+                "total_symbols": 1,
+            },
+        }
+    }
+    exposure = payload["entry_timing_context"]["top_trades_trend_exposure"]
+    assert exposure["leaders"] == ["TEST"]
+    assert exposure["per_symbol"][0]["symbol"] == "TEST"
+    assert exposure["reporting_only"] is True
 
 
 def test_evaluate_momentum_as_of_blocks_future_prices_and_providers(tmp_path: Path) -> None:
@@ -2003,3 +2097,20 @@ def test_momentum_ui_uses_independent_section_loading_and_explicit_summary_state
     assert "renderExecutive(summary);" in app_js and "renderMethodology(methodology);" in app_js
     assert "_PIS_MOMENTUM_CACHE[\"signature\"]" in server_js
     assert "_macro_momentum_dependency_signature" in server_js
+
+
+def test_momentum_ui_renders_trend_structure_reporting_context() -> None:
+    app_js = (REPO_ROOT / "ui" / "momentum_intelligence" / "app.js").read_text(encoding="utf-8")
+    index_html = (REPO_ROOT / "ui" / "momentum_intelligence" / "index.html").read_text(encoding="utf-8")
+
+    assert "renderTrendStructure(summary);" in app_js
+    assert "entry_timing_context" in app_js
+    assert "vs 50DMA" in app_js
+    assert "vs 200DMA" in app_js
+    assert "50DMA 20D" in app_js
+    assert "200DMA 20D" in app_js
+    assert "Price data" in app_js
+    assert "history_status" in app_js
+    assert "currentness_state" in app_js
+    assert "50DMA and 200DMA are reporting-only timing context." in app_js
+    assert "id=\"trendStructure\"" in index_html

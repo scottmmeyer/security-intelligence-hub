@@ -831,3 +831,81 @@ def test_context_change_clears_prior_map_shows_loading_then_unavailable():
         assert momentum_cells.nth(0).inner_text().strip() == "UNAVAILABLE"
         assert momentum_cells.nth(1).inner_text().strip() == "UNAVAILABLE"
         assert page.evaluate("() => window.__momFetchCalls") == 2
+
+
+def test_top_trades_trend_structure_compact_render_and_reporting_only_tooltip():
+    payload = _momentum_payload("2026-08-20")
+    summary = _momentum_summary("2026-08-20", include_bbb=True)
+    summary["entry_timing_context"] = {
+        "reporting_only": True,
+        "holdings": [
+            {
+                "symbol": "AAA",
+                "trend_structure_context": {
+                    "latest_price_date": "2026-08-20",
+                    "latest_price": 112.0,
+                    "sma50": 109.28,
+                    "price_vs_sma50_pct": 2.49,
+                    "sma200": 98.76,
+                    "price_vs_sma200_pct": 13.4,
+                    "sma50_change_20d_pct": 1.8,
+                    "sma200_change_20d_pct": 0.7,
+                    "history_status": "AVAILABLE",
+                    "currentness_state": "CURRENT",
+                    "source": "fixture",
+                    "reporting_only": True,
+                },
+            },
+            {
+                "symbol": "BBB",
+                "trend_structure_context": {
+                    "latest_price_date": "2026-08-20",
+                    "latest_price": 55.0,
+                    "sma50": None,
+                    "price_vs_sma50_pct": None,
+                    "sma200": None,
+                    "price_vs_sma200_pct": None,
+                    "sma50_change_20d_pct": None,
+                    "sma200_change_20d_pct": None,
+                    "history_status": "INSUFFICIENT_50",
+                    "currentness_state": "CURRENT",
+                    "source": "fixture",
+                    "reporting_only": True,
+                },
+            },
+        ],
+    }
+
+    with browser_page() as page:
+        page.evaluate(
+            """
+            ({ payload, summary }) => {
+              window.fetch = (url) => {
+                if (String(url).includes('/api/pis/momentum/summary')) {
+                  return Promise.resolve({ ok: true, json: () => Promise.resolve(summary) });
+                }
+                return Promise.reject(new Error(`unexpected url: ${url}`));
+              };
+              renderDeploymentQueue(payload);
+            }
+            """,
+            {"payload": payload, "summary": summary},
+        )
+
+        page.wait_for_function(
+            """
+            () => document.querySelector('#dq-queue-table-body tr.dq-data-row td:nth-child(7) span')?.textContent?.trim() === '50D +2.5% · 200D +13.4%'
+            """
+        )
+
+        momentum_cells = page.locator("#dq-queue-table-body tr.dq-data-row td:nth-child(7) span")
+        assert momentum_cells.nth(0).inner_text().strip() == "50D +2.5% · 200D +13.4%"
+        assert momentum_cells.nth(1).inner_text().strip() == "50D — · 200D —"
+
+        tooltip = momentum_cells.nth(0).get_attribute("title") or ""
+        assert "50DMA and 200DMA are reporting-only timing context." in tooltip
+        assert "Price data: CURRENT" in tooltip
+        assert "As of: 2026-08-20" in tooltip
+
+        tooltip_insufficient = momentum_cells.nth(1).get_attribute("title") or ""
+        assert "History: INSUFFICIENT_50" in tooltip_insufficient

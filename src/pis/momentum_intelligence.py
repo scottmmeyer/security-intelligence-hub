@@ -1078,6 +1078,125 @@ def _as_of_absolute_state_from_price_points(series: MomentumSeries) -> str:
     return "NEUTRAL"
 
 
+def _history_status_for_points(points: list[tuple[str, float]]) -> str:
+    if not points:
+        return "UNAVAILABLE"
+    if len(points) < 50:
+        return "INSUFFICIENT_50"
+    if len(points) < 200:
+        return "INSUFFICIENT_200"
+    if len(points) < 220:
+        return "INSUFFICIENT_220"
+    return "AVAILABLE"
+
+
+def _currentness_state_for_series(series: MomentumSeries, *, points: list[tuple[str, float]] | None = None) -> str:
+    filtered_points = list(points) if points is not None else list(series.points)
+    if not filtered_points:
+        return "MISSING"
+    freshness_days = series.freshness_days
+    if freshness_days is None:
+        return "PARTIAL" if len(filtered_points) >= 5 else "MISSING"
+    if freshness_days <= 5:
+        return "CURRENT"
+    return "STALE"
+
+
+def build_trend_structure_context(
+    series: MomentumSeries,
+    *,
+    as_of_date: str | None = None,
+) -> dict[str, object]:
+    """Compute a reporting-only 50-day / 200-day trend structure context.
+
+    This is intentionally additive and non-decisioning. It summarizes the relationship
+    between the latest price and the short/long simple moving averages, along with a
+    20-trading-day change in each moving average, and preserves a clear "insufficient
+    history" state rather than fabricating a trend signal.
+    """
+    effective_as_of = (as_of_date or series.as_of_date or "")[:10]
+    points = [(d, price) for d, price in series.points if not effective_as_of or d <= effective_as_of]
+    if not points:
+        return {
+            "as_of_date": effective_as_of,
+            "history_status": "UNAVAILABLE",
+            "currentness_state": "MISSING",
+            "freshness_status": "MISSING",
+            "coverage_status": "MISSING",
+            "latest_price_date": None,
+            "latest_price": None,
+            "sma50": None,
+            "sma200": None,
+            "price_vs_sma50_pct": 0.0,
+            "price_vs_sma200_pct": 0.0,
+            "sma50_change_20d_pct": 0.0,
+            "sma200_change_20d_pct": 0.0,
+            "provenance": series.source,
+            "reporting_only": True,
+        }
+
+    latest_date, latest_price = points[-1]
+    latest_price_float = float(latest_price)
+
+    def _sma_window(window: int) -> float | None:
+        if len(points) < window:
+            return None
+        values = [p for _, p in points[-window:]]
+        if not values:
+            return None
+        return float(sum(values) / len(values))
+
+    def _pct_change(current: float | None, previous: float | None) -> float:
+        if current is None or previous is None or previous <= 0:
+            return 0.0
+        return float(((current / previous) - 1.0) * 100.0)
+
+    sma50 = _sma_window(50)
+    sma200 = _sma_window(200)
+    history_status = _history_status_for_points(points)
+    currentness_state = _currentness_state_for_series(series, points=points)
+
+    sma50_prior = None
+    if len(points) >= 70:
+        sma50_prior = float(sum(p for _, p in points[-70:-20]) / 50.0)
+
+    sma200_prior = None
+    if len(points) >= 220:
+        sma200_prior = float(sum(p for _, p in points[-220:-20]) / 200.0)
+
+    price_vs_sma50_pct = _pct_change(latest_price_float, sma50)
+    price_vs_sma200_pct = _pct_change(latest_price_float, sma200)
+    sma50_change_20d_pct = _pct_change(sma50, sma50_prior)
+    sma200_change_20d_pct = _pct_change(sma200, sma200_prior)
+
+    if sma50 is None:
+        price_vs_sma50_pct = 0.0
+    if sma200 is None:
+        price_vs_sma200_pct = 0.0
+    if sma50_prior is None:
+        sma50_change_20d_pct = 0.0
+    if sma200_prior is None:
+        sma200_change_20d_pct = 0.0
+
+    return {
+        "as_of_date": effective_as_of,
+        "history_status": history_status,
+        "currentness_state": currentness_state,
+        "freshness_status": currentness_state,
+        "coverage_status": currentness_state,
+        "latest_price_date": latest_date,
+        "latest_price": round(latest_price_float, 6),
+        "sma50": round(sma50, 6) if sma50 is not None else None,
+        "sma200": round(sma200, 6) if sma200 is not None else None,
+        "price_vs_sma50_pct": round(price_vs_sma50_pct, 6),
+        "price_vs_sma200_pct": round(price_vs_sma200_pct, 6),
+        "sma50_change_20d_pct": round(sma50_change_20d_pct, 6),
+        "sma200_change_20d_pct": round(sma200_change_20d_pct, 6),
+        "provenance": series.source,
+        "reporting_only": True,
+    }
+
+
 def evaluate_momentum_as_of(
     symbol: str,
     as_of_date: str,
@@ -2447,6 +2566,74 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     else:
         portfolio_coverage_state = "UNAVAILABLE"
 
+    def _build_top_trades_trend_exposure(
+        rows: list[dict[str, object]],
+        series_lookup: dict[str, MomentumSeries],
+        *,
+        as_of_date: str | None,
+    ) -> dict[str, object]:
+        exposures: list[dict[str, object]] = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+            ctx = build_trend_structure_context(
+                series_lookup.get(symbol) if symbol in series_lookup else MomentumSeries(
+                    symbol=symbol,
+                    source="unavailable",
+                    as_of_date=str(as_of_date or ""),
+                    freshness_days=None,
+                    points=[],
+                ),
+                as_of_date=str(as_of_date or ""),
+            )
+            history_status = str(ctx.get("history_status") or "UNAVAILABLE")
+            price_vs_sma50 = float(ctx.get("price_vs_sma50_pct") or 0.0)
+            price_vs_sma200 = float(ctx.get("price_vs_sma200_pct") or 0.0)
+            if history_status == "AVAILABLE":
+                if price_vs_sma50 > 0 and price_vs_sma200 > 0:
+                    bucket = "LEADING"
+                elif price_vs_sma50 < 0 and price_vs_sma200 < 0:
+                    bucket = "LAGGING"
+                else:
+                    bucket = "NEUTRAL"
+            elif history_status.startswith("INSUFFICIENT_"):
+                bucket = "INSUFFICIENT_HISTORY"
+            else:
+                bucket = "UNAVAILABLE"
+            exposures.append({
+                "symbol": symbol,
+                "bucket": bucket,
+                "history_status": history_status,
+                "currentness_state": str(ctx.get("currentness_state") or "MISSING"),
+                "price_vs_sma50_pct": round(price_vs_sma50, 6),
+                "price_vs_sma200_pct": round(price_vs_sma200, 6),
+            })
+
+        leaders = [e for e in exposures if e["bucket"] == "LEADING"]
+        laggards = [e for e in exposures if e["bucket"] == "LAGGING"]
+        neutral = [e for e in exposures if e["bucket"] == "NEUTRAL"]
+        insufficient_history = [e for e in exposures if e["bucket"] == "INSUFFICIENT_HISTORY"]
+        unavailable = [e for e in exposures if e["bucket"] == "UNAVAILABLE"]
+
+        return {
+            "reporting_only": True,
+            "as_of_date": as_of_date,
+            "leaders": [e["symbol"] for e in leaders],
+            "laggards": [e["symbol"] for e in laggards],
+            "neutral": [e["symbol"] for e in neutral],
+            "insufficient_history": [e["symbol"] for e in insufficient_history],
+            "unavailable": [e["symbol"] for e in unavailable],
+            "per_symbol": exposures,
+            "total_symbols": len(exposures),
+        }
+
+    top_trades_trend_exposure = _build_top_trades_trend_exposure(
+        portfolio_rows,
+        security_series,
+        as_of_date=holdings_snapshot_date,
+    )
+
     return {
         "status": "ok",
         "reporting_only": True,
@@ -2516,6 +2703,29 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
                 "state": market_state,
                 "horizons": market_horizons,
             }
+        },
+        "entry_timing_context": {
+            "reporting_only": True,
+            "as_of_date": holdings_snapshot_date,
+            "holdings": [
+                {
+                    "symbol": row.get("symbol"),
+                    "trend_structure_context": build_trend_structure_context(
+                        security_series.get(str(row.get("symbol", "")).upper())
+                        if str(row.get("symbol", "")).upper() in security_series
+                        else MomentumSeries(
+                            symbol=str(row.get("symbol", "")).upper(),
+                            source="unavailable",
+                            as_of_date=str(holdings_snapshot_date or ""),
+                            freshness_days=None,
+                            points=[],
+                        ),
+                        as_of_date=str(holdings_snapshot_date or ""),
+                    ),
+                }
+                for row in portfolio_rows
+            ],
+            "top_trades_trend_exposure": top_trades_trend_exposure,
         },
         "sector_rotation": sector_rows,
         "industry_rotation": industry_rows,

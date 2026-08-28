@@ -1580,6 +1580,106 @@ def _market_regime_guardrail_payload(run_id: str | None = None) -> tuple[dict, i
         }, 200
 
 
+def _enrich_top_trades_entry_timing_context(result: dict) -> dict:
+    """Add reporting-only per-symbol trend context to deployment queue rows.
+
+    This is an API-layer enrichment only. It never alters canonical queue semantics
+    (membership, ranking, score, eligibility, or suggested add amounts).
+    """
+    if not isinstance(result, dict):
+        return result
+
+    deployment_queue = result.get("deployment_queue")
+    if not isinstance(deployment_queue, dict):
+        return result
+    queue = deployment_queue.get("queue")
+    if not isinstance(queue, list) or not queue:
+        return result
+
+    try:
+        summary = _pis_momentum_summary_cached()
+    except Exception:
+        summary = {}
+
+    entry_timing = (summary.get("entry_timing_context") or {}) if isinstance(summary, dict) else {}
+    holdings = entry_timing.get("holdings") if isinstance(entry_timing, dict) else None
+
+    trend_by_symbol: dict[str, dict] = {}
+    if isinstance(holdings, list):
+        for item in holdings:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol") or "").strip().upper()
+            trend = item.get("trend_structure_context")
+            if not symbol or not isinstance(trend, dict):
+                continue
+            trend_by_symbol[symbol] = trend
+
+    run_metadata = result.get("run_metadata") if isinstance(result.get("run_metadata"), dict) else {}
+    snapshot_payload = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
+    run_snapshot_date = str(
+        result.get("snapshot_date")
+        or run_metadata.get("snapshot_date")
+        or snapshot_payload.get("snapshot_date")
+        or ""
+    ).strip()
+    momentum_snapshot_date = str((summary or {}).get("snapshot_date") or "").strip()
+    compatible = bool(run_snapshot_date and momentum_snapshot_date and run_snapshot_date == momentum_snapshot_date)
+
+    enriched = copy.deepcopy(result)
+    enriched_queue = ((enriched.get("deployment_queue") or {}).get("queue") or [])
+
+    for row in enriched_queue:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        trend = trend_by_symbol.get(symbol) if compatible else None
+
+        if isinstance(trend, dict):
+            row["entry_timing_context"] = {
+                "latest_price_date": trend.get("latest_price_date"),
+                "latest_price": trend.get("latest_price"),
+                "sma50": trend.get("sma50"),
+                "price_vs_sma50_pct": trend.get("price_vs_sma50_pct"),
+                "sma200": trend.get("sma200"),
+                "price_vs_sma200_pct": trend.get("price_vs_sma200_pct"),
+                "sma50_change_20d_pct": trend.get("sma50_change_20d_pct"),
+                "sma200_change_20d_pct": trend.get("sma200_change_20d_pct"),
+                "history_status": trend.get("history_status") or "UNAVAILABLE",
+                "currentness_state": trend.get("currentness_state") or "MISSING",
+                "source": str(trend.get("provenance") or "src/pis/momentum_intelligence.py::build_trend_structure_context"),
+                "reporting_only": True,
+            }
+        else:
+            reason = "snapshot_mismatch" if not compatible else "symbol_unavailable"
+            row["entry_timing_context"] = {
+                "latest_price_date": None,
+                "latest_price": None,
+                "sma50": None,
+                "price_vs_sma50_pct": None,
+                "sma200": None,
+                "price_vs_sma200_pct": None,
+                "sma50_change_20d_pct": None,
+                "sma200_change_20d_pct": None,
+                "history_status": "UNAVAILABLE",
+                "currentness_state": "MISSING",
+                "source": f"runtime_entry_timing_context:{reason}",
+                "reporting_only": True,
+            }
+
+    dq = enriched.get("deployment_queue")
+    if isinstance(dq, dict):
+        dq["entry_timing_context_meta"] = {
+            "reporting_only": True,
+            "run_snapshot_date": run_snapshot_date or None,
+            "momentum_snapshot_date": momentum_snapshot_date or None,
+            "compatible": compatible,
+            "source": "/api/pis/momentum/summary",
+        }
+
+    return enriched
+
+
 def _macro_unavailable_indicator(name: str, *, source: str, provenance: str, note: str = "") -> dict:
     return {
         "name": name,
@@ -3798,7 +3898,7 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 if result is None:
                     self._json_response({"error": "run not found"}, 404)
                 else:
-                    self._json_response(result)
+                    self._json_response(_enrich_top_trades_entry_timing_context(result))
             except Exception as exc:
                 self._json_response({"error": str(exc)}, 500)
         elif path == "/api/cpv/latest":
