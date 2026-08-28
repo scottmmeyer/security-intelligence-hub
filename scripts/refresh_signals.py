@@ -69,6 +69,7 @@ REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE = "rebuild_research_universe"
 REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW = "prepare_portfolio_review"
 REFRESH_MODE_MARKET_REGIME_PROXY_ONLY = "market_regime_proxy_only"
 REFRESH_MODE_MACRO_LIQUIDITY_ONLY = "macro_liquidity_only"
+REFRESH_MODE_SECURITY_PRICES_ONLY = "security_prices_only"
 
 _REFRESH_MODES = {
     REFRESH_MODE_STALE_ONLY,
@@ -78,6 +79,7 @@ _REFRESH_MODES = {
     REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW,
     REFRESH_MODE_MARKET_REGIME_PROXY_ONLY,
     REFRESH_MODE_MACRO_LIQUIDITY_ONLY,
+    REFRESH_MODE_SECURITY_PRICES_ONLY,
 }
 
 _MARKET_PROXY_BASE = ("SPY", "QQQ", "XLK", "XLF", "XLI", "XLV")
@@ -300,6 +302,7 @@ def _refresh_mode_label(refresh_mode: str) -> str:
         REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW: "prepare_portfolio_review",
         REFRESH_MODE_MARKET_REGIME_PROXY_ONLY: "market_regime_proxy_only",
         REFRESH_MODE_MACRO_LIQUIDITY_ONLY: "macro_liquidity_only",
+        REFRESH_MODE_SECURITY_PRICES_ONLY: "security_prices_only",
     }.get(refresh_mode, REFRESH_MODE_STALE_ONLY)
 
 
@@ -366,6 +369,133 @@ def _market_proxy_refresh_needed(threshold_days: int = 2) -> bool:
     except Exception:
         # Fail closed: if freshness cannot be determined, include proxy refresh targets.
         return True
+
+
+def _security_price_refresh_needed() -> bool:
+    """Return True when the canonical current portfolio security-price history is stale or partial."""
+    try:
+        from src.pis.momentum_price_history import inventory_current_price_coverage
+        coverage = inventory_current_price_coverage(_REPO_ROOT)
+        if coverage.applicable_count <= 0:
+            return False
+        return any(row.coverage_status in {"PARTIAL", "MISSING"} for row in coverage.rows)
+    except Exception:
+        return True
+
+
+def _run_security_price_refresh(*, dry_run: bool = False, verbose: bool = True, collect_report: bool = True, report_path: Path | None = None) -> dict[str, object]:
+    """Invoke the existing canonical security-price producer without changing adjustment semantics."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        from src.pis.momentum_price_history import inventory_current_price_coverage, load_current_holdings, restore_current_portfolio_price_history
+    except Exception as exc:
+        return {
+            "provider": "security_price_history",
+            "refresh_started_at": started_at,
+            "refresh_completed_at": datetime.now(timezone.utc).isoformat(),
+            "symbols_requested": [],
+            "symbols_succeeded": [],
+            "symbols_failed": [],
+            "latest_dates": {},
+            "overall_status": "FAILED",
+            "errors": [str(exc)],
+            "dry_run": bool(dry_run),
+        }
+
+    before_coverage = inventory_current_price_coverage(_REPO_ROOT)
+    _, holdings = load_current_holdings(_REPO_ROOT)
+    applicable_symbols = sorted({
+        str(h["symbol"]).strip().upper()
+        for h in holdings
+        if str(h.get("asset_type", "")).upper() in {"EQUITY", "EQUITIES", "STOCK", "COMMON STOCK", "COMMON_STOCK", "ADR", "ETF"}
+    })
+
+    if dry_run:
+        return {
+            "provider": "security_price_history",
+            "refresh_started_at": started_at,
+            "refresh_completed_at": datetime.now(timezone.utc).isoformat(),
+            "symbols_requested": applicable_symbols,
+            "symbols_succeeded": [],
+            "symbols_failed": [],
+            "latest_dates": {
+                symbol: next((row.last_price_date for row in before_coverage.rows if row.symbol == symbol), None)
+                for symbol in applicable_symbols
+            },
+            "overall_status": "SKIPPED",
+            "errors": [],
+            "dry_run": True,
+            "coverage_before": {
+                "applicable": before_coverage.applicable_count,
+                "present": before_coverage.present_count,
+                "partial": before_coverage.partial_count,
+                "missing": before_coverage.missing_count,
+            },
+        }
+
+    errors: list[str] = []
+    try:
+        result = restore_current_portfolio_price_history(
+            repo_root=_REPO_ROOT,
+            lookback_calendar_days=420,
+            include_sector_parents=True,
+            include_benchmark=True,
+        )
+    except Exception as exc:
+        errors.append(str(exc))
+        result = {"fetched_symbols": [], "failed_symbols": [], "coverage_before": {}, "coverage_after": {}}
+
+    fetched = sorted({str(s).strip().upper() for s in (result.get("fetched_symbols") or [])})
+    failed = sorted({str(s).strip().upper() for s in (result.get("failed_symbols") or [])})
+    requested = applicable_symbols
+    succeeded = [symbol for symbol in requested if symbol in fetched]
+    failed_requested = [symbol for symbol in requested if symbol not in fetched]
+    if failed_requested:
+        failed.extend(failed_requested)
+    failed = sorted(set(failed))
+
+    after_coverage = inventory_current_price_coverage(_REPO_ROOT)
+    latest_dates: dict[str, str | None] = {}
+    for symbol in sorted(set(requested)):
+        row = next((r for r in after_coverage.rows if r.symbol == symbol), None)
+        latest_dates[symbol] = row.last_price_date if row is not None else None
+
+    if not requested:
+        overall_status = "FAILED"
+    elif len(succeeded) == len(requested):
+        overall_status = "SUCCESS"
+    elif len(succeeded) > 0:
+        overall_status = "PARTIAL"
+    else:
+        overall_status = "FAILED"
+
+    report = {
+        "provider": "security_price_history",
+        "refresh_started_at": started_at,
+        "refresh_completed_at": datetime.now(timezone.utc).isoformat(),
+        "symbols_requested": requested,
+        "symbols_succeeded": succeeded,
+        "symbols_failed": failed,
+        "latest_dates": latest_dates,
+        "overall_status": overall_status,
+        "errors": errors,
+        "dry_run": False,
+        "coverage_before": {
+            "applicable": before_coverage.applicable_count,
+            "present": before_coverage.present_count,
+            "partial": before_coverage.partial_count,
+            "missing": before_coverage.missing_count,
+        },
+        "coverage_after": {
+            "applicable": after_coverage.applicable_count,
+            "present": after_coverage.present_count,
+            "partial": after_coverage.partial_count,
+            "missing": after_coverage.missing_count,
+        },
+    }
+    if report_path is not None:
+        _write_json_atomic(report_path, report)
+    return report
 
 
 def _load_buy_candidate_symbols(*, cap: int = 50) -> list[str]:
@@ -1875,6 +2005,15 @@ def ensure_signals_fresh_with_report(
         "current_stage": None,
         "current_stage_provider": None,
         "providers": {
+            "security_prices": {
+                "state": "QUEUED" if resolved_mode in {REFRESH_MODE_SECURITY_PRICES_ONLY, REFRESH_MODE_STALE_ONLY} else "SKIPPED",
+                "planned": None,
+                "attempted": None,
+                "success": None,
+                "failed": None,
+                "started_at": None,
+                "completed_at": None,
+            },
             "zacks": {
                 "state": "QUEUED",
                 "planned": len(list(provider_symbols.get("zacks") or [])),
@@ -1964,6 +2103,7 @@ def ensure_signals_fresh_with_report(
         return {
             "triggered": triggered,
             "providers": provider_report,
+            "security_prices": provider_report.get("security_prices"),
             "macro_liquidity": provider_report.get("macro_liquidity"),
             "refresh_intent": resolved_mode,
             "scope_summary": scope_summary,
@@ -2029,6 +2169,47 @@ def ensure_signals_fresh_with_report(
         runtime_status["current_stage_provider"] = None
         _persist_snapshot()
         return _snapshot_report()
+
+    if resolved_mode == REFRESH_MODE_SECURITY_PRICES_ONLY:
+        runtime_status["current_stage"] = "SECURITY_PRICES"
+        runtime_status["current_stage_provider"] = "security_prices"
+        runtime_status["providers"]["security_prices"]["state"] = "RUNNING"
+        runtime_status["providers"]["security_prices"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
+        price_report = _run_security_price_refresh(dry_run=dry_run, verbose=verbose, collect_report=True, report_path=report_path)
+        triggered["security_prices"] = bool(price_report.get("overall_status") in {"SUCCESS", "PARTIAL"})
+        provider_report["security_prices"] = {"triggered": triggered["security_prices"], **price_report}
+        runtime_status["providers"]["security_prices"]["planned"] = len(price_report.get("symbols_requested") or [])
+        runtime_status["providers"]["security_prices"]["attempted"] = len(price_report.get("symbols_requested") or [])
+        runtime_status["providers"]["security_prices"]["success"] = len(price_report.get("symbols_succeeded") or [])
+        runtime_status["providers"]["security_prices"]["failed"] = len(price_report.get("symbols_failed") or [])
+        runtime_status["providers"]["security_prices"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["providers"]["security_prices"]["state"] = "COMPLETE" if bool(price_report.get("overall_status") in {"SUCCESS", "PARTIAL"}) else "FAILED"
+        runtime_status["running"] = False
+        runtime_status["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["current_stage"] = None
+        runtime_status["current_stage_provider"] = None
+        _persist_snapshot()
+        return _snapshot_report()
+
+    if resolved_mode == REFRESH_MODE_STALE_ONLY and _security_price_refresh_needed():
+        runtime_status["current_stage"] = "SECURITY_PRICES"
+        runtime_status["current_stage_provider"] = "security_prices"
+        runtime_status["providers"]["security_prices"]["state"] = "RUNNING"
+        runtime_status["providers"]["security_prices"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        _persist_snapshot()
+        price_report = _run_security_price_refresh(dry_run=dry_run, verbose=verbose, collect_report=True, report_path=report_path)
+        triggered["security_prices"] = bool(price_report.get("overall_status") in {"SUCCESS", "PARTIAL"})
+        provider_report["security_prices"] = {"triggered": triggered["security_prices"], **price_report}
+        runtime_status["providers"]["security_prices"]["planned"] = len(price_report.get("symbols_requested") or [])
+        runtime_status["providers"]["security_prices"]["attempted"] = len(price_report.get("symbols_requested") or [])
+        runtime_status["providers"]["security_prices"]["success"] = len(price_report.get("symbols_succeeded") or [])
+        runtime_status["providers"]["security_prices"]["failed"] = len(price_report.get("symbols_failed") or [])
+        runtime_status["providers"]["security_prices"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["providers"]["security_prices"]["state"] = "COMPLETE" if bool(price_report.get("overall_status") in {"SUCCESS", "PARTIAL"}) else "FAILED"
+        runtime_status["current_stage"] = None
+        runtime_status["current_stage_provider"] = None
+        _persist_snapshot()
 
     if "zacks" in provider_set:
         runtime_status["current_stage"] = "ZACKS"

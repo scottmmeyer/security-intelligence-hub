@@ -233,6 +233,64 @@ def test_market_regime_proxy_only_does_not_run_broad_provider_refresh(monkeypatc
         return False, {}
 
 
+def test_security_prices_refresh_mode_invokes_canonical_producer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        refresh,
+        "_run_security_price_refresh",
+        lambda **kwargs: {
+            "provider": "security_price_history",
+            "overall_status": "SUCCESS",
+            "symbols_requested": ["AAPL", "MSFT"],
+            "symbols_succeeded": ["AAPL", "MSFT"],
+            "symbols_failed": [],
+            "latest_dates": {"AAPL": "2026-08-25", "MSFT": "2026-08-25"},
+            "refresh_started_at": "2026-08-27T00:00:00Z",
+            "refresh_completed_at": "2026-08-27T00:00:05Z",
+        },
+    )
+
+    report = refresh.ensure_signals_fresh_with_report(
+        providers=("zacks",),
+        dry_run=False,
+        verbose=False,
+        refresh_mode="security_prices_only",
+    )
+
+    price = report.get("security_prices") or {}
+    assert price.get("overall_status") == "SUCCESS"
+    assert price.get("provider") == "security_price_history"
+    assert report.get("triggered", {}).get("security_prices") is True
+
+
+def test_stale_only_mode_triggers_security_price_refresh_when_needed(monkeypatch) -> None:
+    monkeypatch.setattr(refresh, "_security_price_refresh_needed", lambda: True)
+    monkeypatch.setattr(
+        refresh,
+        "_run_security_price_refresh",
+        lambda **kwargs: {
+            "provider": "security_price_history",
+            "overall_status": "PARTIAL",
+            "symbols_requested": ["AAPL"],
+            "symbols_succeeded": ["AAPL"],
+            "symbols_failed": [],
+            "latest_dates": {"AAPL": "2026-08-25"},
+            "refresh_started_at": "2026-08-27T00:00:00Z",
+            "refresh_completed_at": "2026-08-27T00:00:05Z",
+        },
+    )
+
+    report = refresh.ensure_signals_fresh_with_report(
+        providers=("zacks",),
+        dry_run=False,
+        verbose=False,
+        refresh_mode="stale_only",
+    )
+
+    price = report.get("security_prices") or {}
+    assert price.get("overall_status") == "PARTIAL"
+    assert report.get("triggered", {}).get("security_prices") is True
+
+
 def test_macro_liquidity_refresh_mode_invokes_materializer(monkeypatch) -> None:
     monkeypatch.setattr(
         refresh,
