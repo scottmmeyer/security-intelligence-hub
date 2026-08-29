@@ -3491,6 +3491,7 @@ PIS_DASHBOARD_API_ROUTES = {
     "/api/pis/momentum/history",
     "/api/pis/momentum/compare",
     "/api/pis/momentum/proposed-buys",
+    "/api/pis/dri/industry-map",
 }
 
 
@@ -3533,6 +3534,7 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
         pis_dor_recommendations,
         pis_dor_summary,
     )
+    from src.pis.dislocation_recovery_intelligence import pis_dri_industry_map
     from src.pis.governance import pis_governance_latest, pis_governance_summary
     from src.pis.performance_attribution import (
         pis_attribution_history,
@@ -3662,6 +3664,8 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
             }
             rows.append(row)
         return {"symbols": rows}
+    if path == "/api/pis/dri/industry-map":
+        return pis_dri_industry_map(repo_root=_REPO_ROOT)
     return None
 
 
@@ -4012,6 +4016,25 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                 }
                 status = 200
             self._json_response(payload, status)
+        elif path == "/api/pis/dri/industry-map":
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            as_of_date = (parse_qs(query).get("as_of_date", [""])[0] or "").strip()[:10] or None
+            try:
+                import sys as _sys
+
+                if str(_REPO_ROOT) not in _sys.path:
+                    _sys.path.insert(0, str(_REPO_ROOT))
+                from src.pis.dislocation_recovery_intelligence import pis_dri_industry_map
+
+                self._json_response(pis_dri_industry_map(repo_root=_REPO_ROOT, as_of_date=as_of_date))
+            except Exception as exc:
+                self._json_response(
+                    {
+                        "status": "degraded",
+                        "endpoint": path,
+                        "error": str(exc),
+                    }
+                )
         elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
             # GET /api/operator/policies         → all active policies
             # GET /api/operator/policies/{sym}   → single symbol policy
