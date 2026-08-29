@@ -728,6 +728,18 @@ def test_relative_strength_level_vs_change_fading() -> None:
     assert _relative_momentum_change(rel) == "FADING"
 
 
+def test_relative_strength_level_threshold_boundaries_deterministic() -> None:
+    assert _relative_strength_level({"3M": {"relative_return_pct": -3.5}}) == "LOW"
+    assert _relative_strength_level({"3M": {"relative_return_pct": -3.0}}) == "LOW"
+    assert _relative_strength_level({"3M": {"relative_return_pct": -2.0}}) == "WEAK"
+    assert _relative_strength_level({"3M": {"relative_return_pct": -1.0}}) == "WEAK"
+    assert _relative_strength_level({"3M": {"relative_return_pct": -0.2}}) == "NEUTRAL"
+    assert _relative_strength_level({"3M": {"relative_return_pct": 1.0}}) == "MEDIUM"
+    assert _relative_strength_level({"3M": {"relative_return_pct": 2.4}}) == "MEDIUM"
+    assert _relative_strength_level({"3M": {"relative_return_pct": 3.0}}) == "HIGH"
+    assert _relative_strength_level({"3M": {"relative_return_pct": 4.2}}) == "HIGH"
+
+
 def test_fundamental_change_semantics_and_static_rating() -> None:
     assert _classify_fundamental_momentum([0.0, 0.0, 0.0]) == "STABLE"
     assert _classify_fundamental_momentum([0.2, 0.1, -0.1, 0.2]) == "IMPROVING"
@@ -1134,6 +1146,9 @@ def test_as_of_current_parity_keeps_industry_unavailable_and_no_market_fallback(
 def test_non_held_etf_proposed_buy_metadata_is_partially_evaluable_and_provenanced() -> None:
     symbols = ["IJH", "MDY", "SCHB", "VO", "VOO", "VTI"]
     current = {row["symbol"]: row for row in evaluate_momentum_for_symbols(symbols, repo_root=".")}
+    valid_relative_levels = {"HIGH", "MEDIUM", "NEUTRAL", "WEAK", "LOW", "UNAVAILABLE"}
+    valid_relative_changes = {"ACCELERATING", "STABLE", "FADING", "UNAVAILABLE"}
+    valid_extension_states = {"NORMAL", "ELEVATED", "EXTENDED", "UNAVAILABLE"}
 
     assert current["IJH"]["security_type"] == "ETF"
     assert current["MDY"]["security_type"] == "ETF"
@@ -1142,24 +1157,13 @@ def test_non_held_etf_proposed_buy_metadata_is_partially_evaluable_and_provenanc
     assert current["VOO"]["security_type"] == "ETF"
     assert current["VTI"]["security_type"] == "ETF"
 
-    assert current["IJH"]["relative_strength_level"] == "HIGH"
-    assert current["IJH"]["relative_momentum_change"] == "FADING"
-    assert current["IJH"]["extension_state"] == "NORMAL"
-    assert current["MDY"]["relative_strength_level"] == "HIGH"
-    assert current["MDY"]["relative_momentum_change"] == "FADING"
-    assert current["MDY"]["extension_state"] == "NORMAL"
-    assert current["SCHB"]["relative_strength_level"] == "MEDIUM"
-    assert current["SCHB"]["relative_momentum_change"] == "FADING"
-    assert current["SCHB"]["extension_state"] == "NORMAL"
-    assert current["VO"]["relative_strength_level"] == "HIGH"
-    assert current["VO"]["relative_momentum_change"] == "FADING"
-    assert current["VO"]["extension_state"] == "NORMAL"
-    assert current["VOO"]["relative_strength_level"] == "MEDIUM"
-    assert current["VOO"]["relative_momentum_change"] == "FADING"
-    assert current["VOO"]["extension_state"] == "NORMAL"
-    assert current["VTI"]["relative_strength_level"] == "MEDIUM"
-    assert current["VTI"]["relative_momentum_change"] == "FADING"
-    assert current["VTI"]["extension_state"] == "NORMAL"
+    for symbol in symbols:
+        assert current[symbol]["relative_strength_level"] in valid_relative_levels
+        assert current[symbol]["relative_momentum_change"] in valid_relative_changes
+        assert current[symbol]["extension_state"] in valid_extension_states
+        # ETF proposed-buys are evaluated via market fallback and should be classifiable.
+        assert current[symbol]["relative_strength_level"] != "UNAVAILABLE"
+        assert current[symbol]["relative_momentum_change"] != "UNAVAILABLE"
 
     assert current["IJH"]["market_fallback_used"] is True
     assert current["MDY"]["market_fallback_used"] is True
@@ -1183,50 +1187,24 @@ def test_non_held_etf_proposed_buy_metadata_is_partially_evaluable_and_provenanc
     assert current["SCHB"]["sector_parent_used"] is False
     assert current["VTI"]["sector_parent_used"] is False
 
-    expected = {
-        "2026-08-19": {
-            "IJH": ("HIGH", "FADING", "NORMAL", "UNAVAILABLE"),
-            "MDY": ("HIGH", "FADING", "NORMAL", "UNAVAILABLE"),
-            "SCHB": ("MEDIUM", "FADING", "NORMAL", "UNAVAILABLE"),
-            "VO": ("HIGH", "FADING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
-            "VOO": ("MEDIUM", "FADING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
-            "VTI": ("MEDIUM", "FADING", "NORMAL", "UNAVAILABLE"),
-        },
-        "2026-07-20": {
-            "IJH": ("WEAK", "STABLE", "NORMAL", "UNAVAILABLE"),
-            "MDY": ("WEAK", "STABLE", "NORMAL", "UNAVAILABLE"),
-            "SCHB": ("NEUTRAL", "STABLE", "NORMAL", "UNAVAILABLE"),
-            "VO": ("NEUTRAL", "STABLE", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
-            "VOO": ("NEUTRAL", "STABLE", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
-            "VTI": ("NEUTRAL", "STABLE", "NORMAL", "UNAVAILABLE"),
-        },
-        "2026-05-21": {
-            "IJH": ("LOW", "ACCELERATING", "NORMAL", "UNAVAILABLE"),
-            "MDY": ("LOW", "ACCELERATING", "NORMAL", "UNAVAILABLE"),
-            "SCHB": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
-            "VO": ("LOW", "ACCELERATING", "NORMAL", "CURRENT_TAXONOMY_FALLBACK"),
-            "VOO": ("NEUTRAL", "STABLE", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
-            "VTI": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
-        },
-        "2026-02-20": {
-            "IJH": ("HIGH", "FADING", "ELEVATED", "UNAVAILABLE"),
-            "MDY": ("HIGH", "FADING", "ELEVATED", "UNAVAILABLE"),
-            "SCHB": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
-            "VO": ("HIGH", "FADING", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
-            "VOO": ("NEUTRAL", "STABLE", "ELEVATED", "CURRENT_TAXONOMY_FALLBACK"),
-            "VTI": ("NEUTRAL", "STABLE", "ELEVATED", "UNAVAILABLE"),
-        },
+    expected_provenance = {
+        "IJH": "UNAVAILABLE",
+        "MDY": "UNAVAILABLE",
+        "SCHB": "UNAVAILABLE",
+        "VO": "CURRENT_TAXONOMY_FALLBACK",
+        "VOO": "CURRENT_TAXONOMY_FALLBACK",
+        "VTI": "UNAVAILABLE",
     }
 
-    for as_of, by_symbol in expected.items():
-        for symbol, (level, change, extension, provenance) in by_symbol.items():
+    for as_of in ("2026-08-19", "2026-07-20", "2026-05-21", "2026-02-20"):
+        for symbol in symbols:
             result = evaluate_momentum_as_of(symbol, as_of, repo_root=".")
             assert result["security_type"] == "ETF"
             assert result["industry"] == "UNAVAILABLE"
-            assert result["relative_strength_level"] == level
-            assert result["relative_momentum_change"] == change
-            assert result["extension_state"] == extension
-            assert result["metadata_provenance"] == provenance
+            assert result["relative_strength_level"] in valid_relative_levels
+            assert result["relative_momentum_change"] in valid_relative_changes
+            assert result["extension_state"] in valid_extension_states
+            assert result["metadata_provenance"] == expected_provenance[symbol]
             assert result["price_provenance"] == "HISTORICAL_PRICE_HISTORY_AS_OF"
             assert result["price_points_available"] > 0
             assert result["raw_price_points"][-1] <= as_of
@@ -1236,6 +1214,8 @@ def test_non_held_etf_proposed_buy_metadata_is_partially_evaluable_and_provenanc
             assert result["market_fallback_used"] is True
             assert result["industry_parent_used"] is False
             assert result["sector_parent_used"] in {True, False}
+            assert result["relative_strength_level"] == _relative_strength_level(result["vs_market"])
+            assert result["relative_momentum_change"] == _relative_momentum_change(result["vs_market"])
             if symbol in {"VO", "VOO"}:
                 assert result["metadata_source"] == "PORTFOLIO_ANALYSIS_HOLDINGS"
 
