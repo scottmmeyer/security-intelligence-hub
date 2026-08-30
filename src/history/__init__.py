@@ -12,18 +12,26 @@ from .market_data_manager import (
 	persist_investable_vehicle_returns,
 	persist_security_prices,
 )
+from .pit_observation_manager import (
+	append_pit_observations,
+	ensure_pit_observation_contracts,
+	query_pit_observations,
+)
 from .signal_snapshot_manager import append_signal_snapshots, ensure_signal_history_contracts
 
 __all__ = [
 	"build_analytical_universe_rows_from_current",
 	"append_base_universe_rows",
+	"append_pit_observations",
 	"append_signal_snapshots",
 	"ensure_analytical_universe_contracts",
 	"ensure_base_universe_contracts",
 	"ensure_market_data_current_contracts",
+	"ensure_pit_observation_contracts",
 	"persist_benchmark_returns",
 	"persist_investable_vehicle_returns",
 	"persist_security_prices",
+	"query_pit_observations",
 	"ensure_signal_history_contracts",
 	"write_analytical_universe_rows",
 ]

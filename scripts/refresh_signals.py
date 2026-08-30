@@ -52,6 +52,7 @@ from src.scoring.fetch_fmp_signals import (
     fetch_fmp_quarterly_signals,
     get_fmp_freshness_report,
 )
+from src.history.pit_observation_manager import append_pit_observations
 
 _ZACKS_DIR = _REPO_ROOT / "data" / "signals" / "zacks"
 _DANELFIN_DIR = _REPO_ROOT / "data" / "signals" / "danelfin"
@@ -134,6 +135,204 @@ _PROVIDER_STATUS_FIELDS: tuple[str, ...] = (
     "error_code",
     "reason",
 )
+
+_PIT_METRICS_BY_PROVIDER: dict[str, tuple[tuple[str, str, str, str, str], ...]] = {
+    "zacks": (
+        ("abr", "abr", "NUMBER", "UNSPECIFIED", "UNSPECIFIED"),
+        ("price_target", "price_target", "NUMBER", "USD", "PRICE"),
+        ("eps_growth", "eps_growth_5y", "NUMBER", "PERCENT", "GROWTH_RATE"),
+        ("zacks_rank", "zacks_rank", "NUMBER", "UNSPECIFIED", "RANK"),
+    ),
+    "yahoo": (
+        ("abr", "abr", "NUMBER", "UNSPECIFIED", "UNSPECIFIED"),
+        ("price_target", "price_target", "NUMBER", "USD", "PRICE"),
+        ("analyst_count", "analyst_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("eps_growth_5yr", "eps_growth_5yr", "NUMBER", "PERCENT", "GROWTH_RATE"),
+    ),
+    "fmp": (
+        ("consensus_label", "analyst_consensus_label", "TEXT", "UNSPECIFIED", "UNSPECIFIED"),
+        ("total_analysts", "analyst_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("net_buy_score", "net_buy_score", "NUMBER", "UNSPECIFIED", "SCORE"),
+        ("strong_buy_count", "strong_buy_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("buy_count", "buy_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("hold_count", "hold_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("sell_count", "sell_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("strong_sell_count", "strong_sell_count", "INTEGER", "COUNT", "ANALYSTS"),
+        ("latest_eps_estimate", "eps_estimate", "NUMBER", "USD", "EPS"),
+    ),
+}
+
+
+def _load_rows_by_symbol(csv_path: Path) -> dict[str, dict[str, str]]:
+    if not csv_path.exists():
+        return {}
+    rows: dict[str, dict[str, str]] = {}
+    with csv_path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            sym = str(row.get("symbol") or "").strip().upper()
+            if sym:
+                rows[sym] = dict(row)
+    return rows
+
+
+def _to_pit_observations_from_rows(
+    *,
+    provider: str,
+    rows_by_symbol: dict[str, dict[str, str]],
+    symbols: Sequence[str],
+    snapshot_date: str,
+    retrieved_at_utc: str,
+    run_id: str,
+    source_provenance: str,
+    source_endpoint: str,
+) -> tuple[list[dict[str, object]], int, int]:
+    metric_specs = _PIT_METRICS_BY_PROVIDER.get(provider, ())
+    observations: list[dict[str, object]] = []
+    symbols_attempted = 0
+    symbols_succeeded = 0
+
+    for symbol in symbols:
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            continue
+        symbols_attempted += 1
+        row = rows_by_symbol.get(sym)
+        if not row:
+            continue
+
+        sourced_date = str(row.get("sourced_date") or "").strip() or "UNAVAILABLE"
+        symbol_has_observation = False
+        for provider_field, metric, value_type, unit, currency in metric_specs:
+            value = str(row.get(provider_field) or "").strip()
+            if not value:
+                continue
+            symbol_has_observation = True
+            observations.append(
+                {
+                    "symbol": sym,
+                    "snapshot_date": snapshot_date,
+                    "sourced_date": sourced_date,
+                    "retrieved_at_utc": retrieved_at_utc,
+                    "run_id": run_id,
+                    "metric": metric,
+                    "value": value,
+                    "forecast_horizon": "UNSPECIFIED",
+                    "fiscal_period": "UNSPECIFIED",
+                    "source_provenance": source_provenance,
+                    "value_type": value_type,
+                    "currency": currency,
+                    "unit": unit,
+                    "provider_field_name": provider_field,
+                    "source_endpoint": source_endpoint,
+                }
+            )
+
+        if symbol_has_observation:
+            symbols_succeeded += 1
+
+    return observations, symbols_attempted, symbols_succeeded
+
+
+def _append_pit_for_provider(
+    *,
+    provider: str,
+    submitted_symbols: Sequence[str],
+    snapshot_date: str,
+    run_id: str,
+    retrieved_at_utc: str,
+) -> dict[str, object]:
+    provider_key = str(provider or "").strip().lower()
+    symbols = [str(s or "").strip().upper() for s in submitted_symbols if str(s or "").strip()]
+    if not symbols:
+        return {
+            "pit_symbols_attempted": 0,
+            "pit_symbols_succeeded": 0,
+            "pit_symbols_failed": 0,
+            "pit_observations_written": 0,
+            "pit_observations_skipped_duplicate": 0,
+            "pit_append_error": "",
+        }
+
+    try:
+        if provider_key == "zacks":
+            rows = _load_rows_by_symbol(_ZACKS_DIR / "latest_zacks.csv")
+            observations, attempted, succeeded = _to_pit_observations_from_rows(
+                provider="zacks",
+                rows_by_symbol=rows,
+                symbols=symbols,
+                snapshot_date=snapshot_date,
+                retrieved_at_utc=retrieved_at_utc,
+                run_id=run_id,
+                source_provenance="ZACKS_QUOTE_FEED",
+                source_endpoint="quote-feed.zacks.com/*",
+            )
+        elif provider_key == "yahoo":
+            rows = _load_rows_by_symbol(_YAHOO_DIR / "latest_yahoo_supplemental.csv")
+            observations, attempted, succeeded = _to_pit_observations_from_rows(
+                provider="yahoo",
+                rows_by_symbol=rows,
+                symbols=symbols,
+                snapshot_date=snapshot_date,
+                retrieved_at_utc=retrieved_at_utc,
+                run_id=run_id,
+                source_provenance="YAHOO_FINANCE_SUPPLEMENTAL",
+                source_endpoint="yfinance.Ticker.info + get_growth_estimates",
+            )
+        elif provider_key == "fmp":
+            grades = _load_rows_by_symbol(_FMP_DIR / "latest" / "latest_fmp_grades_consensus.csv")
+            earnings = _load_rows_by_symbol(_FMP_DIR / "latest" / "latest_fmp_earnings_surprises.csv")
+            merged_rows: dict[str, dict[str, str]] = {}
+            for sym in symbols:
+                row = {}
+                if sym in grades:
+                    row.update(grades[sym])
+                if sym in earnings:
+                    row.update(earnings[sym])
+                if row:
+                    merged_rows[sym] = row
+            observations, attempted, succeeded = _to_pit_observations_from_rows(
+                provider="fmp",
+                rows_by_symbol=merged_rows,
+                symbols=symbols,
+                snapshot_date=snapshot_date,
+                retrieved_at_utc=retrieved_at_utc,
+                run_id=run_id,
+                source_provenance="FMP_STABLE_API",
+                source_endpoint="/stable/grades-consensus + /stable/earnings",
+            )
+        else:
+            return {
+                "pit_symbols_attempted": len(symbols),
+                "pit_symbols_succeeded": 0,
+                "pit_symbols_failed": len(symbols),
+                "pit_observations_written": 0,
+                "pit_observations_skipped_duplicate": 0,
+                "pit_append_error": "provider_not_supported_for_pit",
+            }
+
+        append_result = append_pit_observations(
+            observations=observations,
+            provider=provider_key,
+            snapshot_date=snapshot_date,
+            run_id=run_id,
+        )
+        return {
+            "pit_symbols_attempted": attempted,
+            "pit_symbols_succeeded": succeeded,
+            "pit_symbols_failed": max(attempted - succeeded, 0),
+            "pit_observations_written": append_result.written,
+            "pit_observations_skipped_duplicate": append_result.skipped_duplicate,
+            "pit_append_error": "",
+        }
+    except Exception as exc:
+        return {
+            "pit_symbols_attempted": len(symbols),
+            "pit_symbols_succeeded": 0,
+            "pit_symbols_failed": len(symbols),
+            "pit_observations_written": 0,
+            "pit_observations_skipped_duplicate": 0,
+            "pit_append_error": str(exc),
+        }
 
 
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
@@ -1367,6 +1566,7 @@ def _compute_provider_metrics(
         "provider": provider,
         "mode": mode,
         "refresh_date": refresh_date,
+        "submitted_symbols": list(submitted_symbols),
         "submitted_count": submitted,
         "written_count": written_count,
         "written_refresh_date_count": written_refresh_date_count,
@@ -2226,7 +2426,23 @@ def ensure_signals_fresh_with_report(
         )
         z_triggered, z_metrics = z
         triggered["zacks"] = bool(z_triggered)
-        provider_report["zacks"] = {"triggered": bool(z_triggered), **z_metrics}
+        z_pit = {
+            "pit_symbols_attempted": 0,
+            "pit_symbols_succeeded": 0,
+            "pit_symbols_failed": 0,
+            "pit_observations_written": 0,
+            "pit_observations_skipped_duplicate": 0,
+            "pit_append_error": "",
+        }
+        if bool(z_triggered) and not dry_run:
+            z_pit = _append_pit_for_provider(
+                provider="zacks",
+                submitted_symbols=list(z_metrics.get("submitted_symbols") or []),
+                snapshot_date=date.today().isoformat(),
+                run_id=str(runtime_status.get("job_id") or ""),
+                retrieved_at_utc=datetime.now(timezone.utc).isoformat(),
+            )
+        provider_report["zacks"] = {"triggered": bool(z_triggered), **z_metrics, **z_pit}
         runtime_status["providers"]["zacks"]["attempted"] = int(z_metrics.get("attempted_count") or z_metrics.get("submitted_count") or 0)
         runtime_status["providers"]["zacks"]["success"] = int(z_metrics.get("primary_data_count") or 0)
         runtime_status["providers"]["zacks"]["failed"] = int(z_metrics.get("failed") or 0)
@@ -2248,7 +2464,23 @@ def ensure_signals_fresh_with_report(
         )
         y_triggered, y_metrics = y
         triggered["yahoo"] = bool(y_triggered)
-        provider_report["yahoo"] = {"triggered": bool(y_triggered), **y_metrics}
+        y_pit = {
+            "pit_symbols_attempted": 0,
+            "pit_symbols_succeeded": 0,
+            "pit_symbols_failed": 0,
+            "pit_observations_written": 0,
+            "pit_observations_skipped_duplicate": 0,
+            "pit_append_error": "",
+        }
+        if bool(y_triggered) and not dry_run:
+            y_pit = _append_pit_for_provider(
+                provider="yahoo",
+                submitted_symbols=list(y_metrics.get("submitted_symbols") or []),
+                snapshot_date=date.today().isoformat(),
+                run_id=str(runtime_status.get("job_id") or ""),
+                retrieved_at_utc=datetime.now(timezone.utc).isoformat(),
+            )
+        provider_report["yahoo"] = {"triggered": bool(y_triggered), **y_metrics, **y_pit}
         runtime_status["providers"]["yahoo"]["attempted"] = int(y_metrics.get("attempted_count") or y_metrics.get("submitted_count") or 0)
         runtime_status["providers"]["yahoo"]["success"] = int(y_metrics.get("primary_data_count") or 0)
         runtime_status["providers"]["yahoo"]["failed"] = int(y_metrics.get("failed") or 0)
@@ -2286,6 +2518,23 @@ def ensure_signals_fresh_with_report(
         _persist_snapshot()
         f_triggered = _refresh_fmp(dry_run=dry_run, verbose=verbose, mode="daily")
         triggered["fmp"] = bool(f_triggered)
+        f_symbols = _all_universe_symbols() if bool(f_triggered) and not dry_run else []
+        f_pit = {
+            "pit_symbols_attempted": 0,
+            "pit_symbols_succeeded": 0,
+            "pit_symbols_failed": 0,
+            "pit_observations_written": 0,
+            "pit_observations_skipped_duplicate": 0,
+            "pit_append_error": "",
+        }
+        if f_symbols:
+            f_pit = _append_pit_for_provider(
+                provider="fmp",
+                submitted_symbols=f_symbols,
+                snapshot_date=date.today().isoformat(),
+                run_id=str(runtime_status.get("job_id") or ""),
+                retrieved_at_utc=datetime.now(timezone.utc).isoformat(),
+            )
         provider_report["fmp"] = {
             "triggered": bool(f_triggered),
             "provider": "fmp",
@@ -2297,6 +2546,7 @@ def ensure_signals_fresh_with_report(
             "skipped": 0,
             "failed": 0,
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
+            **f_pit,
         }
         runtime_status["providers"]["fmp"]["attempted"] = int(provider_report["fmp"].get("attempted_count") or 0)
         runtime_status["providers"]["fmp"]["success"] = int(provider_report["fmp"].get("primary_data_count") or 0)
