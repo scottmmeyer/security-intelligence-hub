@@ -1177,3 +1177,349 @@ def test_dri_uses_exact_benchmark_window_for_industry_and_relative_returns(tmp_p
     assert window_3m["benchmark_window_aligned"] is True
     assert software["returns"]["return_3m_pct"] is not None
     assert software["returns"]["return_3m_vs_market_pct"] is not None
+
+
+def test_dri_serializes_12m_payload_presence(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    start = date(2026, 1, 1)
+    as_of = "2026-10-27"
+    n = 300
+    split_idx = 47  # 252 lookback periods => required_points=253 => start index 47 in 300 rows
+
+    def _series(start_px: float, end_px: float) -> list[float]:
+        vals: list[float] = []
+        for i in range(n):
+            if i <= split_idx:
+                vals.append(start_px)
+            else:
+                step = (end_px - start_px) / float(n - 1 - split_idx)
+                vals.append(start_px + step * float(i - split_idx))
+        return vals
+
+    _rewrite_snapshot_index(tmp_path, as_of)
+    _rewrite_positions(tmp_path, as_of, ["CRM", "MSFT"])
+    _rewrite_universe(
+        tmp_path,
+        [
+            {
+                "security_id": "CRM1",
+                "symbol": "CRM",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "SOFTWARE_INFRASTRUCTURE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "MSFT1",
+                "symbol": "MSFT",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "SOFTWARE_INFRASTRUCTURE",
+                "sector": "TECHNOLOGY",
+            },
+        ],
+    )
+
+    _rewrite_benchmark_values(tmp_path, start, _series(100.0, 110.0))
+    _rewrite_symbol_prices(tmp_path, "CRM", start, _series(10.0, 12.0))
+    _rewrite_symbol_prices(tmp_path, "MSFT", start, _series(20.0, 24.0))
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date=as_of)
+    software = next(row for row in payload["industries"] if row["industry"] == "SOFTWARE_INFRASTRUCTURE")
+    returns = software["returns"]
+
+    assert "return_12m_pct" in returns
+    assert "12M" in returns["coverage"]
+    assert "12M" in returns["windows"]
+    assert returns["windows"]["12M"]["benchmark_window_aligned"] is True
+
+
+def test_dri_12m_fixed_cohort_eligibility_and_coverage(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    start = date(2026, 1, 1)
+    as_of = "2026-10-27"
+    n = 300
+    split_idx = 47
+
+    def _series(start_px: float, end_px: float) -> list[float]:
+        vals: list[float] = []
+        for i in range(n):
+            if i <= split_idx:
+                vals.append(start_px)
+            else:
+                step = (end_px - start_px) / float(n - 1 - split_idx)
+                vals.append(start_px + step * float(i - split_idx))
+        return vals
+
+    _rewrite_snapshot_index(tmp_path, as_of)
+    _rewrite_positions(tmp_path, as_of, ["CRM", "MSFT", "SNOW"])
+    _rewrite_universe(
+        tmp_path,
+        [
+            {
+                "security_id": "CRM1",
+                "symbol": "CRM",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "MSFT1",
+                "symbol": "MSFT",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "SNOW1",
+                "symbol": "SNOW",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+        ],
+    )
+
+    _rewrite_benchmark_values(tmp_path, start, _series(100.0, 112.0))
+    _rewrite_symbol_prices(tmp_path, "CRM", start, _series(10.0, 14.0))
+    _rewrite_symbol_prices(tmp_path, "MSFT", start, _series(20.0, 28.0))
+    _rewrite_symbol_prices(tmp_path, "SNOW", start, _series(30.0, 42.0))
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date=as_of)
+    app_sw = next(row for row in payload["industries"] if row["industry"] == "APPLICATION_SOFTWARE")
+    coverage = app_sw["returns"]["coverage"]["12M"]
+
+    assert coverage["eligible_return_member_count"] == 3
+    assert coverage["return_coverage_pct"] == 100.0
+    assert app_sw["returns"]["return_12m_pct"] is not None
+
+
+def test_dri_12m_single_member_gate_blocks_return(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    start = date(2026, 1, 1)
+    as_of = "2026-10-27"
+    n = 300
+    split_idx = 47
+
+    def _series(start_px: float, end_px: float) -> list[float]:
+        vals: list[float] = []
+        for i in range(n):
+            if i <= split_idx:
+                vals.append(start_px)
+            else:
+                step = (end_px - start_px) / float(n - 1 - split_idx)
+                vals.append(start_px + step * float(i - split_idx))
+        return vals
+
+    _rewrite_snapshot_index(tmp_path, as_of)
+    _rewrite_positions(tmp_path, as_of, ["CRM", "MSFT"])
+    _rewrite_universe(
+        tmp_path,
+        [
+            {
+                "security_id": "CRM1",
+                "symbol": "CRM",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "MSFT1",
+                "symbol": "MSFT",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+        ],
+    )
+
+    _rewrite_benchmark_values(tmp_path, start, _series(100.0, 112.0))
+    _rewrite_symbol_prices(tmp_path, "CRM", start, _series(10.0, 14.0))
+    # MSFT starts far after the benchmark 12M start, so only CRM is eligible.
+    _rewrite_symbol_prices(tmp_path, "MSFT", start + timedelta(days=120), _series(20.0, 28.0)[120:])
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date=as_of)
+    app_sw = next(row for row in payload["industries"] if row["industry"] == "APPLICATION_SOFTWARE")
+    coverage = app_sw["returns"]["coverage"]["12M"]
+
+    assert coverage["eligible_return_member_count"] == 1
+    assert coverage["single_member_blocked"] is True
+    assert app_sw["returns"]["return_12m_pct"] is None
+
+
+def test_dri_12m_excludes_missing_endpoint_without_shortened_window(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    start = date(2026, 1, 1)
+    as_of = "2026-10-27"
+    n = 300
+    split_idx = 47
+
+    def _series(start_px: float, end_px: float) -> list[float]:
+        vals: list[float] = []
+        for i in range(n):
+            if i <= split_idx:
+                vals.append(start_px)
+            else:
+                step = (end_px - start_px) / float(n - 1 - split_idx)
+                vals.append(start_px + step * float(i - split_idx))
+        return vals
+
+    _rewrite_snapshot_index(tmp_path, as_of)
+    _rewrite_positions(tmp_path, as_of, ["CRM", "MSFT", "SNOW"])
+    _rewrite_universe(
+        tmp_path,
+        [
+            {
+                "security_id": "CRM1",
+                "symbol": "CRM",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "MSFT1",
+                "symbol": "MSFT",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "SNOW1",
+                "symbol": "SNOW",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "APPLICATION_SOFTWARE",
+                "sector": "TECHNOLOGY",
+            },
+        ],
+    )
+
+    _rewrite_benchmark_values(tmp_path, start, _series(100.0, 112.0))
+    _rewrite_symbol_prices(tmp_path, "CRM", start, _series(10.0, 14.0))
+    _rewrite_symbol_prices(tmp_path, "MSFT", start, _series(20.0, 28.0))
+    # SNOW has deep history but missing exact benchmark end date.
+    _rewrite_symbol_prices(tmp_path, "SNOW", start, _series(30.0, 42.0)[:-1])
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date=as_of)
+    app_sw = next(row for row in payload["industries"] if row["industry"] == "APPLICATION_SOFTWARE")
+    coverage = app_sw["returns"]["coverage"]["12M"]
+
+    assert coverage["eligible_return_member_count"] == 2
+    assert coverage["excluded_missing_end_count"] == 1
+    assert app_sw["returns"]["return_12m_pct"] is not None
+
+
+def test_dri_serialization_parity_for_6m_and_12m(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    start = date(2026, 1, 1)
+    as_of = "2026-10-27"
+    n = 300
+    split_idx = 47
+
+    def _series(start_px: float, end_px: float) -> list[float]:
+        vals: list[float] = []
+        for i in range(n):
+            if i <= split_idx:
+                vals.append(start_px)
+            else:
+                step = (end_px - start_px) / float(n - 1 - split_idx)
+                vals.append(start_px + step * float(i - split_idx))
+        return vals
+
+    _rewrite_snapshot_index(tmp_path, as_of)
+    _rewrite_positions(tmp_path, as_of, ["CRM", "MSFT"])
+    _rewrite_universe(
+        tmp_path,
+        [
+            {
+                "security_id": "CRM1",
+                "symbol": "CRM",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "SOFTWARE_INFRASTRUCTURE",
+                "sector": "TECHNOLOGY",
+            },
+            {
+                "security_id": "MSFT1",
+                "symbol": "MSFT",
+                "security_type": "EQUITY",
+                "snapshot_date": as_of,
+                "run_id": "R1",
+                "market_cap_bucket": "LARGE",
+                "geography": "US",
+                "country": "US",
+                "industry": "SOFTWARE_INFRASTRUCTURE",
+                "sector": "TECHNOLOGY",
+            },
+        ],
+    )
+
+    _rewrite_benchmark_values(tmp_path, start, _series(100.0, 110.0))
+    _rewrite_symbol_prices(tmp_path, "CRM", start, _series(10.0, 12.0))
+    _rewrite_symbol_prices(tmp_path, "MSFT", start, _series(20.0, 24.0))
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date=as_of)
+    software = next(row for row in payload["industries"] if row["industry"] == "SOFTWARE_INFRASTRUCTURE")
+    coverage = software["returns"]["coverage"]
+    windows = software["returns"]["windows"]
+
+    assert "6M" in coverage
+    assert "12M" in coverage
+    assert "6M" in windows
+    assert "12M" in windows

@@ -628,6 +628,7 @@ def _industry_rows(
                 "return_1m_pct": horizons.get("1M", {}).get("return_pct"),
                 "return_3m_pct": horizons.get("3M", {}).get("return_pct"),
                 "return_6m_pct": horizons.get("6M", {}).get("return_pct"),
+                "return_12m_pct": horizons.get("12M", {}).get("return_pct"),
                 "return_1m_vs_market_pct": relative.get("1M", {}).get("relative_return_pct"),
                 "return_3m_vs_market_pct": relative.get("3M", {}).get("relative_return_pct"),
                 "return_6m_vs_market_pct": relative.get("6M", {}).get("relative_return_pct"),
@@ -635,11 +636,13 @@ def _industry_rows(
                     "1M": return_coverage.get("1M", {}),
                     "3M": return_coverage.get("3M", {}),
                     "6M": return_coverage.get("6M", {}),
+                    "12M": return_coverage.get("12M", {}),
                 },
                 "windows": {
                     "1M": return_windows.get("1M", {}),
                     "3M": return_windows.get("3M", {}),
                     "6M": return_windows.get("6M", {}),
+                    "12M": return_windows.get("12M", {}),
                 },
             },
             "drawdown": {
