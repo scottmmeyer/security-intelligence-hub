@@ -385,6 +385,7 @@ def _build_checkpoint_payload(
     retries_performed: int,
     started_at_utc: str,
     status: str,
+    completed_at_utc: str | None = None,
 ) -> dict[str, object]:
     return {
         "version": CHECKPOINT_VERSION,
@@ -409,6 +410,7 @@ def _build_checkpoint_payload(
         "retries_performed": int(retries_performed),
         "started_at_utc": started_at_utc,
         "updated_at_utc": _utc_now(),
+        "completed_at_utc": completed_at_utc or "",
         "status": str(status),
     }
 
@@ -450,6 +452,7 @@ def run_fmp_estimate_backfill(
     resume: bool = False,
     dry_run: bool = False,
     report_path: str | Path | None = None,
+    snapshot_date: str | None = None,
     max_batches: int | None = None,
     retry_failed_on_resume: bool = True,
     delay_seconds: float = DEFAULT_DELAY_SECONDS,
@@ -489,8 +492,10 @@ def run_fmp_estimate_backfill(
         raise ValueError("resume=True requested but checkpoint file was not found")
 
     run_id = str(uuid4())
-    snapshot_date = date.today().isoformat()
+    snapshot_date_value = str(snapshot_date).strip() if snapshot_date is not None else ""
+    snapshot_date = snapshot_date_value or date.today().isoformat()
     started_at_utc = _utc_now()
+    completed_at_utc = ""
 
     completed_symbols: set[str] = set()
     no_coverage_symbols: set[str] = set()
@@ -715,6 +720,7 @@ def run_fmp_estimate_backfill(
                 retries_performed=retries_performed,
                 started_at_utc=started_at_utc,
                 status="RUNNING",
+                completed_at_utc="",
             )
             _write_json_atomic(checkpoint_file, checkpoint_payload)
 
@@ -732,6 +738,8 @@ def run_fmp_estimate_backfill(
         remaining_after.append(symbol)
 
     status = "COMPLETE" if not remaining_after else "IN_PROGRESS"
+    if status == "COMPLETE":
+        completed_at_utc = _utc_now()
 
     merged_rows = _merge_run_rows(run_root, sorted(terminal_symbols | set(failed_by_symbol.keys())))
     artifact_paths = {"daily_path": "", "latest_path": ""}
@@ -773,6 +781,7 @@ def run_fmp_estimate_backfill(
         retries_performed=retries_performed,
         started_at_utc=started_at_utc,
         status=status,
+        completed_at_utc=completed_at_utc,
     )
     _write_json_atomic(checkpoint_file, final_payload)
 
@@ -812,6 +821,8 @@ def run_fmp_estimate_backfill(
         "provider_calls_avoided_by_resume": int(provider_calls_avoided_by_resume),
         "checkpoint_write_atomic": True,
         "status": status,
+        "started_at_utc": started_at_utc,
+        "completed_at_utc": completed_at_utc,
         "symbol_results": symbol_results,
         "daily_artifact_path": artifact_paths["daily_path"],
         "latest_artifact_path": artifact_paths["latest_path"],
