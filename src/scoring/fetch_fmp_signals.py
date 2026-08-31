@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +96,16 @@ INCOME_GROWTH_HEADERS = [
     "eps_growth_q3_yoy", "eps_growth_q4_yoy",
     "gross_profit_growth_q1_yoy",
     "revenue_acceleration",  # q1_yoy - q4_yoy (positive = accelerating)
+]
+
+ANALYST_ESTIMATES_HEADERS = [
+    "symbol", "sourced_date",
+    "fetch_status", "failure_type", "failure_reason",
+    "request_period",
+    "period_date", "period_label", "fiscal_period", "forecast_horizon",
+    "estimated_revenue_avg", "estimated_revenue_high", "estimated_revenue_low",
+    "estimated_eps_avg", "estimated_eps_high", "estimated_eps_low",
+    "analyst_count_revenue", "analyst_count_eps",
 ]
 
 # ── API key ───────────────────────────────────────────────────────────────────
@@ -163,6 +173,38 @@ def _fmp_get_with_retry(url: str, api_key: str) -> Tuple[Optional[Any], int, Opt
             continue
         return data, status, err
     return None, 0, f"All {_MAX_RETRIES} retries exhausted"
+
+
+def _fmp_get_with_retry_detailed(url: str, api_key: str) -> Tuple[Optional[Any], int, Optional[str], Dict[str, int]]:
+    """GET with retry plus retry/rate-limit instrumentation."""
+    retries_performed = 0
+    rate_limit_events = 0
+    for attempt in range(1, _MAX_RETRIES + 1):
+        data, status, err = _fmp_get(url, api_key)
+        if status == 429:
+            rate_limit_events += 1
+            if attempt < _MAX_RETRIES:
+                retries_performed += 1
+            log.warning("[fmp] HTTP 429 rate limited (attempt %d/%d); backing off %ds",
+                        attempt, _MAX_RETRIES, _RETRY_BACKOFF_SECONDS)
+            time.sleep(_RETRY_BACKOFF_SECONDS)
+            continue
+        if status in (500, 502, 503, 504) or (status == 0 and err):
+            if attempt < _MAX_RETRIES:
+                retries_performed += 1
+            wait = attempt * 5
+            log.warning("[fmp] HTTP %s / %s (attempt %d/%d); retrying in %ds",
+                        status, err, attempt, _MAX_RETRIES, wait)
+            time.sleep(wait)
+            continue
+        return data, status, err, {
+            "retries_performed": retries_performed,
+            "rate_limit_events": rate_limit_events,
+        }
+    return None, 0, f"All {_MAX_RETRIES} retries exhausted", {
+        "retries_performed": retries_performed,
+        "rate_limit_events": rate_limit_events,
+    }
 
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -408,6 +450,103 @@ def _parse_income_growth(symbol: str, data: Any, today: str) -> Dict[str, str]:
     return row
 
 
+def _parse_analyst_estimates(symbol: str, data: Any, today: str, *, period: str) -> List[Dict[str, str]]:
+    """Parse forward analyst estimates from FMP /stable/analyst-estimates response."""
+    normalized_period = str(period or "").strip().lower()
+    horizon = "ANNUAL" if normalized_period == "annual" else "QUARTER"
+    if not isinstance(data, list) or not data:
+        return [{
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "PROVIDER_NO_DATA",
+            "failure_type": "",
+            "failure_reason": "",
+            "request_period": normalized_period,
+            "period_date": "",
+            "period_label": "",
+            "fiscal_period": "",
+            "forecast_horizon": horizon,
+            "estimated_revenue_avg": "",
+            "estimated_revenue_high": "",
+            "estimated_revenue_low": "",
+            "estimated_eps_avg": "",
+            "estimated_eps_high": "",
+            "estimated_eps_low": "",
+            "analyst_count_revenue": "",
+            "analyst_count_eps": "",
+        }]
+
+    rows: List[Dict[str, str]] = []
+    for idx, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            continue
+        period_date = str(item.get("date") or "").strip()
+        period_label = str(item.get("period") or "").strip()
+        # Preserve provider-identifiable period keys only; do not infer fiscal labels.
+        fiscal_period = period_date or "UNSPECIFIED"
+        forecast_horizon = horizon
+
+        row = {
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "SUCCESS",
+            "failure_type": "",
+            "failure_reason": "",
+            "request_period": normalized_period,
+            "period_date": period_date,
+            "period_label": period_label,
+            "fiscal_period": fiscal_period,
+            "forecast_horizon": forecast_horizon,
+            "estimated_revenue_avg": _fmt(_safe_float(item.get("revenueAvg"))),
+            "estimated_revenue_high": _fmt(_safe_float(item.get("revenueHigh"))),
+            "estimated_revenue_low": _fmt(_safe_float(item.get("revenueLow"))),
+            "estimated_eps_avg": _fmt(_safe_float(item.get("epsAvg"))),
+            "estimated_eps_high": _fmt(_safe_float(item.get("epsHigh"))),
+            "estimated_eps_low": _fmt(_safe_float(item.get("epsLow"))),
+            "analyst_count_revenue": str(item.get("numAnalystsRevenue") or "").strip(),
+            "analyst_count_eps": str(item.get("numAnalystsEps") or "").strip(),
+        }
+        has_data = _has_usable_fields(
+            row,
+            (
+                "estimated_revenue_avg",
+                "estimated_revenue_high",
+                "estimated_revenue_low",
+                "estimated_eps_avg",
+                "estimated_eps_high",
+                "estimated_eps_low",
+                "analyst_count_revenue",
+                "analyst_count_eps",
+            ),
+        )
+        row["fetch_status"] = "SUCCESS" if has_data else "PROVIDER_NO_DATA"
+        rows.append(row)
+
+    if not rows:
+        return [{
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "PROVIDER_NO_DATA",
+            "failure_type": "",
+            "failure_reason": "",
+            "request_period": normalized_period,
+            "period_date": "",
+            "period_label": "",
+            "fiscal_period": "",
+            "forecast_horizon": horizon,
+            "estimated_revenue_avg": "",
+            "estimated_revenue_high": "",
+            "estimated_revenue_low": "",
+            "estimated_eps_avg": "",
+            "estimated_eps_high": "",
+            "estimated_eps_low": "",
+            "analyst_count_revenue": "",
+            "analyst_count_eps": "",
+        }]
+
+    return rows
+
+
 def _failure_type(status: int, err: Optional[str]) -> str:
     if status == 429:
         return "RATE_LIMIT"
@@ -426,6 +565,16 @@ def _failure_type(status: int, err: Optional[str]) -> str:
     if err:
         return "NETWORK_ERROR"
     return "UNKNOWN_ERROR"
+
+
+def _failure_reason(status: int, err: Optional[str], payload: Optional[Any]) -> str:
+    """Build a concise provider failure reason with upstream message when present."""
+    base = str(err or f"HTTP {status}")
+    if isinstance(payload, dict):
+        message = str(payload.get("Error Message") or payload.get("error") or "").strip()
+        if message:
+            return f"{base}: {message}"
+    return base
 
 
 def _has_usable_fields(row: Dict[str, str], fields: Iterable[str]) -> bool:
@@ -528,6 +677,199 @@ def fetch_income_growth(
     row.setdefault("failure_type", "")
     row.setdefault("failure_reason", "")
     return row
+
+
+def fetch_analyst_estimates(
+    symbol: str,
+    api_key: str,
+    today: str,
+    *,
+    period: str,
+    page: int = 0,
+    limit: int = 8,
+) -> List[Dict[str, str]]:
+    """Fetch forward analyst estimates for a single symbol.
+
+    Endpoint uses FMP /stable/analyst-estimates with explicit period selection.
+    """
+    normalized_period = str(period or "").strip().lower()
+    if normalized_period not in {"annual", "quarter"}:
+        raise ValueError(f"Invalid analyst-estimate period: {period}")
+    url = (
+        f"{_FMP_BASE}/analyst-estimates"
+        f"?symbol={symbol}&period={normalized_period}&page={int(page)}&limit={int(limit)}"
+    )
+    data, status, err = _fmp_get_with_retry(url, api_key)
+    if status != 200 or data is None:
+        log.debug("[fmp] analyst_estimates %s: status=%s err=%s", symbol, status, err)
+        failure_reason = _failure_reason(status, err, data)
+        failure_type = _failure_type(status, err)
+        return [{
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": failure_type,
+            "failure_reason": failure_reason,
+            "request_period": normalized_period,
+            "period_date": "",
+            "period_label": "",
+            "fiscal_period": "",
+            "forecast_horizon": "ANNUAL" if normalized_period == "annual" else "QUARTER",
+            "estimated_revenue_avg": "",
+            "estimated_revenue_high": "",
+            "estimated_revenue_low": "",
+            "estimated_eps_avg": "",
+            "estimated_eps_high": "",
+            "estimated_eps_low": "",
+            "analyst_count_revenue": "",
+            "analyst_count_eps": "",
+        }]
+    return _parse_analyst_estimates(symbol, data, today, period=normalized_period)
+
+
+def _normalize_estimate_periods(periods: Sequence[str]) -> List[str]:
+    normalized: List[str] = []
+    for period in periods:
+        p = str(period or "").strip().lower()
+        if not p:
+            continue
+        if p not in {"annual", "quarter"}:
+            raise ValueError(f"Invalid analyst-estimate period: {period}")
+        if p not in normalized:
+            normalized.append(p)
+    if not normalized:
+        raise ValueError("At least one analyst-estimate period is required")
+    return normalized
+
+
+def _parse_period_status_from_rows(rows: Sequence[Dict[str, str]]) -> str:
+    statuses = {str(row.get("fetch_status") or "").strip() for row in rows}
+    if "SUCCESS" in statuses:
+        return "AVAILABLE"
+    for row in rows:
+        if str(row.get("fetch_status") or "").strip() != "FETCH_FAILED":
+            continue
+        failure_type = str(row.get("failure_type") or "").strip().upper()
+        if failure_type in {"PLAN_LIMIT", "AUTH", "FORBIDDEN"}:
+            return "PLAN_LIMIT"
+    if "FETCH_FAILED" in statuses:
+        return "REQUEST_FAILURE"
+    return "NO_COVERAGE"
+
+
+def fetch_fmp_analyst_estimates(
+    symbols: List[str],
+    api_key: str,
+    output_dir: Path = _FMP_DIR,
+    delay: float = _DEFAULT_DELAY_BETWEEN_CALLS,
+    verbose: bool = True,
+    limit: int = 8,
+    periods: Sequence[str] = ("annual",),
+) -> Tuple[Path, Dict[str, Any]]:
+    """Fetch forward analyst-estimate rows for requested periods."""
+    api_key = api_key or _get_api_key()
+    if not api_key:
+        raise ValueError("FMP_API_KEY not set. Cannot fetch FMP analyst estimates.")
+
+    today = date.today().isoformat()
+    daily_dir = Path(output_dir) / "daily"
+    latest_dir = Path(output_dir) / "latest"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    latest_dir.mkdir(parents=True, exist_ok=True)
+
+    all_rows: List[Dict[str, str]] = []
+    normalized_periods = _normalize_estimate_periods(periods)
+    attempted = 0
+    with_data = 0
+    no_coverage = 0
+    failed = 0
+    retries_performed = 0
+    rate_limit_events = 0
+    period_capability: Dict[str, str] = {period: "UNKNOWN" for period in normalized_periods}
+    network_requests_by_period: Dict[str, int] = {period: 0 for period in normalized_periods}
+
+    for i, sym in enumerate(symbols, start=1):
+        attempted += 1
+        if verbose and i % 50 == 0:
+            log.info("[fmp] analyst_estimates progress: %d/%d", i, len(symbols))
+        symbol_rows: List[Dict[str, str]] = []
+        period_statuses: List[str] = []
+        for period in normalized_periods:
+            network_requests_by_period[period] = int(network_requests_by_period.get(period, 0) or 0) + 1
+            url = (
+                f"{_FMP_BASE}/analyst-estimates"
+                f"?symbol={sym}&period={period}&page=0&limit={int(limit)}"
+            )
+            data, status, err, retry_meta = _fmp_get_with_retry_detailed(url, api_key)
+            retries_performed += int(retry_meta.get("retries_performed") or 0)
+            rate_limit_events += int(retry_meta.get("rate_limit_events") or 0)
+            if status != 200 or data is None:
+                failure_reason = _failure_reason(status, err, data)
+                failure_type = _failure_type(status, err)
+                rows = [{
+                    "symbol": sym,
+                    "sourced_date": today,
+                    "fetch_status": "FETCH_FAILED",
+                    "failure_type": failure_type,
+                    "failure_reason": failure_reason,
+                    "request_period": period,
+                    "period_date": "",
+                    "period_label": "",
+                    "fiscal_period": "",
+                    "forecast_horizon": "ANNUAL" if period == "annual" else "QUARTER",
+                    "estimated_revenue_avg": "",
+                    "estimated_revenue_high": "",
+                    "estimated_revenue_low": "",
+                    "estimated_eps_avg": "",
+                    "estimated_eps_high": "",
+                    "estimated_eps_low": "",
+                    "analyst_count_revenue": "",
+                    "analyst_count_eps": "",
+                }]
+            else:
+                rows = _parse_analyst_estimates(sym, data, today, period=period)
+            symbol_rows.extend(rows)
+            period_status = _parse_period_status_from_rows(rows)
+            period_statuses.append(period_status)
+            existing = str(period_capability.get(period) or "UNKNOWN")
+            if period_status == "AVAILABLE":
+                period_capability[period] = "AVAILABLE"
+            elif existing != "AVAILABLE" and period_status == "PLAN_LIMIT":
+                period_capability[period] = "PLAN_LIMIT"
+            elif existing == "UNKNOWN":
+                period_capability[period] = period_status
+            time.sleep(delay)
+
+        all_rows.extend(symbol_rows)
+
+        if "AVAILABLE" in period_statuses:
+            with_data += 1
+        elif all(status == "PLAN_LIMIT" for status in period_statuses):
+            failed += 1
+        elif any(status == "REQUEST_FAILURE" for status in period_statuses):
+            failed += 1
+        else:
+            no_coverage += 1
+
+    estimate_path = daily_dir / f"fmp_analyst_estimates_{today}.csv"
+    _write_csv(estimate_path, all_rows, ANALYST_ESTIMATES_HEADERS)
+    latest_estimate_path = latest_dir / "latest_fmp_analyst_estimates.csv"
+    _write_csv(latest_estimate_path, all_rows, ANALYST_ESTIMATES_HEADERS)
+
+    stats = {
+        "attempted": attempted,
+        "with_data": with_data,
+        "no_coverage": no_coverage,
+        "failed": failed,
+        "periods_requested": list(normalized_periods),
+        "periods_available": [p for p in normalized_periods if str(period_capability.get(p) or "") == "AVAILABLE"],
+        "periods_plan_limited": [p for p in normalized_periods if str(period_capability.get(p) or "") == "PLAN_LIMIT"],
+        "period_capability": dict(period_capability),
+        "network_requests_by_period": dict(network_requests_by_period),
+        "retries_performed": retries_performed,
+        "rate_limit_events": rate_limit_events,
+    }
+    return estimate_path, stats
 
 
 # ── Bulk fetch functions ──────────────────────────────────────────────────────
@@ -713,6 +1055,15 @@ def load_latest_fmp_income_growth(fmp_dir: Path = _FMP_DIR) -> Dict[str, Dict[st
     return _load_csv_by_symbol(Path(fmp_dir) / "latest" / "latest_fmp_income_growth.csv")
 
 
+def load_latest_fmp_analyst_estimates(fmp_dir: Path = _FMP_DIR) -> List[Dict[str, str]]:
+    """Load latest FMP analyst estimates as period-preserving rows."""
+    latest_path = Path(fmp_dir) / "latest" / "latest_fmp_analyst_estimates.csv"
+    if not latest_path.exists():
+        return []
+    with latest_path.open("r", encoding="utf-8", newline="") as fh:
+        return [dict(row) for row in csv.DictReader(fh)]
+
+
 def get_fmp_freshness_report(fmp_dir: Path = _FMP_DIR) -> Dict[str, str]:
     """Return sourced_date for each FMP dataset, or 'MISSING' if not present."""
     latest_dir = Path(fmp_dir) / "latest"
@@ -721,6 +1072,7 @@ def get_fmp_freshness_report(fmp_dir: Path = _FMP_DIR) -> Dict[str, str]:
         "grades_consensus": "latest_fmp_grades_consensus.csv",
         "earnings":         "latest_fmp_earnings_surprises.csv",
         "income_growth":    "latest_fmp_income_growth.csv",
+        "analyst_estimates": "latest_fmp_analyst_estimates.csv",
     }
     report: Dict[str, str] = {}
     for name, fname in datasets.items():

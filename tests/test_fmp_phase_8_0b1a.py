@@ -29,6 +29,7 @@ from src.scoring.fetch_fmp_signals import (
     GRADES_CONSENSUS_HEADERS,
     EARNINGS_SURPRISES_HEADERS,
     INCOME_GROWTH_HEADERS,
+    ANALYST_ESTIMATES_HEADERS,
     _parse_key_metrics_ttm,
     _parse_grades_consensus,
     _parse_earnings_surprises,
@@ -518,6 +519,7 @@ class TestLoadHelpers:
             ("latest_fmp_grades_consensus.csv", GRADES_CONSENSUS_HEADERS),
             ("latest_fmp_earnings_surprises.csv", EARNINGS_SURPRISES_HEADERS),
             ("latest_fmp_income_growth.csv", INCOME_GROWTH_HEADERS),
+            ("latest_fmp_analyst_estimates.csv", ANALYST_ESTIMATES_HEADERS),
         ]:
             _write_csv(latest_dir / fname, [{"symbol": "VRT", "sourced_date": TODAY}], headers)
         report = get_fmp_freshness_report(fmp_dir=tmp_path)

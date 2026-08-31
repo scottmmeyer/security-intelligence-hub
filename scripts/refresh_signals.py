@@ -49,6 +49,7 @@ from src.scoring.fetch_fmp_signals import (
     is_fmp_daily_stale,
     is_fmp_quarterly_stale,
     fetch_fmp_daily_signals,
+    fetch_fmp_analyst_estimates,
     fetch_fmp_quarterly_signals,
     get_fmp_freshness_report,
 )
@@ -62,6 +63,8 @@ _BASE_UNIVERSE = _REPO_ROOT / "data" / "current" / "base_equity_universe.csv"
 _PAR_ROOT = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
 
 _ALL_PROVIDERS = ("zacks", "danelfin", "yahoo", "fmp")
+_FMP_NORMAL_REFRESH_ESTIMATE_PERIODS: tuple[str, ...] = ("annual",)
+_FMP_PLAN_LIMITED_ESTIMATE_PERIODS: tuple[str, ...] = ("quarter",)
 
 REFRESH_MODE_STALE_ONLY = "stale_only"
 REFRESH_MODE_PORTFOLIO_SIGNALS = "portfolio_signals"
@@ -233,6 +236,96 @@ def _to_pit_observations_from_rows(
     return observations, symbols_attempted, symbols_succeeded
 
 
+def _load_fmp_estimate_rows(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.exists():
+        return []
+    rows: list[dict[str, str]] = []
+    with csv_path.open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            rows.append(dict(row))
+    return rows
+
+
+def _to_pit_observations_from_fmp_estimate_rows(
+    *,
+    rows: Sequence[dict[str, str]],
+    symbols: Sequence[str],
+    snapshot_date: str,
+    retrieved_at_utc: str,
+    run_id: str,
+) -> tuple[list[dict[str, object]], int, int]:
+    target = {str(sym or "").strip().upper() for sym in symbols if str(sym or "").strip()}
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol or symbol not in target:
+            continue
+        grouped.setdefault(symbol, []).append(row)
+
+    observations: list[dict[str, object]] = []
+    attempted = len(target)
+    succeeded = 0
+    for symbol in sorted(target):
+        symbol_rows = grouped.get(symbol) or []
+        symbol_has = False
+        for row in symbol_rows:
+            status = str(row.get("fetch_status") or "").strip().upper()
+            if status == "FETCH_FAILED":
+                continue
+            sourced_date = str(row.get("sourced_date") or "").strip() or "UNAVAILABLE"
+            fiscal_period = str(row.get("fiscal_period") or "").strip() or "UNSPECIFIED"
+            forecast_horizon = str(row.get("forecast_horizon") or "").strip() or "UNSPECIFIED"
+            period_date = str(row.get("period_date") or "").strip()
+            period_label = str(row.get("period_label") or "").strip()
+            request_period = str(row.get("request_period") or "").strip().lower()
+            source_endpoint = "/stable/analyst-estimates"
+            if request_period:
+                source_endpoint += f" period={request_period}"
+            if period_date:
+                source_endpoint += f" period_date={period_date}"
+            if period_label:
+                source_endpoint += f" period_label={period_label}"
+
+            metrics = (
+                ("estimated_eps_avg", "eps_estimate_avg", "NUMBER", "USD", "EPS"),
+                ("estimated_eps_high", "eps_estimate_high", "NUMBER", "USD", "EPS"),
+                ("estimated_eps_low", "eps_estimate_low", "NUMBER", "USD", "EPS"),
+                ("estimated_revenue_avg", "revenue_estimate_avg", "NUMBER", "USD", "REVENUE"),
+                ("estimated_revenue_high", "revenue_estimate_high", "NUMBER", "USD", "REVENUE"),
+                ("estimated_revenue_low", "revenue_estimate_low", "NUMBER", "USD", "REVENUE"),
+                ("analyst_count_eps", "analyst_count_eps", "INTEGER", "COUNT", "ANALYSTS"),
+                ("analyst_count_revenue", "analyst_count_revenue", "INTEGER", "COUNT", "ANALYSTS"),
+            )
+            for field, metric, value_type, unit, currency in metrics:
+                value = str(row.get(field) or "").strip()
+                if not value:
+                    continue
+                symbol_has = True
+                observations.append(
+                    {
+                        "symbol": symbol,
+                        "snapshot_date": snapshot_date,
+                        "sourced_date": sourced_date,
+                        "retrieved_at_utc": retrieved_at_utc,
+                        "run_id": run_id,
+                        "metric": metric,
+                        "value": value,
+                        "forecast_horizon": forecast_horizon,
+                        "fiscal_period": fiscal_period,
+                        "source_provenance": "FMP_ANALYST_ESTIMATES_STABLE",
+                        "value_type": value_type,
+                        "currency": currency,
+                        "unit": unit,
+                        "provider_field_name": field,
+                        "source_endpoint": source_endpoint,
+                    }
+                )
+        if symbol_has:
+            succeeded += 1
+
+    return observations, attempted, succeeded
+
+
 def _append_pit_for_provider(
     *,
     provider: str,
@@ -300,6 +393,17 @@ def _append_pit_for_provider(
                 source_provenance="FMP_STABLE_API",
                 source_endpoint="/stable/grades-consensus + /stable/earnings",
             )
+            estimate_rows = _load_fmp_estimate_rows(_FMP_DIR / "latest" / "latest_fmp_analyst_estimates.csv")
+            estimate_observations, est_attempted, est_succeeded = _to_pit_observations_from_fmp_estimate_rows(
+                rows=estimate_rows,
+                symbols=symbols,
+                snapshot_date=snapshot_date,
+                retrieved_at_utc=retrieved_at_utc,
+                run_id=run_id,
+            )
+            observations.extend(estimate_observations)
+            attempted = max(attempted, est_attempted)
+            succeeded = max(succeeded, est_succeeded)
         else:
             return {
                 "pit_symbols_attempted": len(symbols),
@@ -2065,7 +2169,14 @@ def _refresh_yahoo(
     return True
 
 
-def _refresh_fmp(*, dry_run: bool, verbose: bool, mode: str = "daily") -> bool:
+def _refresh_fmp(
+    *,
+    dry_run: bool,
+    verbose: bool,
+    mode: str = "daily",
+    collect_report: bool = False,
+    symbols_override: Sequence[str] | None = None,
+) -> bool | tuple[bool, dict[str, object]]:
     """Fetch fresh FMP fundamental signals.  Returns True when a fetch was triggered.
 
     Args:
@@ -2078,26 +2189,66 @@ def _refresh_fmp(*, dry_run: bool, verbose: bool, mode: str = "daily") -> bool:
             print("[refresh_signals] FMP: no API key found (FMP_API_KEY not set), skipping.")
         return False
 
-    symbols = _all_universe_symbols()
+    symbols = [str(s or "").strip().upper() for s in (symbols_override or _all_universe_symbols()) if str(s or "").strip()]
     if not symbols:
         if verbose:
             print("[refresh_signals] FMP: stale but no symbols found in universe, skipping.")
+        if collect_report:
+            return False, {
+                "provider": "fmp",
+                "mode": mode,
+                "submitted_symbols": [],
+                "submitted_count": 0,
+                "estimate_symbols_attempted": 0,
+                "estimate_symbols_with_data": 0,
+                "estimate_symbols_no_coverage": 0,
+                "estimate_symbols_failed": 0,
+                "estimate_periods_requested": list(_FMP_NORMAL_REFRESH_ESTIMATE_PERIODS),
+                "estimate_periods_available": [],
+                "estimate_periods_plan_limited": list(_FMP_PLAN_LIMITED_ESTIMATE_PERIODS),
+                "estimate_period_capability": {"annual": "UNKNOWN", "quarter": "PLAN_LIMIT"},
+                "estimate_network_requests_by_period": {},
+                "estimate_retries_performed": 0,
+                "estimate_rate_limit_events": 0,
+                "estimate_artifact_path": "",
+                "runtime_sec": 0.0,
+            }
         return False
 
     triggered = False
+    t0 = time.perf_counter()
+    estimate_stats = {
+        "attempted": 0,
+        "with_data": 0,
+        "no_coverage": 0,
+        "failed": 0,
+    }
+    estimate_artifact_path = ""
 
     # Daily datasets
     if mode in ("daily", "all"):
+        estimates_stale = is_fmp_daily_stale("analyst_estimates", _FMP_DIR / "latest")
         daily_stale = is_fmp_daily_stale("key_metrics", _FMP_DIR / "latest") or \
                       is_fmp_daily_stale("grades_consensus", _FMP_DIR / "latest")
-        if daily_stale:
+        daily_or_estimate_stale = daily_stale or estimates_stale
+        if daily_or_estimate_stale:
             if verbose:
                 print(f"[refresh_signals] FMP (daily): stale — fetching {len(symbols)} symbols.")
             if not dry_run:
                 try:
-                    fetch_fmp_daily_signals(symbols, api_key=api_key, output_dir=_FMP_DIR,
-                                            verbose=verbose)
-                    triggered = True
+                    if daily_stale:
+                        fetch_fmp_daily_signals(symbols, api_key=api_key, output_dir=_FMP_DIR, verbose=verbose)
+                        triggered = True
+                    if estimates_stale:
+                        estimate_path, estimate_stats = fetch_fmp_analyst_estimates(
+                            symbols,
+                            api_key=api_key,
+                            output_dir=_FMP_DIR,
+                            verbose=verbose,
+                            periods=_FMP_NORMAL_REFRESH_ESTIMATE_PERIODS,
+                        )
+                        estimate_artifact_path = str(estimate_path)
+                        triggered = True
                 except RuntimeError as exc:
                     print(f"[refresh_signals] FMP (daily): FAILED — {exc}")
                     # Fail-open: log but don't crash the full refresh
@@ -2127,6 +2278,34 @@ def _refresh_fmp(*, dry_run: bool, verbose: bool, mode: str = "daily") -> bool:
             if verbose:
                 print(f"[refresh_signals] FMP (quarterly): up-to-date ({es_date}), skipping.")
 
+    if collect_report:
+        return triggered, {
+            "provider": "fmp",
+            "mode": mode,
+            "submitted_symbols": list(symbols),
+            "submitted_count": len(symbols),
+            "estimate_symbols_attempted": int(estimate_stats.get("attempted") or 0),
+            "estimate_symbols_with_data": int(estimate_stats.get("with_data") or 0),
+            "estimate_symbols_no_coverage": int(estimate_stats.get("no_coverage") or 0),
+            "estimate_symbols_failed": int(estimate_stats.get("failed") or 0),
+            "estimate_periods_requested": list(estimate_stats.get("periods_requested") or list(_FMP_NORMAL_REFRESH_ESTIMATE_PERIODS)),
+            "estimate_periods_available": list(estimate_stats.get("periods_available") or []),
+            "estimate_periods_plan_limited": sorted(
+                {
+                    *list(_FMP_PLAN_LIMITED_ESTIMATE_PERIODS),
+                    *list(estimate_stats.get("periods_plan_limited") or []),
+                }
+            ),
+            "estimate_period_capability": {
+                "annual": "AVAILABLE" if "annual" in set(estimate_stats.get("periods_available") or []) else "UNKNOWN",
+                "quarter": "PLAN_LIMIT",
+            },
+            "estimate_network_requests_by_period": dict(estimate_stats.get("network_requests_by_period") or {}),
+            "estimate_retries_performed": int(estimate_stats.get("retries_performed") or 0),
+            "estimate_rate_limit_events": int(estimate_stats.get("rate_limit_events") or 0),
+            "estimate_artifact_path": estimate_artifact_path,
+            "runtime_sec": round(time.perf_counter() - t0, 4),
+        }
     return triggered
 
 
@@ -2516,9 +2695,15 @@ def ensure_signals_fresh_with_report(
         runtime_status["providers"]["fmp"]["state"] = "RUNNING"
         runtime_status["providers"]["fmp"]["started_at"] = datetime.now(timezone.utc).isoformat()
         _persist_snapshot()
-        f_triggered = _refresh_fmp(dry_run=dry_run, verbose=verbose, mode="daily")
+        f_refresh = _refresh_fmp(
+            dry_run=dry_run,
+            verbose=verbose,
+            mode="daily",
+            collect_report=True,
+        )
+        f_triggered, f_metrics = f_refresh
         triggered["fmp"] = bool(f_triggered)
-        f_symbols = _all_universe_symbols() if bool(f_triggered) and not dry_run else []
+        f_symbols = list(f_metrics.get("submitted_symbols") or []) if bool(f_triggered) and not dry_run else []
         f_pit = {
             "pit_symbols_attempted": 0,
             "pit_symbols_succeeded": 0,
@@ -2539,17 +2724,29 @@ def ensure_signals_fresh_with_report(
             "triggered": bool(f_triggered),
             "provider": "fmp",
             "mode": "daily",
-            "submitted": 0,
+            "submitted": int(f_metrics.get("submitted_count") or 0),
             "skipped_already_covered": 0,
             "retried_failed_checkpoint": 0,
             "refreshed": 0,
-            "skipped": 0,
-            "failed": 0,
+            "skipped": int(f_metrics.get("estimate_symbols_no_coverage") or 0),
+            "failed": int(f_metrics.get("estimate_symbols_failed") or 0),
+            "estimate_symbols_attempted": int(f_metrics.get("estimate_symbols_attempted") or 0),
+            "estimate_symbols_with_data": int(f_metrics.get("estimate_symbols_with_data") or 0),
+            "estimate_symbols_no_coverage": int(f_metrics.get("estimate_symbols_no_coverage") or 0),
+            "estimate_symbols_failed": int(f_metrics.get("estimate_symbols_failed") or 0),
+            "estimate_periods_requested": list(f_metrics.get("estimate_periods_requested") or []),
+            "estimate_periods_available": list(f_metrics.get("estimate_periods_available") or []),
+            "estimate_periods_plan_limited": list(f_metrics.get("estimate_periods_plan_limited") or []),
+            "estimate_period_capability": dict(f_metrics.get("estimate_period_capability") or {}),
+            "estimate_network_requests_by_period": dict(f_metrics.get("estimate_network_requests_by_period") or {}),
+            "estimate_retries_performed": int(f_metrics.get("estimate_retries_performed") or 0),
+            "estimate_rate_limit_events": int(f_metrics.get("estimate_rate_limit_events") or 0),
+            "estimate_artifact_path": str(f_metrics.get("estimate_artifact_path") or ""),
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
             **f_pit,
         }
-        runtime_status["providers"]["fmp"]["attempted"] = int(provider_report["fmp"].get("attempted_count") or 0)
-        runtime_status["providers"]["fmp"]["success"] = int(provider_report["fmp"].get("primary_data_count") or 0)
+        runtime_status["providers"]["fmp"]["attempted"] = int(provider_report["fmp"].get("estimate_symbols_attempted") or 0)
+        runtime_status["providers"]["fmp"]["success"] = int(provider_report["fmp"].get("estimate_symbols_with_data") or 0)
         runtime_status["providers"]["fmp"]["failed"] = int(provider_report["fmp"].get("failed") or 0)
         runtime_status["providers"]["fmp"]["state"] = "COMPLETE" if bool(f_triggered) else "SKIPPED"
         runtime_status["providers"]["fmp"]["completed_at"] = datetime.now(timezone.utc).isoformat()
