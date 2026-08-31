@@ -727,6 +727,61 @@ def fetch_analyst_estimates(
     return _parse_analyst_estimates(symbol, data, today, period=normalized_period)
 
 
+def fetch_analyst_estimates_with_meta(
+    symbol: str,
+    api_key: str,
+    today: str,
+    *,
+    period: str,
+    page: int = 0,
+    limit: int = 8,
+) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
+    """Fetch analyst estimates and return rows plus request metadata."""
+    normalized_period = str(period or "").strip().lower()
+    if normalized_period not in {"annual", "quarter"}:
+        raise ValueError(f"Invalid analyst-estimate period: {period}")
+    url = (
+        f"{_FMP_BASE}/analyst-estimates"
+        f"?symbol={symbol}&period={normalized_period}&page={int(page)}&limit={int(limit)}"
+    )
+    data, status, err, retry_meta = _fmp_get_with_retry_detailed(url, api_key)
+    meta: Dict[str, Any] = {
+        "status": int(status),
+        "error": str(err or ""),
+        "retries_performed": int(retry_meta.get("retries_performed") or 0),
+        "rate_limit_events": int(retry_meta.get("rate_limit_events") or 0),
+        "period": normalized_period,
+        "request_url": url,
+    }
+    if status != 200 or data is None:
+        failure_reason = _failure_reason(status, err, data)
+        failure_type = _failure_type(status, err)
+        rows = [{
+            "symbol": symbol,
+            "sourced_date": today,
+            "fetch_status": "FETCH_FAILED",
+            "failure_type": failure_type,
+            "failure_reason": failure_reason,
+            "request_period": normalized_period,
+            "period_date": "",
+            "period_label": "",
+            "fiscal_period": "",
+            "forecast_horizon": "ANNUAL" if normalized_period == "annual" else "QUARTER",
+            "estimated_revenue_avg": "",
+            "estimated_revenue_high": "",
+            "estimated_revenue_low": "",
+            "estimated_eps_avg": "",
+            "estimated_eps_high": "",
+            "estimated_eps_low": "",
+            "analyst_count_revenue": "",
+            "analyst_count_eps": "",
+        }]
+        return rows, meta
+
+    rows = _parse_analyst_estimates(symbol, data, today, period=normalized_period)
+    return rows, meta
+
+
 def _normalize_estimate_periods(periods: Sequence[str]) -> List[str]:
     normalized: List[str] = []
     for period in periods:

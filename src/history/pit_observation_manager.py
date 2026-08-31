@@ -87,9 +87,47 @@ def _write_csv_rows(path: Path, headers: List[str], rows: List[Dict[str, object]
         writer.writerows(rows)
 
 
+def _append_csv_rows(path: Path, headers: List[str], rows: List[Dict[str, object]]) -> None:
+    if not rows:
+        return
+    _ensure_file_with_headers(path, headers)
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers)
+        writer.writerows(rows)
+
+
 def _count_unique(rows: List[Dict[str, object]], key: str) -> int:
     values = {str(row.get(key, "")).strip() for row in rows if str(row.get(key, "")).strip()}
     return len(values)
+
+
+def _update_index_entry_counts(
+    *,
+    index_path: Path,
+    snapshot_date: str,
+    run_id: str,
+    provider_name: str,
+    row_count: int,
+    symbol_count: int,
+) -> None:
+    index_rows = _read_csv_rows(index_path)
+    updated = False
+    for row in index_rows:
+        if (
+            _normalize_text(row.get("snapshot_date")) == snapshot_date
+            and _normalize_text(row.get("run_id")) == run_id
+            and _normalize_text(row.get("provider")).upper() == provider_name
+        ):
+            row["row_count"] = str(int(row_count))
+            row["symbol_count"] = str(int(symbol_count))
+            updated = True
+            break
+    if not updated:
+        raise ValueError(
+            "PIT index update failed: missing index entry for "
+            f"provider={provider_name}, run_id={run_id}, snapshot_date={snapshot_date}."
+        )
+    _write_csv_rows(index_path, PIT_INDEX_HEADERS, index_rows)
 
 
 def build_pit_storage_paths(
@@ -241,13 +279,27 @@ def append_pit_observations(
         existing_rows = _read_csv_rows(paths.observations_path)
         existing_ids = {_normalize_text(r.get("observation_id")) for r in existing_rows}
         new_ids = {_normalize_text(r.get("observation_id")) for r in normalized}
-        missing = [r for r in normalized if _normalize_text(r.get("observation_id")) not in existing_ids]
-        if missing:
-            raise ValueError(
-                "Immutable PIT partition protection triggered: existing partition is incomplete for "
-                f"provider={provider_name}, run_id={run_id}, snapshot_date={snapshot_date}."
-            )
-        return PitAppendResult(attempted=len(rows), written=0, skipped_duplicate=len(new_ids))
+        rows_to_append = [
+            r for r in normalized if _normalize_text(r.get("observation_id")) not in existing_ids
+        ]
+        if not rows_to_append:
+            return PitAppendResult(attempted=len(rows), written=0, skipped_duplicate=len(new_ids))
+
+        _append_csv_rows(paths.observations_path, PIT_OBSERVATION_HEADERS, rows_to_append)
+        combined_rows = existing_rows + rows_to_append
+        _update_index_entry_counts(
+            index_path=paths.index_path,
+            snapshot_date=snapshot_date,
+            run_id=run_id,
+            provider_name=provider_name,
+            row_count=len(combined_rows),
+            symbol_count=_count_unique(combined_rows, "symbol"),
+        )
+        return PitAppendResult(
+            attempted=len(rows),
+            written=len(rows_to_append),
+            skipped_duplicate=max(len(new_ids) - len(rows_to_append), 0),
+        )
 
     if paths.partition_dir.exists() != has_index_entry:
         raise ValueError(
