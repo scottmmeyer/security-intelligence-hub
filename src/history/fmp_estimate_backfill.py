@@ -441,6 +441,27 @@ def _validate_resume_checkpoint(
         raise ValueError("Checkpoint batch_size mismatch")
 
 
+def _pending_symbols_for_fetch(
+    *,
+    applicable_symbols: Sequence[str],
+    terminal_symbols: set[str],
+    failed_by_symbol: dict[str, dict[str, object]],
+    retry_failed_on_resume: bool,
+) -> list[str]:
+    pending: list[str] = []
+    for symbol in applicable_symbols:
+        if symbol in terminal_symbols:
+            continue
+        failure = failed_by_symbol.get(symbol)
+        if failure:
+            if not bool(failure.get("retry_eligible")):
+                continue
+            if not retry_failed_on_resume:
+                continue
+        pending.append(symbol)
+    return pending
+
+
 def run_fmp_estimate_backfill(
     *,
     repo_root: str | Path = ".",
@@ -539,16 +560,12 @@ def run_fmp_estimate_backfill(
     run_root.mkdir(parents=True, exist_ok=True)
 
     terminal_symbols = set(completed_symbols) | set(no_coverage_symbols)
-    remaining_symbols: list[str] = []
-    for symbol in applicable_symbols:
-        if symbol in terminal_symbols:
-            continue
-        failure = failed_by_symbol.get(symbol)
-        if failure and not bool(failure.get("retry_eligible")):
-            continue
-        if failure and not retry_failed_on_resume:
-            continue
-        remaining_symbols.append(symbol)
+    remaining_symbols = _pending_symbols_for_fetch(
+        applicable_symbols=applicable_symbols,
+        terminal_symbols=terminal_symbols,
+        failed_by_symbol=failed_by_symbol,
+        retry_failed_on_resume=retry_failed_on_resume,
+    )
 
     total_batches = int(math.ceil(len(remaining_symbols) / batch_size)) if remaining_symbols else 0
     provider_calls_avoided_by_resume = max(universe_count - len(remaining_symbols), 0)
@@ -728,14 +745,12 @@ def run_fmp_estimate_backfill(
                 time.sleep(float(delay_seconds))
 
     terminal_symbols = set(completed_symbols) | set(no_coverage_symbols)
-    remaining_after = []
-    for symbol in applicable_symbols:
-        if symbol in terminal_symbols:
-            continue
-        failure = failed_by_symbol.get(symbol)
-        if failure and not bool(failure.get("retry_eligible")):
-            continue
-        remaining_after.append(symbol)
+    remaining_after = _pending_symbols_for_fetch(
+        applicable_symbols=applicable_symbols,
+        terminal_symbols=terminal_symbols,
+        failed_by_symbol=failed_by_symbol,
+        retry_failed_on_resume=retry_failed_on_resume,
+    )
 
     status = "COMPLETE" if not remaining_after else "IN_PROGRESS"
     if status == "COMPLETE":

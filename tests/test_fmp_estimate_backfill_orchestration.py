@@ -354,6 +354,67 @@ def test_FMP_BACKFILL_TRANSIENT_RETRY_TEST(tmp_path: Path, monkeypatch: pytest.M
     assert calls.count("AAA") == 2
 
 
+def test_FMP_BACKFILL_RETRY_DISABLED_RESUME_SKIPS_PENDING_FAILURES(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path
+    symbols = ["AAA", "BBB"]
+    _seed_base_universe(repo, symbols)
+
+    calls: list[str] = []
+
+    def _fake(symbol: str, api_key: str, today: str, *, period: str, page: int = 0, limit: int = 8):
+        calls.append(symbol)
+        if symbol == "AAA":
+            return _failed_rows(symbol, today, failure_type="NETWORK_ERROR"), {
+                "status": 0,
+                "error": "boom",
+                "retries_performed": 0,
+                "rate_limit_events": 0,
+                "period": period,
+                "request_url": "stub",
+            }
+        return _success_rows(symbol, today, period=period), {
+            "status": 200,
+            "error": "",
+            "retries_performed": 0,
+            "rate_limit_events": 0,
+            "period": period,
+            "request_url": "stub",
+        }
+
+    monkeypatch.setattr(feb, "_get_api_key", lambda: "TEST")
+    monkeypatch.setattr(feb, "fetch_analyst_estimates_with_meta", _fake)
+
+    checkpoint_path = repo / "runtime" / "retry_disabled_checkpoint.json"
+    first = feb.run_fmp_estimate_backfill(
+        repo_root=repo,
+        research_universe=True,
+        requested_periods=["annual"],
+        batch_size=1,
+        checkpoint_path=checkpoint_path,
+        max_batches=1,
+        retry_failed_on_resume=False,
+        delay_seconds=0.0,
+    )
+    assert first["status"] == "IN_PROGRESS"
+    assert first["fetch_required_after_run_count"] == 1
+
+    resumed = feb.run_fmp_estimate_backfill(
+        repo_root=repo,
+        research_universe=True,
+        requested_periods=["annual"],
+        batch_size=1,
+        checkpoint_path=checkpoint_path,
+        resume=True,
+        retry_failed_on_resume=False,
+        delay_seconds=0.0,
+    )
+
+    assert resumed["status"] == "COMPLETE"
+    assert resumed["fetch_required_after_run_count"] == 0
+    assert resumed["failed_count"] == 1
+    assert calls.count("AAA") == 1
+
+
 def test_FMP_BACKFILL_SCOPE_MISMATCH_TEST(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = tmp_path
     _seed_base_universe(repo, ["AAA", "BBB"])
