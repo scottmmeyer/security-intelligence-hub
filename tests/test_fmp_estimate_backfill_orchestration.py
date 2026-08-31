@@ -122,6 +122,20 @@ def _failed_rows(symbol: str, today: str, failure_type: str = "NETWORK_ERROR") -
     ]
 
 
+def _duplicate_period_rows(
+    symbol: str,
+    today: str,
+    *,
+    conflicting: bool = False,
+) -> list[dict[str, str]]:
+    rows = _success_rows(symbol, today, period="annual")
+    duplicate = dict(rows[0])
+    if conflicting:
+        duplicate["estimated_eps_avg"] = "9.9"
+    rows.append(duplicate)
+    return rows
+
+
 def _fetch_factory(
     *,
     behavior: dict[str, str],
@@ -550,3 +564,129 @@ def test_FMP_BACKFILL_INTERRUPT_RESUME_TEST(tmp_path: Path, monkeypatch: pytest.
     )
     assert resumed["status"] == "COMPLETE"
     assert resumed["completed_count"] == 15
+
+
+def test_FMP_EXACT_DUPLICATE_COLLAPSE_TEST() -> None:
+    rows = _duplicate_period_rows("CAE", "2026-08-30", conflicting=False)
+    canonical, meta = feb._canonicalize_rows_for_publication(rows)
+
+    assert len(canonical) == 2
+    assert meta["provider_duplicate_rows_detected"] == 2
+    assert meta["provider_duplicate_rows_collapsed"] == 1
+    assert meta["provider_duplicate_conflict_key_count"] == 0
+
+
+def test_FMP_DUPLICATE_CONFLICT_TEST() -> None:
+    rows = _duplicate_period_rows("CAE", "2026-08-30", conflicting=True)
+    canonical, meta = feb._canonicalize_rows_for_publication(rows)
+    conflict_rows = [r for r in canonical if str(r.get("failure_type") or "") == feb.CONFLICT_FAILURE_TYPE]
+
+    assert len(canonical) == 2
+    assert len(conflict_rows) == 1
+    assert meta["provider_duplicate_rows_detected"] == 2
+    assert meta["provider_duplicate_rows_collapsed"] == 0
+    assert meta["provider_duplicate_conflict_key_count"] == 1
+
+
+def test_FMP_DISTINCT_PERIOD_RETENTION_TEST() -> None:
+    rows = _success_rows("CAE", "2026-08-30", period="annual")
+    canonical, meta = feb._canonicalize_rows_for_publication(rows)
+
+    assert len(canonical) == 2
+    assert meta["provider_duplicate_rows_detected"] == 0
+
+
+def test_FMP_DISTINCT_SYMBOL_RETENTION_TEST() -> None:
+    rows = _success_rows("AAA", "2026-08-30", period="annual")[:1] + _success_rows("BBB", "2026-08-30", period="annual")[:1]
+    canonical, meta = feb._canonicalize_rows_for_publication(rows)
+    symbols = {str(r.get("symbol") or "") for r in canonical}
+
+    assert len(canonical) == 2
+    assert symbols == {"AAA", "BBB"}
+    assert meta["provider_duplicate_rows_detected"] == 0
+
+
+def test_FMP_FINAL_LATEST_UNIQUENESS_TEST(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path
+    symbols = ["CAE", "MSFT"]
+    _seed_base_universe(repo, symbols)
+
+    def _fake(symbol: str, api_key: str, today: str, *, period: str, page: int = 0, limit: int = 8):
+        if symbol == "CAE":
+            rows = _duplicate_period_rows(symbol, today, conflicting=False)
+        else:
+            rows = _success_rows(symbol, today, period=period)
+        return rows, {
+            "status": 200,
+            "error": "",
+            "retries_performed": 0,
+            "rate_limit_events": 0,
+            "period": period,
+            "request_url": "stub",
+        }
+
+    monkeypatch.setattr(feb, "_get_api_key", lambda: "TEST")
+    monkeypatch.setattr(feb, "fetch_analyst_estimates_with_meta", _fake)
+
+    result = feb.run_fmp_estimate_backfill(
+        repo_root=repo,
+        research_universe=True,
+        requested_periods=["annual"],
+        batch_size=2,
+        checkpoint_path=repo / "runtime" / "final_unique_checkpoint.json",
+        delay_seconds=0.0,
+    )
+
+    latest_path = Path(result["latest_artifact_path"])
+    rows = list(csv.DictReader(latest_path.open("r", encoding="utf-8", newline="")))
+    keys = {
+        (
+            str(r.get("symbol") or "").strip().upper(),
+            str(r.get("request_period") or "").strip().lower(),
+            str(r.get("period_date") or "").strip(),
+        )
+        for r in rows
+    }
+
+    assert len(rows) == len(keys)
+    assert result["provider_duplicate_rows_detected"] == 2
+    assert result["provider_duplicate_rows_collapsed"] == 1
+
+
+def test_FMP_DUPLICATE_PIT_BEHAVIOR_TEST(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path
+    _seed_base_universe(repo, ["CAE"])
+
+    def _fake(symbol: str, api_key: str, today: str, *, period: str, page: int = 0, limit: int = 8):
+        rows = _duplicate_period_rows(symbol, today, conflicting=False)
+        return rows, {
+            "status": 200,
+            "error": "",
+            "retries_performed": 0,
+            "rate_limit_events": 0,
+            "period": period,
+            "request_url": "stub",
+        }
+
+    monkeypatch.setattr(feb, "_get_api_key", lambda: "TEST")
+    monkeypatch.setattr(feb, "fetch_analyst_estimates_with_meta", _fake)
+
+    result = feb.run_fmp_estimate_backfill(
+        repo_root=repo,
+        research_universe=True,
+        requested_periods=["annual"],
+        batch_size=1,
+        checkpoint_path=repo / "runtime" / "pit_dup_behavior_checkpoint.json",
+        delay_seconds=0.0,
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert result["pit_observations_written"] == 16
+
+    pit_rows = query_pit_observations(
+        symbol="CAE",
+        cutoff_retrieved_at_utc="9999-12-31T23:59:59+00:00",
+        provider="FMP",
+        history_root=repo / "data/history/pit_observations",
+    )
+    assert len(pit_rows) == 16

@@ -33,6 +33,9 @@ DEFAULT_REQUESTED_PERIODS = ("annual",)
 DEFAULT_ESTIMATE_LIMIT = 8
 DEFAULT_DELAY_SECONDS = 0.25
 
+CANONICAL_RESULT_KEY_FIELDS = ("provider", "symbol", "request_period", "period_date")
+CONFLICT_FAILURE_TYPE = "FMP_DUPLICATE_CONFLICT"
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -255,6 +258,97 @@ def _merge_run_rows(run_root: Path, symbols: Sequence[str]) -> list[dict[str, st
     for symbol in symbols:
         merged.extend(_read_symbol_rows(run_root, symbol))
     return merged
+
+
+def _canonical_result_key(row: dict[str, str]) -> tuple[str, str, str, str]:
+    return (
+        "FMP",
+        _normalize_symbol(row.get("symbol")),
+        str(row.get("request_period") or "").strip().lower(),
+        str(row.get("period_date") or "").strip(),
+    )
+
+
+def _normalized_row_fingerprint(row: dict[str, str]) -> tuple[str, ...]:
+    return tuple(str(row.get(field) or "").strip() for field in ANALYST_ESTIMATES_HEADERS)
+
+
+def _build_duplicate_conflict_row(
+    *,
+    key: tuple[str, str, str, str],
+    candidate_rows: Sequence[dict[str, str]],
+) -> dict[str, str]:
+    first = dict(candidate_rows[0]) if candidate_rows else {}
+    symbol = key[1]
+    request_period = key[2]
+    period_date = key[3]
+    first["symbol"] = symbol
+    first["request_period"] = request_period
+    first["period_date"] = period_date
+    first["fetch_status"] = "FETCH_FAILED"
+    first["failure_type"] = CONFLICT_FAILURE_TYPE
+    first["failure_reason"] = (
+        "Conflicting provider duplicate rows for canonical key "
+        f"symbol={symbol} request_period={request_period} period_date={period_date}"
+    )
+    for metric_field in (
+        "estimated_revenue_avg",
+        "estimated_revenue_high",
+        "estimated_revenue_low",
+        "estimated_eps_avg",
+        "estimated_eps_high",
+        "estimated_eps_low",
+        "analyst_count_revenue",
+        "analyst_count_eps",
+    ):
+        first[metric_field] = ""
+    return first
+
+
+def _canonicalize_rows_for_publication(
+    rows: Sequence[dict[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, object]]:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, str]]] = {}
+    for row in rows:
+        key = _canonical_result_key(row)
+        grouped.setdefault(key, []).append(dict(row))
+
+    canonical_rows: list[dict[str, str]] = []
+    duplicate_rows_detected = 0
+    duplicate_rows_collapsed = 0
+    duplicate_conflict_keys: list[dict[str, str]] = []
+
+    for key, candidates in grouped.items():
+        if len(candidates) == 1:
+            canonical_rows.append(candidates[0])
+            continue
+
+        duplicate_rows_detected += len(candidates)
+        fingerprints = {_normalized_row_fingerprint(row) for row in candidates}
+        if len(fingerprints) == 1:
+            canonical_rows.append(candidates[0])
+            duplicate_rows_collapsed += len(candidates) - 1
+            continue
+
+        duplicate_conflict_keys.append(
+            {
+                "provider": key[0],
+                "symbol": key[1],
+                "request_period": key[2],
+                "period_date": key[3],
+                "multiplicity": str(len(candidates)),
+            }
+        )
+        canonical_rows.append(_build_duplicate_conflict_row(key=key, candidate_rows=candidates))
+
+    metadata: dict[str, object] = {
+        "canonical_result_key": list(CANONICAL_RESULT_KEY_FIELDS),
+        "provider_duplicate_rows_detected": int(duplicate_rows_detected),
+        "provider_duplicate_rows_collapsed": int(duplicate_rows_collapsed),
+        "provider_duplicate_conflict_keys": list(duplicate_conflict_keys),
+        "provider_duplicate_conflict_key_count": int(len(duplicate_conflict_keys)),
+    }
+    return canonical_rows, metadata
 
 
 def _write_final_fmp_artifacts(repo_root: Path, snapshot_date: str, rows: list[dict[str, str]]) -> dict[str, str]:
@@ -642,9 +736,21 @@ def run_fmp_estimate_backfill(
     merged_rows = _merge_run_rows(run_root, sorted(terminal_symbols | set(failed_by_symbol.keys())))
     artifact_paths = {"daily_path": "", "latest_path": ""}
     fmp_writes = 0
+    canonicalization_meta: dict[str, object] = {
+        "canonical_result_key": list(CANONICAL_RESULT_KEY_FIELDS),
+        "provider_duplicate_rows_detected": 0,
+        "provider_duplicate_rows_collapsed": 0,
+        "provider_duplicate_conflict_keys": [],
+        "provider_duplicate_conflict_key_count": 0,
+        "rows_before_canonicalization": int(len(merged_rows)),
+        "rows_after_canonicalization": int(len(merged_rows)),
+    }
     if status == "COMPLETE":
-        artifact_paths = _write_final_fmp_artifacts(root, snapshot_date, merged_rows)
-        fmp_writes = len(merged_rows)
+        canonical_rows, dedupe_meta = _canonicalize_rows_for_publication(merged_rows)
+        canonicalization_meta.update(dedupe_meta)
+        canonicalization_meta["rows_after_canonicalization"] = int(len(canonical_rows))
+        artifact_paths = _write_final_fmp_artifacts(root, snapshot_date, canonical_rows)
+        fmp_writes = len(canonical_rows)
 
     final_payload = _build_checkpoint_payload(
         run_id=run_id,
@@ -711,6 +817,13 @@ def run_fmp_estimate_backfill(
         "latest_artifact_path": artifact_paths["latest_path"],
         "fmp_writes": int(fmp_writes),
         "pit_writes": int(pit_observations_written + pit_duplicates_skipped),
+        "rows_before_canonicalization": int(len(merged_rows)),
+        "rows_after_canonicalization": int(canonicalization_meta.get("rows_after_canonicalization") or len(merged_rows)),
+        "canonical_result_key": list(canonicalization_meta.get("canonical_result_key") or []),
+        "provider_duplicate_rows_detected": int(canonicalization_meta.get("provider_duplicate_rows_detected") or 0),
+        "provider_duplicate_rows_collapsed": int(canonicalization_meta.get("provider_duplicate_rows_collapsed") or 0),
+        "provider_duplicate_conflict_keys": list(canonicalization_meta.get("provider_duplicate_conflict_keys") or []),
+        "provider_duplicate_conflict_key_count": int(canonicalization_meta.get("provider_duplicate_conflict_key_count") or 0),
     }
 
     if report_path:
