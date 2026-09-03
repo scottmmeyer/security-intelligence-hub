@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,54 @@ from src.portfolio.regime.market_regime_proxy_artifacts import (
     load_market_regime_rotation_summary,
 )
 from src.sih.rotation_risk_monitor import rotation_risk_summary
+
+
+def _latest_completed_portfolio_date(repo_root: Path) -> str | None:
+    manifest_path = repo_root / "data" / "portfolio_ingestion" / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    portfolios = payload.get("portfolios") if isinstance(payload, dict) else None
+    if not isinstance(portfolios, list):
+        return None
+
+    latest_date: str | None = None
+    for entry in portfolios:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("status") or "").strip().upper() != "COMPLETE":
+            continue
+        snapshot_date = str(entry.get("snapshot_date") or entry.get("as_of_date") or "").strip()
+        if snapshot_date and (latest_date is None or snapshot_date > latest_date):
+            latest_date = snapshot_date
+    return latest_date
+
+
+def _portfolio_date_for_run(repo_root: Path, run_id: str) -> str | None:
+    run = str(run_id or "").strip()
+    if not run:
+        return None
+    metadata_path = repo_root / "data" / "portfolio_ingestion" / "analysis_runs" / run / "run_metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    snapshot_date = str(payload.get("snapshot_date") or payload.get("as_of_date") or "").strip()
+    return snapshot_date or None
+
+
+def _resolve_guardrail_portfolio_date(repo_root: Path, run_id: str) -> str | None:
+    resolved = _portfolio_date_for_run(repo_root, run_id)
+    if resolved:
+        return resolved
+    return _latest_completed_portfolio_date(repo_root)
 
 
 def build_market_regime_guardrail_from_rotation_summary(
@@ -291,6 +340,13 @@ def market_regime_guardrail_latest(repo_root: Path, run_id: str = "") -> dict[st
             return payload
     except Exception:
         rotation = None
+
+    analysis_portfolio_date = _resolve_guardrail_portfolio_date(repo_root=repo_root, run_id=run_id)
+    if isinstance(rotation, dict) and analysis_portfolio_date:
+        # Freshness must be evaluated against the requested/current portfolio analysis date.
+        rotation = dict(rotation)
+        rotation["as_of_date"] = analysis_portfolio_date
+
     payload = build_market_regime_guardrail_from_rotation_summary(rotation)
     payload["scoring_impact"] = "none"
     payload["input_source"] = input_source

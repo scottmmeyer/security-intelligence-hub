@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -188,3 +190,155 @@ def test_market_regime_guardrail_latest_is_fail_closed_unknown(tmp_path: Path) -
     assert payload["confidence"] == "LOW"
     assert payload["scoring_impact"] == "none"
     assert payload["input_source"] == "legacy_replay_fallback"
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _rotation_summary_fixture(proxy_date: str, as_of_date: str) -> dict:
+    return {
+        "status": "OK",
+        "diagnostic_id": "ROTATION-RISK-01",
+        "diagnostic_name": "Tech-to-hard-assets rotation monitor",
+        "as_of_date": as_of_date,
+        "run_id": "PAR-20260827-TEST",
+        "signal": "NO_CLEAR_SIGNAL",
+        "headline": "fixture",
+        "risk_score": 10,
+        "portfolio_exposure": {"tech_pct": 25.0},
+        "proxy_returns": {
+            "selected_cap_bucket": "DEDICATED_PROXY",
+            "latest_proxy_date": proxy_date,
+            "tech_returns": {"5d": 0.1, "20d": 0.1, "60d": 0.1},
+            "hard_assets_returns": {"5d": 0.1, "20d": 0.1, "60d": 0.1},
+            "rotation_spread_pct": {"5d": 0.0, "20d": 0.0, "60d": 0.0},
+            "hard_asset_industry_caps": {
+                "ENERGY": "DEDICATED_PROXY",
+                "BASIC MATERIALS": "DEDICATED_PROXY",
+                "INDUSTRIALS": "DEDICATED_PROXY",
+            },
+        },
+        "confirmation": {"confirmation_passed": False},
+        "data_quality": {"missing_inputs": []},
+        "provenance": {
+            "provider": "YAHOO_FINANCE",
+            "generated_at_utc": "2026-09-01T00:00:00+00:00",
+            "input_source": "dedicated_market_regime_price_history",
+        },
+    }
+
+
+def _write_dedicated_summary(repo_root: Path, rotation_summary: dict) -> None:
+    payload = {
+        "status": "completed",
+        "source": "dedicated_market_regime_proxy_artifact",
+        "generated_at_utc": "2026-09-01T00:00:00+00:00",
+        "latest_proxy_date": str((rotation_summary.get("proxy_returns") or {}).get("latest_proxy_date") or ""),
+        "required_inputs": [],
+        "missing_inputs": [],
+        "technology_proxy": {"5d": 0.1, "20d": 0.1, "60d": 0.1},
+        "hard_asset_proxy": {"5d": 0.1, "20d": 0.1, "60d": 0.1},
+        "freshness": {
+            "status": "FRESH",
+            "portfolio_date": str(rotation_summary.get("as_of_date") or ""),
+            "proxy_date": str((rotation_summary.get("proxy_returns") or {}).get("latest_proxy_date") or ""),
+            "lag_days": 0,
+            "threshold_days": 2,
+        },
+        "provenance": {
+            "provider": "YAHOO_FINANCE",
+            "transaction_id": "MRG-DEDICATED-test",
+            "input_source": "dedicated_market_regime_price_history",
+            "proxy_symbol_map": {},
+        },
+        "warnings": [],
+        "rotation_summary": rotation_summary,
+        "input_source": "dedicated_market_regime_price_history",
+        "transaction_id": "MRG-DEDICATED-test",
+    }
+    _write_json(repo_root / "data" / "current" / "market_regime_proxy_summary.json", payload)
+
+
+def _write_manifest(repo_root: Path, runs: list[dict[str, str]]) -> None:
+    _write_json(repo_root / "data" / "portfolio_ingestion" / "manifest.json", {"portfolios": runs})
+
+
+def _write_run_metadata(repo_root: Path, run_id: str, snapshot_date: str) -> None:
+    _write_json(
+        repo_root / "data" / "portfolio_ingestion" / "analysis_runs" / run_id / "run_metadata.json",
+        {"run_id": run_id, "snapshot_date": snapshot_date, "status": "COMPLETE"},
+    )
+
+
+def test_stale_proxy_not_labeled_fresh_for_current_par_binding() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        current_run = "PAR-20260901-E6CE9722"
+        _write_manifest(
+            repo_root,
+            [
+                {"run_id": "PAR-20260827-OLD", "snapshot_date": "2026-08-27", "status": "COMPLETE"},
+                {"run_id": current_run, "snapshot_date": "2026-09-01", "status": "COMPLETE"},
+            ],
+        )
+        _write_run_metadata(repo_root, current_run, "2026-09-01")
+        _write_dedicated_summary(
+            repo_root,
+            _rotation_summary_fixture(proxy_date="2026-08-25", as_of_date="2026-08-27"),
+        )
+
+        payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
+
+        assert payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-09-01"
+        assert payload["data_freshness"]["freshness_status"] == "STALE"
+
+
+def test_current_proxy_within_threshold_remains_fresh() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        current_run = "PAR-20260901-E6CE9722"
+        _write_manifest(
+            repo_root,
+            [{"run_id": current_run, "snapshot_date": "2026-09-01", "status": "COMPLETE"}],
+        )
+        _write_run_metadata(repo_root, current_run, "2026-09-01")
+        _write_dedicated_summary(
+            repo_root,
+            _rotation_summary_fixture(proxy_date="2026-08-31", as_of_date="2026-08-27"),
+        )
+
+        payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
+
+        assert payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-09-01"
+        assert payload["data_freshness"]["freshness_status"] == "FRESH"
+        assert payload["data_freshness"]["freshness_threshold_days"] == 2
+
+
+def test_historical_guardrail_binding_uses_historical_run_date_no_lookahead() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        historical_run = "PAR-20260827-OLD"
+        current_run = "PAR-20260901-E6CE9722"
+        _write_manifest(
+            repo_root,
+            [
+                {"run_id": historical_run, "snapshot_date": "2026-08-27", "status": "COMPLETE"},
+                {"run_id": current_run, "snapshot_date": "2026-09-01", "status": "COMPLETE"},
+            ],
+        )
+        _write_run_metadata(repo_root, historical_run, "2026-08-27")
+        _write_run_metadata(repo_root, current_run, "2026-09-01")
+        _write_dedicated_summary(
+            repo_root,
+            _rotation_summary_fixture(proxy_date="2026-08-25", as_of_date="2026-08-27"),
+        )
+
+        historical_payload = market_regime_guardrail_latest(repo_root, run_id=historical_run)
+        current_payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
+
+        assert historical_payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-08-27"
+        assert historical_payload["data_freshness"]["freshness_status"] == "FRESH"
+        assert current_payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-09-01"
+        assert current_payload["data_freshness"]["freshness_status"] == "STALE"
