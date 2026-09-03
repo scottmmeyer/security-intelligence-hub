@@ -956,7 +956,15 @@ def _refresh_scope_formula(scope_summary: dict | None, intent: str | None) -> st
     full_count = int(summary.get("full_universe_count") or 0)
 
     if intent == "rebuild_research_universe":
+        danelfin_rebuild = int(summary.get("danelfin_rebuild_target_count") or 0)
+        danelfin_known = int(summary.get("danelfin_known_covered_count") or 0)
+        danelfin_discovery = int(summary.get("danelfin_discovery_count") or 0)
         if full_count > 0:
+            if danelfin_rebuild > 0:
+                return (
+                    f"Planned refresh scope: ~{full_count:,} research universe symbols "
+                    f"(Danelfin known-covered {danelfin_known} + discovery {danelfin_discovery} = {danelfin_rebuild})"
+                )
             return f"Planned refresh scope: ~{full_count:,} research universe symbols"
         return "Planned refresh scope: full research universe"
     if intent == "holdings_plus_buy_candidates":
@@ -1314,6 +1322,138 @@ def _count_research_universe_rows() -> int | None:
             return sum(1 for _ in csv.DictReader(fh))
     except Exception:
         return None
+
+
+def _load_research_universe_symbols() -> list[str]:
+    csv_path = _REPO_ROOT / "data" / "current" / "analytical_universe.csv"
+    if not csv_path.exists():
+        return []
+    ordered: list[str] = []
+    seen: set[str] = set()
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                sym = str(row.get("symbol") or "").strip().upper()
+                if sym and sym not in seen:
+                    seen.add(sym)
+                    ordered.append(sym)
+    except Exception:
+        return []
+    return ordered
+
+
+def _is_valid_danelfin_row(row: dict[str, str] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    raw_text = str(row.get("danelfin_raw") or "").strip()
+    score_text = str(row.get("danelfin_score") or "").strip()
+    if not raw_text or not score_text:
+        return False
+    try:
+        raw_value = int(raw_text)
+        score_value = float(score_text)
+    except (TypeError, ValueError):
+        return False
+    if not (1 <= raw_value <= 10):
+        return False
+    return abs(score_value - round(raw_value / 2.0, 4)) < 1e-9
+
+
+def _latest_danelfin_attempts_files() -> list[Path]:
+    return sorted((_REPO_ROOT / "data" / "signals" / "danelfin").glob("*_danelfin_attempts.csv"))
+
+
+def _load_danelfin_historical_success_symbols(research_symbols: set[str]) -> set[str]:
+    successful: set[str] = set()
+    for attempts_path in _latest_danelfin_attempts_files():
+        try:
+            with attempts_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    sym = str(row.get("symbol") or "").strip().upper()
+                    if sym not in research_symbols:
+                        continue
+                    final_status = str(row.get("final_status") or "").strip().upper()
+                    if final_status in {"VALID_DIRECT", "VALID_BROWSER_FALLBACK"}:
+                        successful.add(sym)
+        except Exception:
+            continue
+    return successful
+
+
+def _load_known_danelfin_coverage_states(research_symbols: set[str]) -> tuple[set[str], set[str], set[str]]:
+    latest_path = _SIGNAL_FILES["danelfin"]
+    known_covered: set[str] = _load_danelfin_historical_success_symbols(research_symbols)
+    if latest_path.exists():
+        try:
+            with latest_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    sym = str(row.get("symbol") or "").strip().upper()
+                    if sym in research_symbols and _is_valid_danelfin_row(row):
+                        known_covered.add(sym)
+        except Exception:
+            pass
+
+    known_no_coverage: set[str] = set()
+    for attempts_path in _latest_danelfin_attempts_files():
+        try:
+            with attempts_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    sym = str(row.get("symbol") or "").strip().upper()
+                    if sym not in research_symbols:
+                        continue
+                    final_status = str(row.get("final_status") or "").strip().upper()
+                    direct_status = str(row.get("direct_status") or "").strip().upper()
+                    browser_done = str(row.get("browser_fallback_completed") or "").strip()
+                    if final_status in {"VALID_DIRECT", "VALID_BROWSER_FALLBACK"}:
+                        known_no_coverage.discard(sym)
+                        continue
+                    if direct_status == "NO_PRIMARY_FIELDS" and final_status == "UNAVAILABLE_FAILED" and browser_done == "1":
+                        known_no_coverage.add(sym)
+        except Exception:
+            continue
+
+    known_no_coverage -= known_covered
+    unknown = research_symbols - known_covered - known_no_coverage
+    return known_covered, known_no_coverage, unknown
+
+
+def _load_provider_fresh_symbol_set(
+    *,
+    provider: str,
+    research_symbols: set[str],
+    threshold_days: int = 2,
+    today: date | None = None,
+) -> set[str]:
+    path = _resolve_provider_signal_file(provider)
+    if not path.exists():
+        return set()
+    today = today or date.today()
+    primary_fields: dict[str, tuple[str, ...]] = {
+        "zacks": ("zacks_rank", "zacks_score"),
+        "danelfin": ("danelfin_raw", "danelfin_score"),
+        "yahoo": ("price_target", "analyst_count", "current_price"),
+    }
+    fields = primary_fields.get(provider, ())
+    fresh: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                sym = str(row.get("symbol") or "").strip().upper()
+                if sym not in research_symbols:
+                    continue
+                if provider == "danelfin" and not _is_valid_danelfin_row(row):
+                    continue
+                if provider != "danelfin" and not any(str(row.get(field) or "").strip() for field in fields):
+                    continue
+                sourced_date = str(row.get("sourced_date") or "").strip()
+                if not sourced_date:
+                    continue
+                age = _iso_age_days(sourced_date, today=today)
+                if age is not None and age <= threshold_days:
+                    fresh.add(sym)
+    except Exception:
+        return set()
+    return fresh
 
 
 def _latest_snapshot_date(csv_path: Path) -> str | None:
@@ -3129,23 +3269,58 @@ def _refresh_transparency_payload() -> dict[str, object]:
         if provider_metrics[provider]["missing_written"] > 0:
             warnings.append(f"{provider}: missing writes detected")
 
-    research_total = _count_research_universe_rows()
-    if research_total is None or research_total <= 0:
-        research_total = max(
-            int((signal_data.get("zacks") or {}).get("attempted_count") or 0),
-            int((signal_data.get("danelfin") or {}).get("attempted_count") or 0),
-            int((signal_data.get("yahoo") or {}).get("attempted_count") or 0),
-            0,
-        )
+    research_symbols = set(_load_research_universe_symbols())
+    research_total = len(research_symbols)
+    if research_total <= 0:
+        fallback_total = _count_research_universe_rows()
+        research_total = int(fallback_total or 0)
+        if research_total <= 0:
+            research_total = max(
+                int((signal_data.get("zacks") or {}).get("attempted_count") or 0),
+                int((signal_data.get("danelfin") or {}).get("attempted_count") or 0),
+                int((signal_data.get("yahoo") or {}).get("attempted_count") or 0),
+                0,
+            )
 
-    zacks_fresh = int((signal_data.get("zacks") or {}).get("with_data_count") or 0)
-    danelfin_fresh = int((signal_data.get("danelfin") or {}).get("with_data_count") or 0)
-    yahoo_fresh = int((signal_data.get("yahoo") or {}).get("with_data_count") or 0)
-    provider_fresh_counts = [n for n in (zacks_fresh, danelfin_fresh, yahoo_fresh) if n > 0]
-    core_fresh = min(provider_fresh_counts) if provider_fresh_counts else 0
+    known_covered, known_no_coverage, unknown_coverage = _load_known_danelfin_coverage_states(research_symbols)
+    zacks_fresh_symbols = _load_provider_fresh_symbol_set(provider="zacks", research_symbols=research_symbols)
+    yahoo_fresh_symbols = _load_provider_fresh_symbol_set(provider="yahoo", research_symbols=research_symbols)
+    danelfin_fresh_symbols = _load_provider_fresh_symbol_set(provider="danelfin", research_symbols=research_symbols)
+
+    core_fresh = 0
+    if research_symbols:
+        for symbol in research_symbols:
+            if symbol not in zacks_fresh_symbols or symbol not in yahoo_fresh_symbols:
+                continue
+            if symbol in known_covered and symbol not in danelfin_fresh_symbols:
+                continue
+            core_fresh += 1
     stale_or_missing = max(research_total - core_fresh, 0)
     core_fresh_pct = round((core_fresh / research_total * 100.0), 1) if research_total > 0 else 0.0
     readiness_status = _readiness_status_from_pct(core_fresh_pct)
+
+    danelfin_info = providers.get("danelfin") if isinstance(providers, dict) else {}
+    if not isinstance(danelfin_info, dict):
+        danelfin_info = {}
+    danelfin_attempted = int(danelfin_info.get("submitted_count") or danelfin_info.get("submitted") or 0)
+    danelfin_succeeded = int(danelfin_info.get("primary_data_count") or 0)
+    danelfin_operational_failures = int(danelfin_info.get("failed") or 0)
+    danelfin_fresh_known_covered = len(known_covered & danelfin_fresh_symbols)
+    danelfin_stale_known_covered = max(len(known_covered) - danelfin_fresh_known_covered, 0)
+    danelfin_discovery_pending = len(unknown_coverage)
+
+    coverage_transparency = {
+        "research_universe_size": research_total,
+        "known_covered_count": len(known_covered),
+        "known_no_coverage_count": len(known_no_coverage),
+        "unknown_count": len(unknown_coverage),
+        "discovery_pending_count": danelfin_discovery_pending,
+        "fresh_known_covered_count": danelfin_fresh_known_covered,
+        "stale_known_covered_count": danelfin_stale_known_covered,
+        "attempted_count": danelfin_attempted,
+        "succeeded_count": danelfin_succeeded,
+        "operational_failure_count": danelfin_operational_failures,
+    }
 
     readiness_block = {
         "core_fresh_pct": core_fresh_pct,
@@ -3223,6 +3398,7 @@ def _refresh_transparency_payload() -> dict[str, object]:
         "core_fresh_pct": core_fresh_pct,
         "stale_or_missing": stale_or_missing,
         "has_provider_failures": total_failed > 0,
+        "conditional_provider_requirement": "danelfin_known_covered_only",
     }
 
     latest_refresh_date = ""
@@ -3258,6 +3434,7 @@ def _refresh_transparency_payload() -> dict[str, object]:
         "latest_refresh_date": latest_refresh_date,
         "provider_counts": provider_metrics,
         "decision_readiness": decision_readiness,
+        "coverage_transparency": coverage_transparency,
         "warnings": warnings,
         "artifacts": {
             "refresh_report_path": str(_REFRESH_REPORT_PATH),

@@ -61,6 +61,8 @@ runs/stage_manifests/**
 # replay_inputs.csv, replay_performance_series.csv, current_snapshot_metadata.json.
 # These are rebuildable at any time via build_wp05b_replay_matrix.py.
 # Never source-controlled — consumers read from this path at runtime only.
+# Local/generated runtime state
+data/runtime/
 data/current/
 
 # Immutable historical replay and analytical universe artifacts.

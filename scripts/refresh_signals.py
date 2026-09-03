@@ -139,6 +139,8 @@ _PROVIDER_STATUS_FIELDS: tuple[str, ...] = (
     "reason",
 )
 
+_DANELFIN_DISCOVERY_DEFAULT_CAP = 16
+
 _PIT_METRICS_BY_PROVIDER: dict[str, tuple[tuple[str, str, str, str, str], ...]] = {
     "zacks": (
         ("abr", "abr", "NUMBER", "UNSPECIFIED", "UNSPECIFIED"),
@@ -523,6 +525,162 @@ def _all_universe_symbols(universe_csv: Path = _BASE_UNIVERSE) -> list[str]:
     return symbols
 
 
+def _normalized_symbols(values: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            out.append(sym)
+    return out
+
+
+def _valid_danelfin_row(row: dict[str, str] | None) -> bool:
+    if not isinstance(row, dict):
+        return False
+    raw = str(row.get("danelfin_raw") or "").strip()
+    score = str(row.get("danelfin_score") or "").strip()
+    if not raw or not score:
+        return False
+    try:
+        raw_value = int(raw)
+        score_value = float(score)
+    except (TypeError, ValueError):
+        return False
+    if not (1 <= raw_value <= 10):
+        return False
+    return abs(score_value - round(raw_value / 2.0, 4)) < 1e-9
+
+
+def _latest_danelfin_attempts_file() -> Path | None:
+    candidates = sorted(_DANELFIN_DIR.glob("*_danelfin_attempts.csv"))
+    return candidates[-1] if candidates else None
+
+
+def _danelfin_historical_success_symbols() -> set[str]:
+    successful: set[str] = set()
+    for attempts_path in sorted(_DANELFIN_DIR.glob("*_danelfin_attempts.csv")):
+        try:
+            with attempts_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    symbol = str(row.get("symbol") or "").strip().upper()
+                    if not symbol:
+                        continue
+                    final_status = str(row.get("final_status") or "").strip().upper()
+                    if final_status in {"VALID_DIRECT", "VALID_BROWSER_FALLBACK"}:
+                        successful.add(symbol)
+        except Exception:
+            continue
+    return successful
+
+
+def _danelfin_known_covered_symbols(universe_symbols: Sequence[str]) -> list[str]:
+    latest = _DANELFIN_DIR / "latest_danelfin.csv"
+    rows = _load_rows_by_symbol(latest) if latest.exists() else {}
+    historical_success = _danelfin_historical_success_symbols()
+    known_covered: list[str] = []
+    for sym in _normalized_symbols(universe_symbols):
+        if _valid_danelfin_row(rows.get(sym)) or sym in historical_success:
+            known_covered.append(sym)
+    return known_covered
+
+
+def _danelfin_known_no_coverage_symbols(*, known_covered: set[str]) -> set[str]:
+    # Only classify explicit NO_PRIMARY_FIELDS outcomes as known no-coverage.
+    no_coverage: set[str] = set()
+    for attempts_path in sorted(_DANELFIN_DIR.glob("*_danelfin_attempts.csv")):
+        try:
+            with attempts_path.open("r", encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    symbol = str(row.get("symbol") or "").strip().upper()
+                    if not symbol:
+                        continue
+                    final_status = str(row.get("final_status") or "").strip().upper()
+                    direct_status = str(row.get("direct_status") or "").strip().upper()
+                    browser_done = str(row.get("browser_fallback_completed") or "").strip()
+                    if final_status in {"VALID_DIRECT", "VALID_BROWSER_FALLBACK"}:
+                        no_coverage.discard(symbol)
+                        continue
+                    if direct_status == "NO_PRIMARY_FIELDS" and final_status == "UNAVAILABLE_FAILED" and browser_done == "1":
+                        no_coverage.add(symbol)
+        except Exception:
+            continue
+    return {sym for sym in no_coverage if sym and sym not in known_covered}
+
+
+def _danelfin_attempted_symbols_for_date(target_date: str) -> set[str]:
+    attempts_path = _DANELFIN_DIR / f"{target_date}_danelfin_attempts.csv"
+    if not attempts_path.exists():
+        return set()
+    attempted: set[str] = set()
+    try:
+        with attempts_path.open("r", encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                symbol = str(row.get("symbol") or "").strip().upper()
+                if symbol:
+                    attempted.add(symbol)
+    except Exception:
+        return set()
+    return attempted
+
+
+def _danelfin_discovery_cap() -> int:
+    raw = str(os.getenv("DANELFIN_DISCOVERY_CAP", str(_DANELFIN_DISCOVERY_DEFAULT_CAP))).strip()
+    try:
+        cap = int(raw)
+    except ValueError:
+        cap = _DANELFIN_DISCOVERY_DEFAULT_CAP
+    return max(cap, 0)
+
+
+def _select_danelfin_discovery_symbols(
+    *,
+    universe_symbols: Sequence[str],
+    known_covered: set[str],
+    known_no_coverage: set[str],
+    priority_symbols: Sequence[str],
+    cap: int,
+) -> list[str]:
+    if cap <= 0:
+        return []
+
+    def _rotate_by_day(pool: list[str]) -> list[str]:
+        if not pool:
+            return []
+        offset = (date.today().toordinal() * max(cap, 1)) % len(pool)
+        if offset == 0:
+            return list(pool)
+        return list(pool[offset:] + pool[:offset])
+
+    ordered_universe = _normalized_symbols(universe_symbols)
+    attempted_today = _danelfin_attempted_symbols_for_date(date.today().isoformat())
+    excluded = set(known_covered) | set(known_no_coverage) | attempted_today
+    unknown_universe = [sym for sym in ordered_universe if sym not in excluded]
+    unknown_set = set(unknown_universe)
+
+    priority_unknown = [sym for sym in _normalized_symbols(priority_symbols) if sym in unknown_set]
+    rotated_priority = _rotate_by_day(priority_unknown)
+    priority_set = set(priority_unknown)
+    rotated_unknown = _rotate_by_day([sym for sym in unknown_universe if sym not in priority_set])
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for sym in rotated_priority:
+        if sym not in seen:
+            seen.add(sym)
+            ordered.append(sym)
+            if len(ordered) >= cap:
+                return ordered
+    for sym in rotated_unknown:
+        if sym not in seen:
+            seen.add(sym)
+            ordered.append(sym)
+            if len(ordered) >= cap:
+                break
+    return ordered
+
+
 def _smart_universe_symbols(universe_csv: Path = _BASE_UNIVERSE) -> list[str]:
     """Return only BULLISH/VERY_BULLISH symbols — the high-priority smart-refresh set.
 
@@ -652,6 +810,32 @@ def _market_proxy_symbols() -> list[str]:
             seen.add(s)
             merged.append(s)
     return merged
+
+
+def _filter_proxies_by_provider_applicability(provider: str, proxies: list[str]) -> list[str]:
+    """Filter market proxy symbols through provider-specific applicability rules.
+    
+    Market proxies are ETF/INDEX securities not in the base equity universe.
+    Most providers (stock-focused) cannot process these symbols. This function
+    filters the global market proxy list to only include those applicable to
+    the specified provider.
+    
+    Args:
+        provider: Provider name (zacks, danelfin, yahoo, etc.)
+        proxies: List of market proxy symbols
+    
+    Returns:
+        Filtered list of proxies applicable to this provider
+    """
+    # Current implementation: stock providers (zacks, danelfin, yahoo) do not process ETF proxies.
+    # Market proxies are needed for market-regime monitoring (separate refresh mode),
+    # but should not be included in stock provider scope.
+    # This ensures provider-specific applicability rules are applied consistently.
+    if provider in ("zacks", "danelfin", "yahoo"):
+        # Stock-focused providers: filter out market proxies (ETFs/indices not in base_equity_universe)
+        return []
+    # Other providers: pass through (in case future providers need proxy access)
+    return proxies
 
 
 def _market_proxy_refresh_needed(threshold_days: int = 2) -> bool:
@@ -1443,9 +1627,37 @@ def _build_refresh_scope(
     else:
         deduped_all = sorted(holdings_set | buy_set | mandatory_dependencies | market_proxy_set)
 
+    danelfin_known_covered: list[str] = []
+    danelfin_known_no_coverage: set[str] = set()
+    danelfin_discovery: list[str] = []
+    danelfin_discovery_cap = _danelfin_discovery_cap()
+    if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+        danelfin_known_covered = _danelfin_known_covered_symbols(deduped_all)
+        danelfin_known_no_coverage = _danelfin_known_no_coverage_symbols(
+            known_covered=set(danelfin_known_covered)
+        )
+        priority_symbols = [
+            *sorted(provider_holdings.get("danelfin", set())),
+            *buy_candidates,
+            *sorted(mandatory_dependencies),
+        ]
+        danelfin_discovery = _select_danelfin_discovery_symbols(
+            universe_symbols=deduped_all,
+            known_covered=set(danelfin_known_covered),
+            known_no_coverage=danelfin_known_no_coverage,
+            priority_symbols=priority_symbols,
+            cap=danelfin_discovery_cap,
+        )
+
     provider_symbols: dict[str, list[str]] = {}
     for provider in ("zacks", "danelfin", "yahoo"):
         if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            if provider == "danelfin":
+                provider_symbols[provider] = _normalized_symbols([
+                    *danelfin_known_covered,
+                    *danelfin_discovery,
+                ])
+                continue
             provider_symbols[provider] = list(deduped_all)
             continue
         if mode == REFRESH_MODE_MARKET_REGIME_PROXY_ONLY:
@@ -1454,7 +1666,8 @@ def _build_refresh_scope(
         if mode == REFRESH_MODE_PORTFOLIO_SIGNALS:
             merged: list[str] = []
             seen: set[str] = set()
-            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + market_proxies:
+            provider_applicable_proxies = _filter_proxies_by_provider_applicability(provider, market_proxies)
+            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + provider_applicable_proxies:
                 s = str(sym or "").strip().upper()
                 if s and s not in seen:
                     seen.add(s)
@@ -1464,7 +1677,8 @@ def _build_refresh_scope(
         if mode == REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES:
             merged: list[str] = []
             seen: set[str] = set()
-            for sym in sorted(provider_holdings.get(provider, set())) + buy_candidates + sorted(mandatory_dependencies) + market_proxies:
+            provider_applicable_proxies = _filter_proxies_by_provider_applicability(provider, market_proxies)
+            for sym in sorted(provider_holdings.get(provider, set())) + buy_candidates + sorted(mandatory_dependencies) + provider_applicable_proxies:
                 s = str(sym or "").strip().upper()
                 if s and s not in seen:
                     seen.add(s)
@@ -1474,7 +1688,8 @@ def _build_refresh_scope(
         if mode == REFRESH_MODE_PREPARE_PORTFOLIO_REVIEW:
             merged: list[str] = []
             seen: set[str] = set()
-            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + market_proxies:
+            provider_applicable_proxies = _filter_proxies_by_provider_applicability(provider, market_proxies)
+            for sym in sorted(provider_holdings.get(provider, set())) + sorted(mandatory_dependencies) + provider_applicable_proxies:
                 s = str(sym or "").strip().upper()
                 if s and s not in seen:
                     seen.add(s)
@@ -1487,11 +1702,24 @@ def _build_refresh_scope(
         provider_symbols[provider] = []
 
     full_universe_count = len(_all_universe_symbols(_BASE_UNIVERSE))
+    known_covered_set = set(danelfin_known_covered)
+    universe_set = {str(s or "").strip().upper() for s in deduped_all}
+    known_no_coverage_set = {
+        sym for sym in danelfin_known_no_coverage if sym in universe_set
+    }
+    unknown_count = 0
+    if mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+        unknown_count = max(
+            len(universe_set) - len(known_covered_set) - len(known_no_coverage_set),
+            0,
+        )
     planned_symbol_samples = {
         "portfolio_holdings": holdings[:10],
         "buy_candidates": buy_candidates[:10],
         "mandatory_dependencies": sorted(mandatory_dependencies)[:10],
         "market_proxies": market_proxies[:10],
+        "danelfin_known_covered": danelfin_known_covered[:10],
+        "danelfin_discovery": danelfin_discovery[:10],
     }
 
     return {
@@ -1503,6 +1731,11 @@ def _build_refresh_scope(
             "market_proxy_count": len(market_proxies),
             "deduped_symbol_count": len(deduped_all),
             "full_universe_count": full_universe_count,
+            "danelfin_known_covered_count": len(known_covered_set),
+            "danelfin_known_no_coverage_count": len(known_no_coverage_set),
+            "danelfin_unknown_count": unknown_count,
+            "danelfin_discovery_count": len(danelfin_discovery),
+            "danelfin_rebuild_target_count": len(provider_symbols.get("danelfin") or []),
         },
         "planned_symbols": {
             "portfolio_holdings": holdings,
@@ -1511,9 +1744,13 @@ def _build_refresh_scope(
             "market_proxies": market_proxies,
             "deduped_all": deduped_all,
             "provider_symbols": provider_symbols,
+            "danelfin_known_covered": sorted(known_covered_set),
+            "danelfin_known_no_coverage": sorted(known_no_coverage_set),
+            "danelfin_discovery": list(danelfin_discovery),
         },
         "planned_symbol_samples": planned_symbol_samples,
         "buy_candidate_cap": int(buy_candidate_cap),
+        "danelfin_discovery_cap": int(danelfin_discovery_cap),
     }
 
 
@@ -1937,7 +2174,7 @@ def _refresh_danelfin(
         symbols = list(((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or [])
         mode = REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES
     elif refresh_mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
-        symbols = _all_universe_symbols(_BASE_UNIVERSE)
+        symbols = list((((scope.get("planned_symbols") or {}).get("provider_symbols") or {}).get("danelfin") or []))
         mode = REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE
     elif refresh_mode == REFRESH_MODE_STALE_ONLY and proxy_targets and not research_stale and not repair_targets:
         symbols = proxy_targets
@@ -1970,6 +2207,7 @@ def _refresh_danelfin(
         return False
 
     mode_label = "smart (bullish only)" if smart else "full universe"
+    scope_summary = scope.get("scope_summary") if isinstance(scope, dict) else {}
     if verbose:
         if mode == "coverage_repair":
             print(
@@ -1985,8 +2223,11 @@ def _refresh_danelfin(
                 f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} holdings + buy-candidate symbols."
             )
         elif mode == REFRESH_MODE_REBUILD_RESEARCH_UNIVERSE:
+            known_count = int((scope_summary or {}).get("danelfin_known_covered_count") or 0)
+            discovery_count = int((scope_summary or {}).get("danelfin_discovery_count") or 0)
             print(
-                f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols ({mode_label})."
+                f"[refresh_signals] Danelfin: {_refresh_mode_label(refresh_mode)} — fetching {len(symbols)} symbols "
+                f"(known-covered {known_count} + discovery {discovery_count})."
             )
         elif mode == "market_proxy_refresh":
             print(

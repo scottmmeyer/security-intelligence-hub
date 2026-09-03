@@ -607,12 +607,30 @@ function _renderDecisionReadiness(payload) {
   const classification = String(readiness.classification || "UNKNOWN");
   const pct = Number(readiness.core_fresh_pct);
   const stale = Number(readiness.stale_or_missing || 0);
+  const coverage = payload && payload.coverage_transparency ? payload.coverage_transparency : null;
+  const knownCovered = Number(coverage && coverage.known_covered_count != null ? coverage.known_covered_count : 0);
+  const knownNoCoverage = Number(coverage && coverage.known_no_coverage_count != null ? coverage.known_no_coverage_count : 0);
+  const unknownCoverage = Number(coverage && coverage.unknown_count != null ? coverage.unknown_count : 0);
+  const discoveryPending = Number(coverage && coverage.discovery_pending_count != null ? coverage.discovery_pending_count : 0);
+  const freshKnownCovered = Number(coverage && coverage.fresh_known_covered_count != null ? coverage.fresh_known_covered_count : 0);
+  const attempted = Number(coverage && coverage.attempted_count != null ? coverage.attempted_count : 0);
+  const succeeded = Number(coverage && coverage.succeeded_count != null ? coverage.succeeded_count : 0);
+  const operationalFailures = Number(coverage && coverage.operational_failure_count != null ? coverage.operational_failure_count : 0);
   summaryEl.textContent = `Classification: ${classification} · Core freshness: ${Number.isFinite(pct) ? pct.toFixed(1) : "0.0"}% · Stale/missing: ${stale}`;
-  pillsEl.innerHTML = [
+  const pills = [
     `<span class="refresh-insight-pill"><span class="universe-tag">Status</span>${_ovEscHtml(classification)}</span>`,
     `<span class="refresh-insight-pill"><span class="universe-tag">Freshness</span>${Number.isFinite(pct) ? pct.toFixed(1) : "0.0"}%</span>`,
     `<span class="refresh-insight-pill"><span class="universe-tag">Stale/Missing</span>${stale}</span>`,
-  ].join("");
+  ];
+  if (coverage) {
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Danelfin Covered</span>${freshKnownCovered}/${knownCovered}</span>`);
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Danelfin No-Coverage</span>${knownNoCoverage}</span>`);
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Danelfin Unknown</span>${unknownCoverage}</span>`);
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Discovery Pending</span>${discoveryPending}</span>`);
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Attempted/Succeeded</span>${attempted}/${succeeded}</span>`);
+    pills.push(`<span class="refresh-insight-pill"><span class="universe-tag">Operational Failures</span>${operationalFailures}</span>`);
+  }
+  pillsEl.innerHTML = pills.join("");
 }
 
 function _renderCandidateReadiness(payload) {
@@ -2099,14 +2117,17 @@ function loadSignalStatus() {
         if (!data[provider] || !progress[provider]) return;
         const p = progress[provider];
         const derived = runtimeView.providers[provider] || {};
+        const state = String(derived.state || "UNKNOWN").toUpperCase();
+        const isTerminalState = ["COMPLETE", "COMPLETE_WITH_ERRORS", "FAILED", "SKIPPED"].includes(state);
         data[provider].refresh_progress = {
-          active: refreshRunning,
+          // Active progress is only meaningful while the provider stage is non-terminal.
+          active: refreshRunning && !isTerminalState,
           completed_count: p.completed_count,
           planned_total_count: p.planned_total_count,
           progress_pct: p.progress_pct,
           progress_label: p.progress_label,
           is_complete: p.is_complete,
-          state: derived.state || "UNKNOWN",
+          state,
           attempted_count: derived.attempted_count,
           success_count: derived.success_count,
           failed_count: derived.failed,
@@ -2165,7 +2186,7 @@ function _refreshModeGuidance(mode) {
     return "Refreshes current portfolio holdings and top deployment/buy candidates, plus mandatory dependencies and market-regime proxies. Use this before making portfolio decisions without running the full universe refresh.";
   }
   if (mode === "rebuild_research_universe") {
-    return "Refreshes the full research universe. Intended weekly or when rebuilding the candidate universe.";
+    return "Rebuilds the full research universe foundation; Danelfin runs known-covered refresh plus a bounded discovery set.";
   }
   if (mode === "prepare_portfolio_review") {
     return "Builds the portfolio review artifact bundle without forcing a full research-universe refresh.";
@@ -2196,6 +2217,12 @@ function _scopeFormulaFromSummary(summary, intent) {
   const full = Number(s.full_universe_count || 0);
 
   if (intent === "rebuild_research_universe") {
+    const danelfinRebuild = Number(s.danelfin_rebuild_target_count || 0);
+    const danelfinKnown = Number(s.danelfin_known_covered_count || 0);
+    const danelfinDiscovery = Number(s.danelfin_discovery_count || 0);
+    if (full > 0 && danelfinRebuild > 0) {
+      return `Planned refresh scope: ~${full.toLocaleString("en-US")} research universe symbols (Danelfin known-covered ${danelfinKnown} + discovery ${danelfinDiscovery} = ${danelfinRebuild})`;
+    }
     return full > 0
       ? `Planned refresh scope: ~${full.toLocaleString("en-US")} research universe symbols`
       : "Planned refresh scope: full research universe";
@@ -2536,32 +2563,39 @@ function _renderSignalPills(data) {
     const refreshProgress = info.refresh_progress && typeof info.refresh_progress === "object"
       ? info.refresh_progress
       : null;
-    if (refreshProgress && refreshProgress.active) {
+    if (refreshProgress) {
       const refreshState = String(refreshProgress.state || "UNKNOWN").toUpperCase();
-      refreshStateHtml = `<span class="pill-coverage">Refresh state: ${refreshState}</span>`;
+      const isTerminalState = ["COMPLETE", "COMPLETE_WITH_ERRORS", "FAILED", "SKIPPED"].includes(refreshState);
       const attemptedExec = _asFiniteNumber(refreshProgress.attempted_count);
       const successExec = _asFiniteNumber(refreshProgress.success_count);
       const failedExec = _asFiniteNumber(refreshProgress.failed_count);
-      if (attemptedExec != null || successExec != null || failedExec != null) {
+
+      if (refreshProgress.active || isTerminalState) {
+        refreshStateHtml = `<span class="pill-coverage">Refresh state: ${refreshState}</span>`;
+      }
+      if ((refreshProgress.active || isTerminalState) && (attemptedExec != null || successExec != null || failedExec != null)) {
         const attemptedLabel = attemptedExec == null ? "—" : attemptedExec;
         const successLabel = successExec == null ? "—" : successExec;
         const failedLabel = failedExec == null ? "—" : failedExec;
         refreshStateHtml += ` <span class="pill-coverage">Execution: attempted ${attemptedLabel} · success ${successLabel} · failed ${failedLabel}</span>`;
       }
-      const completed = Number(refreshProgress.completed_count || 0);
-      const plannedRaw = refreshProgress.planned_total_count;
-      const planned = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
-      if (planned != null && Number.isFinite(planned) && planned >= 0) {
-        const shownCompleted = Math.min(completed, planned);
-        const progressPct = refreshProgress.progress_pct != null
-          ? Number(refreshProgress.progress_pct)
-          : (planned > 0 ? (shownCompleted / planned) * 100.0 : 100.0);
-        const pctLabel = Number.isFinite(progressPct) ? progressPct.toFixed(1) : "0.0";
-        refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} rows · ${pctLabel}%</span>`;
-      } else {
-        refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${completed} rows processed</span>`;
+
+      if (refreshProgress.active) {
+        const completed = Number(refreshProgress.completed_count || 0);
+        const plannedRaw = refreshProgress.planned_total_count;
+        const planned = (plannedRaw == null || plannedRaw === "") ? null : Number(plannedRaw);
+        if (planned != null && Number.isFinite(planned) && planned >= 0) {
+          const shownCompleted = Math.min(completed, planned);
+          const progressPct = refreshProgress.progress_pct != null
+            ? Number(refreshProgress.progress_pct)
+            : (planned > 0 ? (shownCompleted / planned) * 100.0 : 100.0);
+          const pctLabel = Number.isFinite(progressPct) ? progressPct.toFixed(1) : "0.0";
+          refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} rows · ${pctLabel}%</span>`;
+        } else {
+          refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${completed} rows processed</span>`;
+        }
       }
-      if (refreshProgress.no_recent_progress_signal) {
+      if (refreshProgress.active && refreshProgress.no_recent_progress_signal) {
         refreshProgressHtml += " <span class=\"pill-degraded-advisory\">RUNNING — no progress signal yet</span>";
       }
     }
@@ -2570,7 +2604,7 @@ function _renderSignalPills(data) {
     let coverageHtml = "";
     if (info.attempted_count != null) {
       const covPct = info.coverage_pct != null ? info.coverage_pct.toFixed(1) : "—";
-      coverageHtml = `<span class="pill-coverage">Provider today rows: ${info.with_data_count}/${info.attempted_count} · ${covPct}%</span>`;
+      coverageHtml = `<span class="pill-coverage">Latest cache sourced today: ${info.with_data_count}/${info.attempted_count} · ${covPct}%</span>`;
     }
 
     let canonicalCoverageHtml = "";
