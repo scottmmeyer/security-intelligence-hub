@@ -9,6 +9,7 @@ from src.portfolio.regime.market_regime_inputs import normalized_rotation_contex
 from src.portfolio.regime.market_regime_proxy_artifacts import (
     LEGACY_REPLAY_FALLBACK_SOURCE,
     load_market_regime_rotation_summary,
+    load_market_regime_rotation_summary_as_of,
 )
 from src.sih.rotation_risk_monitor import rotation_risk_summary
 
@@ -322,11 +323,31 @@ def build_market_regime_guardrail_from_rotation_summary(
 
 def market_regime_guardrail_latest(repo_root: Path, run_id: str = "") -> dict[str, Any]:
     input_source = LEGACY_REPLAY_FALLBACK_SOURCE
+    analysis_portfolio_date = _resolve_guardrail_portfolio_date(repo_root=repo_root, run_id=run_id)
     try:
         dedicated_rotation, source_label, warnings = load_market_regime_rotation_summary(repo_root=repo_root)
         if dedicated_rotation is not None:
             rotation = dedicated_rotation
             input_source = source_label
+            if analysis_portfolio_date:
+                as_of_rotation, source_label, as_of_warnings = load_market_regime_rotation_summary_as_of(
+                    repo_root=repo_root,
+                    as_of_date=analysis_portfolio_date,
+                    run_id=run_id,
+                )
+                if as_of_rotation is None:
+                    reason = (
+                        "Dedicated market regime proxy artifact is present, but point-in-time evidence "
+                        "could not be resolved for the requested portfolio date."
+                    )
+                    if as_of_warnings:
+                        reason = reason + " " + " ".join(str(x) for x in as_of_warnings)
+                    payload = unknown_guardrail(reason=reason).to_dict()
+                    payload["scoring_impact"] = "none"
+                    payload["input_source"] = source_label
+                    return payload
+                rotation = as_of_rotation
+                input_source = source_label
         elif source_label == LEGACY_REPLAY_FALLBACK_SOURCE:
             rotation = rotation_risk_summary(repo_root=repo_root, run_id=run_id)
             input_source = LEGACY_REPLAY_FALLBACK_SOURCE
@@ -341,7 +362,6 @@ def market_regime_guardrail_latest(repo_root: Path, run_id: str = "") -> dict[st
     except Exception:
         rotation = None
 
-    analysis_portfolio_date = _resolve_guardrail_portfolio_date(repo_root=repo_root, run_id=run_id)
     if isinstance(rotation, dict) and analysis_portfolio_date:
         # Freshness must be evaluated against the requested/current portfolio analysis date.
         rotation = dict(rotation)

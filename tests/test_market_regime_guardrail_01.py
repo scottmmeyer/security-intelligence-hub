@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -272,6 +273,55 @@ def _write_run_metadata(repo_root: Path, run_id: str, snapshot_date: str) -> Non
     )
 
 
+def _write_proxy_history(repo_root: Path, *, start_date: str, end_date: str) -> None:
+    path = repo_root / "data" / "current" / "market_regime_proxy_price_history.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    symbols = ["XLK", "XLE", "XLB", "XLI"]
+
+    rows: list[dict[str, str]] = []
+    idx = 0
+    d = start
+    while d <= end:
+        for s in symbols:
+            rows.append(
+                {
+                    "date": d.isoformat(),
+                    "symbol": s,
+                    "proxy_group": "technology" if s == "XLK" else "hard_asset",
+                    "price": f"{100.0 + idx:.8f}",
+                    "price_field": "adjusted_close",
+                    "provider": "YAHOO_FINANCE",
+                    "source_timestamp": d.isoformat(),
+                    "retrieved_at_utc": "2026-09-03T00:00:00+00:00",
+                    "status": "OK",
+                }
+            )
+            idx += 1
+        d = d + timedelta(days=1)
+
+    import csv
+
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "date",
+                "symbol",
+                "proxy_group",
+                "price",
+                "price_field",
+                "provider",
+                "source_timestamp",
+                "retrieved_at_utc",
+                "status",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def test_stale_proxy_not_labeled_fresh_for_current_par_binding() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         repo_root = Path(tmp_dir)
@@ -288,6 +338,7 @@ def test_stale_proxy_not_labeled_fresh_for_current_par_binding() -> None:
             repo_root,
             _rotation_summary_fixture(proxy_date="2026-08-25", as_of_date="2026-08-27"),
         )
+        _write_proxy_history(repo_root, start_date="2026-06-01", end_date="2026-08-25")
 
         payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
 
@@ -308,6 +359,7 @@ def test_current_proxy_within_threshold_remains_fresh() -> None:
             repo_root,
             _rotation_summary_fixture(proxy_date="2026-08-31", as_of_date="2026-08-27"),
         )
+        _write_proxy_history(repo_root, start_date="2026-07-01", end_date="2026-09-03")
 
         payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
 
@@ -334,11 +386,57 @@ def test_historical_guardrail_binding_uses_historical_run_date_no_lookahead() ->
             repo_root,
             _rotation_summary_fixture(proxy_date="2026-08-25", as_of_date="2026-08-27"),
         )
+        _write_proxy_history(repo_root, start_date="2026-07-01", end_date="2026-09-03")
 
         historical_payload = market_regime_guardrail_latest(repo_root, run_id=historical_run)
         current_payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
 
         assert historical_payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-08-27"
+        assert historical_payload["data_freshness"]["market_proxies_ts"] == "2026-08-27"
         assert historical_payload["data_freshness"]["freshness_status"] == "FRESH"
         assert current_payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-09-01"
-        assert current_payload["data_freshness"]["freshness_status"] == "STALE"
+        assert current_payload["data_freshness"]["market_proxies_ts"] == "2026-09-01"
+        assert current_payload["data_freshness"]["freshness_status"] == "FRESH"
+
+
+def test_market_regime_future_proxy_clipped_for_par_bound_guardrail() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        current_run = "PAR-20260901-E6CE9722"
+        _write_manifest(
+            repo_root,
+            [{"run_id": current_run, "snapshot_date": "2026-09-01", "status": "COMPLETE"}],
+        )
+        _write_run_metadata(repo_root, current_run, "2026-09-01")
+        _write_dedicated_summary(
+            repo_root,
+            _rotation_summary_fixture(proxy_date="2026-09-03", as_of_date="2026-09-01"),
+        )
+        _write_proxy_history(repo_root, start_date="2026-07-01", end_date="2026-09-03")
+
+        payload = market_regime_guardrail_latest(repo_root, run_id=current_run)
+
+        assert payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-09-01"
+        assert payload["data_freshness"]["market_proxies_ts"] == "2026-09-01"
+        assert payload["data_freshness"]["market_proxies_ts"] != "2026-09-03"
+
+
+def test_market_regime_effective_proxy_timestamp_matches_selected_evidence() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        historical_run = "PAR-20260831-TEST"
+        _write_manifest(
+            repo_root,
+            [{"run_id": historical_run, "snapshot_date": "2026-08-31", "status": "COMPLETE"}],
+        )
+        _write_run_metadata(repo_root, historical_run, "2026-08-31")
+        _write_dedicated_summary(
+            repo_root,
+            _rotation_summary_fixture(proxy_date="2026-09-03", as_of_date="2026-08-31"),
+        )
+        _write_proxy_history(repo_root, start_date="2026-07-01", end_date="2026-09-03")
+
+        payload = market_regime_guardrail_latest(repo_root, run_id=historical_run)
+
+        assert payload["data_freshness"]["portfolio_snapshot_ts"] == "2026-08-31"
+        assert payload["data_freshness"]["market_proxies_ts"] == "2026-08-31"

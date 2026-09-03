@@ -759,3 +759,43 @@ def load_market_regime_rotation_summary(repo_root: Path) -> tuple[dict[str, Any]
         return None, str(payload.get("input_source") or DEDICATED_HISTORY_SOURCE), ["rotation_summary_missing"]
 
     return rotation_summary, str(payload.get("input_source") or DEDICATED_HISTORY_SOURCE), []
+
+
+def load_market_regime_rotation_summary_as_of(
+    *,
+    repo_root: Path,
+    as_of_date: str,
+    run_id: str = "",
+) -> tuple[dict[str, Any] | None, str, list[str]]:
+    rotation_summary, input_source, warnings = load_market_regime_rotation_summary(repo_root)
+    if rotation_summary is None:
+        return None, input_source, warnings
+
+    cutoff = str(as_of_date or "").strip()[:10]
+    if not cutoff:
+        return rotation_summary, input_source, warnings
+
+    by_symbol_prices, source_warnings = _load_dedicated_price_history(repo_root)
+    if source_warnings:
+        # Fail closed for PAR-bound evaluation when canonical dedicated history
+        # cannot be read safely.
+        return None, input_source, list(source_warnings)
+
+    filtered_prices: dict[str, list[tuple[str, float]]] = {}
+    for symbol, points in by_symbol_prices.items():
+        filtered_prices[symbol] = [(d, v) for d, v in points if str(d) <= cutoff]
+
+    returns_by_cohort, latest_common_date, return_warnings = _compute_returns_from_trading_observations(filtered_prices)
+    latest_common_date = str(latest_common_date or "")
+
+    as_of_rotation = _build_rotation_summary_from_returns(
+        repo_root=repo_root,
+        run_id=run_id,
+        latest_common_date=latest_common_date,
+        returns_by_cohort=returns_by_cohort,
+        input_source=input_source,
+    )
+    as_of_rotation["as_of_date"] = cutoff
+
+    all_warnings = [*warnings, *source_warnings, *return_warnings]
+    return as_of_rotation, input_source, all_warnings
