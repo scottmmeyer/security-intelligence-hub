@@ -1502,7 +1502,9 @@ function _macroMarketConfirmationHtml(m) {
   const evidenceNewest = evidence.newest_effective_date || "UNAVAILABLE";
   const coverage = (m && m.coverage) || {};
   const coverageState = coverage.state || (m && m.portfolio_momentum_condition) || "UNAVAILABLE";
-  const coverageWeight = _fmtPct(coverage.evaluable_weight_pct);
+  const coverageWeight = Number.isFinite(Number(coverage.evaluable_weight_pct))
+    ? `${Number(coverage.evaluable_weight_pct).toFixed(2)}%`
+    : "-";
   const coverageDisplay = coverageWeight === "-" ? coverageState : `${coverageState} (${coverageWeight})`;
   return `
     <div class="mlc-section">

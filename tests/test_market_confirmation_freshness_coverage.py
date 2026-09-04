@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from scripts.run_outcome_ui import _macro_market_confirmation_payload
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_market_confirmation_includes_explicit_freshness_and_coverage_fields() -> None:
@@ -50,3 +55,15 @@ def test_market_confirmation_coverage_matches_existing_state_field() -> None:
     payload = _macro_market_confirmation_payload()
     coverage = payload.get("coverage") or {}
     assert coverage.get("state") == payload.get("portfolio_momentum_condition")
+
+
+def test_portfolio_alignment_renderer_handles_reporting_contract() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert 'const summaryRecency = (m && (m.summary_recency || m.freshness)) || "UNAVAILABLE";' in app_js
+    assert "evidence.status || \"UNAVAILABLE\"" in app_js
+    assert "coverage.state || (m && m.portfolio_momentum_condition)" in app_js
+    assert "Number.isFinite(Number(coverage.evaluable_weight_pct))" in app_js
+    assert "_fmtPct(coverage.evaluable_weight_pct)" not in app_js
+    assert 'macroSlot.outerHTML = renderMacroLiquidityContextCard(payload);' in app_js
+    assert 'macroSlot.outerHTML = renderMacroLiquidityContextCard({' in app_js
