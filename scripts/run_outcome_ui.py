@@ -2626,6 +2626,91 @@ def _pis_momentum_summary_cached() -> dict:
         raise
 
 
+def _latest_date_from_horizons(horizons: dict[str, object], *, cutoff_date: str = "") -> str | None:
+    cutoff = str(cutoff_date or "")[:10]
+    dates: list[str] = []
+    for value in (horizons or {}).values():
+        if not isinstance(value, dict):
+            continue
+        as_of = str(value.get("as_of_date") or "")[:10]
+        if not as_of:
+            continue
+        if cutoff and as_of > cutoff:
+            continue
+        dates.append(as_of)
+    return max(dates) if dates else None
+
+
+def _latest_fundamental_date_for_symbols(summary: dict, symbols: list[str], *, cutoff_date: str = "") -> str | None:
+    cutoff = str(cutoff_date or "")[:10]
+    rows = list((((summary or {}).get("portfolio_momentum_map") or {}).get("holdings") or []))
+    symbol_set = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    dates: list[str] = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if symbol not in symbol_set:
+            continue
+        details = (((row.get("fundamental_momentum") or {}).get("details")) or {})
+        if not isinstance(details, dict):
+            continue
+        for detail in details.values():
+            if not isinstance(detail, dict):
+                continue
+            as_of = str(detail.get("as_of_date") or "")[:10]
+            if not as_of:
+                continue
+            if cutoff and as_of > cutoff:
+                continue
+            dates.append(as_of)
+    return max(dates) if dates else None
+
+
+def _latest_portfolio_price_evidence_date(summary: dict, *, cutoff_date: str = "") -> str | None:
+    cutoff = str(cutoff_date or "")[:10]
+    rows = list((((summary or {}).get("portfolio_momentum_map") or {}).get("holdings") or []))
+    dates: list[str] = []
+    for row in rows:
+        horizons = (((row.get("absolute_security_momentum") or {}).get("horizons")) or {})
+        d = _latest_date_from_horizons(horizons, cutoff_date=cutoff)
+        if d:
+            dates.append(d)
+    return max(dates) if dates else None
+
+
+def _latest_portfolio_fundamental_evidence_date(summary: dict, *, cutoff_date: str = "") -> str | None:
+    cutoff = str(cutoff_date or "")[:10]
+    rows = list((((summary or {}).get("portfolio_momentum_map") or {}).get("holdings") or []))
+    dates: list[str] = []
+    for row in rows:
+        details = (((row.get("fundamental_momentum") or {}).get("details")) or {})
+        if not isinstance(details, dict):
+            continue
+        for detail in details.values():
+            if not isinstance(detail, dict):
+                continue
+            as_of = str(detail.get("as_of_date") or "")[:10]
+            if not as_of:
+                continue
+            if cutoff and as_of > cutoff:
+                continue
+            dates.append(as_of)
+    return max(dates) if dates else None
+
+
+def _evidence_freshness_state_from_dates(evidence_dates: list[str], *, snapshot_date: str = "") -> str:
+    snapshot = str(snapshot_date or "")[:10]
+    dates = sorted({d for d in evidence_dates if d})
+    if not dates:
+        return "UNAVAILABLE"
+    if snapshot and all(d == snapshot for d in dates):
+        return "CURRENT"
+    if len(dates) > 1:
+        return "MIXED"
+    if snapshot and dates[0] < snapshot:
+        return "STALE"
+    return "CURRENT"
+
+
 def _macro_market_confirmation_payload() -> dict:
     signature = _macro_momentum_dependency_signature()
     with _MACRO_MOMENTUM_CACHE_LOCK:
@@ -2644,7 +2729,9 @@ def _macro_market_confirmation_payload() -> dict:
         summary = pis_momentum_summary(repo_root=_REPO_ROOT)
 
         sector_rows = list(summary.get("sector_rotation") or [])
+        holdings_rows = list((((summary or {}).get("portfolio_momentum_map") or {}).get("holdings") or []))
         tech_row = next((r for r in sector_rows if str(r.get("sector") or "").strip().upper() == "TECHNOLOGY"), {})
+        all_row = next((r for r in sector_rows if str(r.get("sector") or "").strip().upper() == "ALL"), {})
         fi_row = next(
             (
                 r
@@ -2652,6 +2739,57 @@ def _macro_market_confirmation_payload() -> dict:
                 if "FIXED" in str(r.get("sector") or "").upper() or "BOND" in str(r.get("sector") or "").upper()
             ),
             {},
+        )
+        snapshot_date = str(summary.get("snapshot_date") or "")[:10]
+
+        market_state_evidence_date = _latest_date_from_horizons(
+            (((summary.get("market_momentum") or {}).get("market_absolute_momentum") or {}).get("horizons") or {}),
+            cutoff_date=snapshot_date,
+        )
+        broad_breadth_price_evidence_date = _latest_date_from_horizons(
+            (((tech_row.get("absolute_momentum") or {}).get("horizons")) or {}),
+            cutoff_date=snapshot_date,
+        )
+        tech_breadth_price_evidence_date = broad_breadth_price_evidence_date
+        fixed_income_evidence_date = _latest_date_from_horizons(
+            (((fi_row.get("relative_to_market") or {}).get("horizons")) or {}),
+            cutoff_date=snapshot_date,
+        ) or _latest_date_from_horizons(
+            (((fi_row.get("absolute_momentum") or {}).get("horizons")) or {}),
+            cutoff_date=snapshot_date,
+        )
+
+        tech_symbols = [
+            str(row.get("symbol") or "").strip().upper()
+            for row in holdings_rows
+            if str(row.get("sector") or "").strip().upper() == "TECHNOLOGY"
+        ]
+        all_symbols = [str(row.get("symbol") or "").strip().upper() for row in holdings_rows]
+        broad_breadth_fund_evidence_date = _latest_fundamental_date_for_symbols(
+            summary,
+            tech_symbols,
+            cutoff_date=snapshot_date,
+        )
+        tech_breadth_fund_evidence_date = broad_breadth_fund_evidence_date
+        portfolio_price_evidence_date = _latest_portfolio_price_evidence_date(summary, cutoff_date=snapshot_date)
+        portfolio_fund_evidence_date = _latest_portfolio_fundamental_evidence_date(summary, cutoff_date=snapshot_date)
+
+        component_dates = {
+            "market_state": market_state_evidence_date,
+            "broad_market_breadth_price": broad_breadth_price_evidence_date,
+            "broad_market_breadth_fundamental": broad_breadth_fund_evidence_date,
+            "fixed_income_state": fixed_income_evidence_date,
+            "technology_breadth_price": tech_breadth_price_evidence_date,
+            "technology_breadth_fundamental": tech_breadth_fund_evidence_date,
+            "portfolio_momentum_price": portfolio_price_evidence_date,
+            "portfolio_momentum_fundamental": portfolio_fund_evidence_date,
+        }
+        effective_dates = [d for d in component_dates.values() if d]
+        oldest_effective_date = min(effective_dates) if effective_dates else None
+        newest_effective_date = max(effective_dates) if effective_dates else None
+        evidence_freshness_status = _evidence_freshness_state_from_dates(
+            effective_dates,
+            snapshot_date=snapshot_date,
         )
 
         payload = {
@@ -2666,8 +2804,22 @@ def _macro_market_confirmation_payload() -> dict:
             "fixed_income_change": str((fi_row.get("relative_to_market") or {}).get("change") or "UNAVAILABLE"),
             "technology_breadth": str((tech_row.get("breadth") or {}).get("state") or "UNAVAILABLE"),
             "portfolio_momentum_condition": str((summary.get("coverage") or {}).get("portfolio_coverage_state") or "UNAVAILABLE"),
-            "as_of": str(summary.get("snapshot_date") or ""),
+            "as_of": snapshot_date,
             "freshness": _freshness_label(str(summary.get("snapshot_date") or ""), fresh_days=5),
+            "summary_recency": _freshness_label(str(summary.get("snapshot_date") or ""), fresh_days=5),
+            "evidence_freshness": {
+                "status": evidence_freshness_status,
+                "oldest_effective_date": oldest_effective_date,
+                "newest_effective_date": newest_effective_date,
+                "component_effective_dates": component_dates,
+                "threshold_days": None,
+                "source": "derived_from_selected_momentum_evidence",
+            },
+            "coverage": {
+                "state": str((summary.get("coverage") or {}).get("portfolio_coverage_state") or "UNAVAILABLE"),
+                "evaluable_weight_pct": (summary.get("coverage") or {}).get("portfolio_momentum_evaluable_weight_pct"),
+                "source": "summary.coverage",
+            },
             "source": "/api/pis/momentum/summary",
             "provenance": "src/pis/momentum_intelligence.py::pis_momentum_summary",
             "availability": "AVAILABLE" if isinstance(summary, dict) and summary else "UNAVAILABLE",
@@ -2689,6 +2841,20 @@ def _macro_market_confirmation_payload() -> dict:
             "portfolio_momentum_condition": "UNAVAILABLE",
             "as_of": None,
             "freshness": "UNAVAILABLE",
+            "summary_recency": "UNAVAILABLE",
+            "evidence_freshness": {
+                "status": "UNAVAILABLE",
+                "oldest_effective_date": None,
+                "newest_effective_date": None,
+                "component_effective_dates": {},
+                "threshold_days": None,
+                "source": "derived_from_selected_momentum_evidence",
+            },
+            "coverage": {
+                "state": "UNAVAILABLE",
+                "evaluable_weight_pct": None,
+                "source": "summary.coverage",
+            },
             "source": "/api/pis/momentum/summary",
             "provenance": "src/pis/momentum_intelligence.py::pis_momentum_summary",
             "availability": "UNAVAILABLE",

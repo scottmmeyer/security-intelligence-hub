@@ -1495,6 +1495,15 @@ function _macroTableHtml(title, rows) {
 
 function _macroMarketConfirmationHtml(m) {
   const row = (k, v) => `<div><span class="mlc-k">${escHtml(k)}</span><span class="mlc-v">${_macroCell(v)}</span></div>`;
+  const summaryRecency = (m && (m.summary_recency || m.freshness)) || "UNAVAILABLE";
+  const evidence = (m && m.evidence_freshness) || {};
+  const evidenceStatus = evidence.status || "UNAVAILABLE";
+  const evidenceOldest = evidence.oldest_effective_date || "UNAVAILABLE";
+  const evidenceNewest = evidence.newest_effective_date || "UNAVAILABLE";
+  const coverage = (m && m.coverage) || {};
+  const coverageState = coverage.state || (m && m.portfolio_momentum_condition) || "UNAVAILABLE";
+  const coverageWeight = _fmtPct(coverage.evaluable_weight_pct);
+  const coverageDisplay = coverageWeight === "-" ? coverageState : `${coverageState} (${coverageWeight})`;
   return `
     <div class="mlc-section">
       <div class="mlc-section-title">Market Confirmation</div>
@@ -1506,9 +1515,11 @@ function _macroMarketConfirmationHtml(m) {
         ${row("Fixed Income State", m && m.fixed_income_state)}
         ${row("Fixed Income Change", m && m.fixed_income_change)}
         ${row("Technology Breadth", m && m.technology_breadth)}
-        ${row("Portfolio Momentum Condition", m && m.portfolio_momentum_condition)}
+        ${row("Coverage", coverageDisplay)}
         ${row("As Of", m && m.as_of)}
-        ${row("Freshness", m && m.freshness)}
+        ${row("Summary Recency", summaryRecency)}
+        ${row("Evidence Freshness", evidenceStatus)}
+        ${row("Evidence Window", `${evidenceOldest} -> ${evidenceNewest}`)}
         ${row("Source", m && m.source)}
         ${row("Provenance", m && m.provenance)}
       </div>
