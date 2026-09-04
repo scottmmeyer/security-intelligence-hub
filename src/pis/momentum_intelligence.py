@@ -68,6 +68,47 @@ class MomentumSeries:
     points: list[tuple[str, float]]
 
 
+@dataclass(frozen=True)
+class MomentumEvaluationContext:
+    repo_root: Path
+    analysis_as_of: str
+    universe: dict[str, dict[str, str]]
+    security_type_map: dict[str, str]
+    market_horizons: dict[str, dict[str, object]]
+    security_series: dict[str, MomentumSeries]
+    sector_proxy_series: dict[str, MomentumSeries]
+    ess_series: dict[str, list[tuple[str, float]]]
+    zacks_series: dict[str, list[tuple[str, float]]]
+    danelfin_series: dict[str, list[tuple[str, float]]]
+    yahoo_pt_series: dict[str, list[tuple[str, float]]]
+    yahoo_abr_series: dict[str, list[tuple[str, float]]]
+    fmp_consensus_series: dict[str, list[tuple[str, float]]]
+    fmp_income_growth_series: dict[str, list[tuple[str, float]]]
+    sector_members: dict[str, list[str]]
+    industry_members: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class AsOfBaseEvaluationContext:
+    repo_root: Path
+    as_of: str
+    universe: dict[str, dict[str, str]]
+    holdings_symbols_as_of: set[str]
+    holding_asset_type_by_symbol: dict[str, str]
+    market_series: MomentumSeries
+    market_horizons: dict[str, dict[str, object]]
+    ess_series: dict[str, list[tuple[str, float]]]
+    zacks_series: dict[str, list[tuple[str, float]]]
+    danelfin_series: dict[str, list[tuple[str, float]]]
+    yahoo_pt_series: dict[str, list[tuple[str, float]]]
+    yahoo_abr_series: dict[str, list[tuple[str, float]]]
+    fmp_consensus_series: dict[str, list[tuple[str, float]]]
+    fmp_income_growth_series: dict[str, list[tuple[str, float]]]
+
+
+_AS_OF_BASE_CONTEXT_CACHE: dict[tuple[str, str], AsOfBaseEvaluationContext] = {}
+
+
 def _to_float(value: object) -> float | None:
     try:
         text = str(value or "").strip()
@@ -152,6 +193,42 @@ def _load_security_type_taxonomy(repo_root: Path) -> dict[str, str]:
                     out[symbol] = security_type
                     break
 
+    return out
+
+
+def _load_security_type_taxonomy_for_symbols(repo_root: Path, symbols: set[str]) -> dict[str, str]:
+    requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    if not requested:
+        return {}
+
+    out: dict[str, str] = {}
+    _snapshot_date, holdings = _load_holdings(repo_root)
+    for row in holdings:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if symbol not in requested:
+            continue
+        asset_type = _taxonomy_upper_or_unknown(row.get("asset_type", ""))
+        if asset_type != "UNKNOWN":
+            out[symbol] = asset_type
+
+    current_price_rows = _read_csv_rows(repo_root / "data/current/security_prices.csv")
+    for row in current_price_rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if symbol not in requested or symbol in out:
+            continue
+        security_type = _taxonomy_upper_or_unknown(row.get("security_type", ""))
+        if security_type != "UNKNOWN":
+            out[symbol] = security_type
+
+    for symbol in sorted(requested - set(out.keys())):
+        price_file = repo_root / f"data/history/prices/symbol={symbol}/prices.csv"
+        if not price_file.exists():
+            continue
+        for row in _read_csv_rows(price_file):
+            security_type = _taxonomy_upper_or_unknown(row.get("security_type", ""))
+            if security_type != "UNKNOWN":
+                out[symbol] = security_type
+                break
     return out
 
 
@@ -663,6 +740,35 @@ def _load_security_price_series(repo_root: Path) -> dict[str, MomentumSeries]:
     return out
 
 
+def _load_security_price_series_for_symbols(repo_root: Path, symbols: set[str]) -> dict[str, MomentumSeries]:
+    requested = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    out: dict[str, MomentumSeries] = {}
+    if not requested:
+        return out
+
+    for symbol in sorted(requested):
+        price_file = repo_root / f"data/history/prices/symbol={symbol}/prices.csv"
+        if not price_file.exists():
+            continue
+        rows = _read_csv_rows(price_file)
+        points: list[tuple[str, float]] = []
+        for row in rows:
+            d = _normalize_date(row.get("date", ""))
+            price = _to_float(row.get("adjusted_close"))
+            if d and price and price > 0:
+                points.append((d, float(price)))
+        points.sort(key=lambda x: x[0])
+        as_of = points[-1][0] if points else ""
+        out[symbol] = MomentumSeries(
+            symbol=symbol,
+            source=f"data/history/prices/symbol={symbol}/prices.csv",
+            as_of_date=as_of,
+            freshness_days=_freshness_days(as_of),
+            points=points,
+        )
+    return out
+
+
 def _load_universe_metadata(repo_root: Path) -> dict[str, dict[str, str]]:
     """Load security metadata with source and granularity provenance.
 
@@ -1033,11 +1139,12 @@ def _filter_series_to_as_of(series: MomentumSeries | None, as_of_date: str) -> M
             freshness_days=_freshness_days(as_of),
             points=[],
         )
+    last_selected_date = filtered[-1][0]
     return MomentumSeries(
         symbol=series.symbol,
         source=series.source,
-        as_of_date=as_of,
-        freshness_days=_freshness_days(as_of),
+        as_of_date=last_selected_date,
+        freshness_days=_freshness_days(last_selected_date),
         points=filtered,
     )
 
@@ -1050,6 +1157,90 @@ def _filter_metric_series_to_as_of(
     if not as_of:
         return list(series)
     return [(d, value) for d, value in series if d <= as_of]
+
+
+def _filter_metric_map_to_as_of(
+    series_map: dict[str, list[tuple[str, float]]],
+    as_of_date: str,
+) -> dict[str, list[tuple[str, float]]]:
+    as_of = str(as_of_date or "")[:10]
+    if not as_of:
+        return dict(series_map)
+    return {
+        symbol: _filter_metric_series_to_as_of(series, as_of)
+        for symbol, series in series_map.items()
+    }
+
+
+def _get_as_of_base_context(repo_root: Path, as_of_date: str) -> AsOfBaseEvaluationContext:
+    as_of = str(as_of_date or "")[:10]
+    root_key = str(repo_root.resolve())
+    key = (root_key, as_of)
+    cached = _AS_OF_BASE_CONTEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    universe = _load_universe_metadata(repo_root)
+    _holdings_snapshot_date, holdings_as_of = _load_holdings_as_of(repo_root, as_of)
+    holdings_symbols_as_of = {str(item.get("symbol", "")).upper() for item in holdings_as_of if str(item.get("symbol", "")).strip()}
+    holding_asset_type_by_symbol = {
+        str(item.get("symbol", "")).upper(): str(item.get("asset_type", "")).upper()
+        for item in holdings_as_of
+    }
+
+    market_series = _filter_series_to_as_of(_load_benchmark_series(repo_root), as_of) or MomentumSeries(
+        symbol="^GSPC",
+        source="UNAVAILABLE",
+        as_of_date=as_of,
+        freshness_days=_freshness_days(as_of),
+        points=[],
+    )
+    market_horizons = _build_horizon_payload(market_series)
+
+    ess_series = _filter_metric_map_to_as_of(_load_ess_series(repo_root), as_of)
+    zacks_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score"))),
+        as_of,
+    )
+    danelfin_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/danelfin/*_danelfin*.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("danelfin_score"))),
+        as_of,
+    )
+    yahoo_pt_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("price_target"))),
+        as_of,
+    )
+    yahoo_abr_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("abr"))),
+        as_of,
+    )
+    fmp_consensus_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/fmp/daily/fmp_grades_consensus_*.csv", lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""), lambda row: _to_float(row.get("net_buy_score"))),
+        as_of,
+    )
+    fmp_income_growth_series = _filter_metric_map_to_as_of(
+        _load_daily_symbol_metric_series(repo_root, "data/signals/fmp/latest/latest_fmp_income_growth.csv", lambda _p: _today_utc().isoformat(), lambda row: _to_float(row.get("revenue_growth_q1_yoy"))),
+        as_of,
+    )
+
+    context = AsOfBaseEvaluationContext(
+        repo_root=repo_root,
+        as_of=as_of,
+        universe=universe,
+        holdings_symbols_as_of=holdings_symbols_as_of,
+        holding_asset_type_by_symbol=holding_asset_type_by_symbol,
+        market_series=market_series,
+        market_horizons=market_horizons,
+        ess_series=ess_series,
+        zacks_series=zacks_series,
+        danelfin_series=danelfin_series,
+        yahoo_pt_series=yahoo_pt_series,
+        yahoo_abr_series=yahoo_abr_series,
+        fmp_consensus_series=fmp_consensus_series,
+        fmp_income_growth_series=fmp_income_growth_series,
+    )
+    _AS_OF_BASE_CONTEXT_CACHE[key] = context
+    return context
 
 
 def _as_of_absolute_state_from_price_points(series: MomentumSeries) -> str:
@@ -1214,18 +1405,27 @@ def evaluate_momentum_as_of(
     sym = str(symbol or "").strip().upper()
     as_of = str(as_of_date or "")[:10]
 
-    universe = _load_universe_metadata(root)
-    security_type_map = _load_security_type_taxonomy(root)
-    _holdings_snapshot_date, holdings_as_of = _load_holdings_as_of(root, as_of)
-    holdings_symbols_as_of = [str(item.get("symbol", "")).upper() for item in holdings_as_of]
-    holding_asset_type_by_symbol = {
-        str(item.get("symbol", "")).upper(): str(item.get("asset_type", "")).upper()
-        for item in holdings_as_of
-    }
-    market_series = _filter_series_to_as_of(_load_benchmark_series(root), as_of)
-    market_horizons = _build_horizon_payload(market_series or MomentumSeries(symbol="^GSPC", source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[]))
+    base_context = _get_as_of_base_context(root, as_of)
+    universe = base_context.universe
 
-    security_series = _load_security_price_series(root)
+    metadata_probe = universe.get(sym, {})
+    inferred_sector = str(metadata_probe.get("sector", "UNKNOWN")).strip() or "UNKNOWN"
+    inferred_industry = str(metadata_probe.get("industry", "UNAVAILABLE")).strip() or "UNAVAILABLE"
+
+    context_symbols: set[str] = {sym}
+    if sym in base_context.holdings_symbols_as_of:
+        context_symbols.update(base_context.holdings_symbols_as_of)
+    else:
+        for symbol_name, meta in universe.items():
+            sector = str(meta.get("sector", "")).strip()
+            industry = str(meta.get("industry", "")).strip()
+            if sector == inferred_sector or (inferred_industry != "UNAVAILABLE" and industry == inferred_industry):
+                context_symbols.add(str(symbol_name).strip().upper())
+    context_symbols.update(_SECTOR_PROXY_FALLBACKS.values())
+
+    security_type_map = _load_security_type_taxonomy_for_symbols(root, context_symbols | {sym})
+
+    security_series = _load_security_price_series_for_symbols(root, context_symbols)
     filtered_security_series: dict[str, MomentumSeries] = {
         name: (_filter_series_to_as_of(series, as_of) or MomentumSeries(symbol=name, source="UNAVAILABLE", as_of_date=as_of, freshness_days=_freshness_days(as_of), points=[]))
         for name, series in security_series.items()
@@ -1246,10 +1446,10 @@ def evaluate_momentum_as_of(
 
     # For holdings symbols on a known as-of portfolio snapshot, align parent
     # construction semantics with canonical live momentum (holdings cohort).
-    if sym in set(holdings_symbols_as_of):
-        context_symbols = holdings_symbols_as_of
+    if sym in set(base_context.holdings_symbols_as_of):
+        peer_symbols = list(base_context.holdings_symbols_as_of)
     else:
-        context_symbols = list(universe.keys())
+        peer_symbols = list(context_symbols)
 
     metadata = _resolve_momentum_security_metadata(
         sym,
@@ -1270,7 +1470,7 @@ def evaluate_momentum_as_of(
 
     sector_series = filtered_sector_proxy.get(sector_proxy) if sector_proxy else None
     if sector_series is None:
-        candidates = [s for s in context_symbols if str(universe.get(s, {}).get("sector", "")).strip() == sector_name]
+        candidates = [s for s in peer_symbols if str(universe.get(s, {}).get("sector", "")).strip() == sector_name]
         if candidates:
             sector_series = _group_series_from_constituents(
                 [symbol_name for symbol_name in candidates if symbol_name in filtered_security_series],
@@ -1282,10 +1482,10 @@ def evaluate_momentum_as_of(
 
     industry_series = None
     if industry_name != "UNAVAILABLE":
-        industry_candidates = [s for s in context_symbols if str(universe.get(s, {}).get("industry", "")).strip() == industry_name]
+        industry_candidates = [s for s in peer_symbols if str(universe.get(s, {}).get("industry", "")).strip() == industry_name]
         with_series = [item for item in industry_candidates if item in filtered_security_series and bool(filtered_security_series[item].points)]
         coverage_pct = (len(with_series) / len(industry_candidates)) if industry_candidates else 0.0
-        constituent_asset_types = {holding_asset_type_by_symbol.get(item, "") for item in industry_candidates}
+        constituent_asset_types = {base_context.holding_asset_type_by_symbol.get(item, "") for item in industry_candidates}
         has_equity_like_constituents = any(asset_type in _EQUITY_LIKE_ASSET_TYPES for asset_type in constituent_asset_types)
         parent_applicable = has_equity_like_constituents if industry_candidates else False
         parent_available = (
@@ -1308,7 +1508,7 @@ def evaluate_momentum_as_of(
     industry_horizons = _build_horizon_payload(_filter_series_to_as_of(industry_series, as_of) or industry_series)
 
     abs_state = _classify_absolute_momentum_state(sec_horizons)
-    sec_vs_market = _compute_relative_horizons(sec_horizons, market_horizons, source_label=f"{sym} vs market")
+    sec_vs_market = _compute_relative_horizons(sec_horizons, base_context.market_horizons, source_label=f"{sym} vs market")
     sec_vs_sector = _compute_relative_horizons(sec_horizons, sector_horizons, source_label=f"{sym} vs sector")
     sec_vs_industry = _compute_relative_horizons(sec_horizons, industry_horizons, source_label=f"{sym} vs industry")
     industry_rel_level = _relative_strength_level(sec_vs_industry)
@@ -1327,21 +1527,13 @@ def evaluate_momentum_as_of(
     sector_parent_used = bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_sector.values()))
     industry_parent_used = bool(any(value.get("state") != "UNAVAILABLE" or value.get("relative_return_pct") is not None for value in sec_vs_industry.values()))
 
-    ess_series = _load_ess_series(root)
-    zacks_series = _load_daily_symbol_metric_series(root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score")))
-    danelfin_series = _load_daily_symbol_metric_series(root, "data/signals/danelfin/*_danelfin*.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("danelfin_score")))
-    yahoo_pt_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("price_target")))
-    yahoo_abr_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("abr")))
-    fmp_consensus_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/daily/fmp_grades_consensus_*.csv", lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""), lambda row: _to_float(row.get("net_buy_score")))
-    fmp_income_growth_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/latest/latest_fmp_income_growth.csv", lambda _p: _today_utc().isoformat(), lambda row: _to_float(row.get("revenue_growth_q1_yoy")))
-
-    filtered_ess = _filter_metric_series_to_as_of(ess_series.get(sym, []), as_of)
-    filtered_zacks = _filter_metric_series_to_as_of(zacks_series.get(sym, []), as_of)
-    filtered_danelfin = _filter_metric_series_to_as_of(danelfin_series.get(sym, []), as_of)
-    filtered_yahoo_pt = _filter_metric_series_to_as_of(yahoo_pt_series.get(sym, []), as_of)
-    filtered_yahoo_abr = _filter_metric_series_to_as_of(yahoo_abr_series.get(sym, []), as_of)
-    filtered_fmp_consensus = _filter_metric_series_to_as_of(fmp_consensus_series.get(sym, []), as_of)
-    filtered_fmp_growth = _filter_metric_series_to_as_of(fmp_income_growth_series.get(sym, []), as_of)
+    filtered_ess = base_context.ess_series.get(sym, [])
+    filtered_zacks = base_context.zacks_series.get(sym, [])
+    filtered_danelfin = base_context.danelfin_series.get(sym, [])
+    filtered_yahoo_pt = base_context.yahoo_pt_series.get(sym, [])
+    filtered_yahoo_abr = base_context.yahoo_abr_series.get(sym, [])
+    filtered_fmp_consensus = base_context.fmp_consensus_series.get(sym, [])
+    filtered_fmp_growth = base_context.fmp_income_growth_series.get(sym, [])
 
     fundamentals = _fundamental_snapshot_for_symbol(
         sym,
@@ -1385,9 +1577,9 @@ def evaluate_momentum_as_of(
         "confirmation_state": confirmation,
         "extension_state": extension_state,
         "price_points_available": len(raw_points),
-        "market_points_available": len([d for d, _ in (market_series.points if market_series else []) if d <= as_of]),
+        "market_points_available": len([d for d, _ in (base_context.market_series.points if base_context.market_series else []) if d <= as_of]),
         "raw_price_points": raw_points,
-        "raw_market_points": [d for d, _ in (market_series.points if market_series else []) if d <= as_of],
+        "raw_market_points": [d for d, _ in (base_context.market_series.points if base_context.market_series else []) if d <= as_of],
         "source_constraints": {
             "price_observations_filtered_to_as_of": True,
             "benchmark_observations_filtered_to_as_of": True,
@@ -1739,6 +1931,8 @@ def _build_symbol_evaluation_record(
     yahoo_abr_series: dict[str, list[tuple[str, float]]],
     fmp_consensus_series: dict[str, list[tuple[str, float]]],
     fmp_income_growth_series: dict[str, list[tuple[str, float]]],
+    sector_members: dict[str, list[str]] | None = None,
+    industry_members: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     symbol = str(symbol).strip().upper()
     metadata = _resolve_momentum_security_metadata(
@@ -1752,7 +1946,10 @@ def _build_symbol_evaluation_record(
     sector_proxy = _SECTOR_PROXY_FALLBACKS.get(sector_name.upper())
     sector_series = sector_proxy_series.get(sector_proxy) if sector_proxy else None
     if sector_series is None:
-        sector_candidates = [s for s, m in universe.items() if str(m.get("sector", "")).strip() == sector_name]
+        if sector_members and sector_name in sector_members:
+            sector_candidates = list(sector_members.get(sector_name, []))
+        else:
+            sector_candidates = [s for s, m in universe.items() if str(m.get("sector", "")).strip() == sector_name]
         if sector_candidates:
             sector_series = _group_series_from_constituents(
                 [s for s in sector_candidates if s in security_series],
@@ -1764,7 +1961,13 @@ def _build_symbol_evaluation_record(
     else:
         sector_horizons = _build_horizon_payload(sector_series)
 
-    industry_candidates = [s for s, m in universe.items() if str(m.get("industry", "")).strip() == industry_name] if industry_name != "UNAVAILABLE" else []
+    if industry_name != "UNAVAILABLE":
+        if industry_members and industry_name in industry_members:
+            industry_candidates = list(industry_members.get(industry_name, []))
+        else:
+            industry_candidates = [s for s, m in universe.items() if str(m.get("industry", "")).strip() == industry_name]
+    else:
+        industry_candidates = []
     if industry_candidates:
         industry_series = _group_series_from_constituents([s for s in industry_candidates if s in security_series], security_series, group_key=f"INDUSTRY::{industry_name.upper()}")
     else:
@@ -1883,13 +2086,85 @@ def _build_symbol_evaluation_record(
 
 def evaluate_momentum_for_symbols(symbols: list[str] | tuple[str, ...], *, repo_root: str | Path = ".") -> list[dict[str, object]]:
     root = Path(repo_root)
-    coverage_inventory = inventory_current_price_coverage(root)
+    requested_symbols: list[str] = []
+    seen: set[str] = set()
+    for symbol in list(symbols):
+        sym = str(symbol).strip().upper()
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        requested_symbols.append(sym)
+    if not requested_symbols:
+        return []
+
     universe = _load_universe_metadata(root)
-    security_type_map = _load_security_type_taxonomy(root)
+    requested_set = set(requested_symbols)
+    sector_names = {
+        str(universe.get(symbol, {}).get("sector", "")).strip()
+        for symbol in requested_symbols
+        if str(universe.get(symbol, {}).get("sector", "")).strip()
+    }
+    industry_names = {
+        str(universe.get(symbol, {}).get("industry", "")).strip()
+        for symbol in requested_symbols
+        if str(universe.get(symbol, {}).get("industry", "")).strip() and str(universe.get(symbol, {}).get("industry", "")).strip() != "UNAVAILABLE"
+    }
+
+    context_symbols = set(requested_set)
+    for symbol_name, meta in universe.items():
+        sector = str(meta.get("sector", "")).strip()
+        industry = str(meta.get("industry", "")).strip()
+        if sector in sector_names or industry in industry_names:
+            context_symbols.add(str(symbol_name).strip().upper())
+    context_symbols.update(_SECTOR_PROXY_FALLBACKS.values())
+
+    security_type_map = _load_security_type_taxonomy_for_symbols(root, requested_set)
+    holdings_snapshot_date, _holdings = _load_holdings(root)
+    analysis_as_of = str(holdings_snapshot_date or "")[:10]
+
     market_series = _load_benchmark_series(root)
+    if analysis_as_of:
+        market_series = _filter_series_to_as_of(market_series, analysis_as_of) or MomentumSeries(
+            symbol="^GSPC",
+            source="data/current/benchmark_returns.csv",
+            as_of_date=analysis_as_of,
+            freshness_days=_freshness_days(analysis_as_of),
+            points=[],
+        )
     market_horizons = _build_horizon_payload(market_series)
-    security_series = _load_security_price_series(root)
+
+    security_series = _load_security_price_series_for_symbols(root, context_symbols)
+    if analysis_as_of:
+        security_series = {
+            symbol_name: (
+                _filter_series_to_as_of(series, analysis_as_of)
+                or MomentumSeries(
+                    symbol=symbol_name,
+                    source=series.source,
+                    as_of_date=analysis_as_of,
+                    freshness_days=_freshness_days(analysis_as_of),
+                    points=[],
+                )
+            )
+            for symbol_name, series in security_series.items()
+        }
+
     sector_proxy_series = _load_sector_proxy_series(root, security_series=security_series)
+    if analysis_as_of:
+        sector_proxy_series = {
+            symbol_name: (
+                _filter_series_to_as_of(series, analysis_as_of)
+                or MomentumSeries(
+                    symbol=symbol_name,
+                    source=series.source,
+                    as_of_date=analysis_as_of,
+                    freshness_days=_freshness_days(analysis_as_of),
+                    points=[],
+                )
+            )
+            for symbol_name, series in sector_proxy_series.items()
+        }
+
     ess_series = _load_ess_series(root)
     zacks_series = _load_daily_symbol_metric_series(root, "data/signals/zacks/*_zacks.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("zacks_score")))
     danelfin_series = _load_daily_symbol_metric_series(root, "data/signals/danelfin/*_danelfin*.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("danelfin_score")))
@@ -1897,30 +2172,65 @@ def evaluate_momentum_for_symbols(symbols: list[str] | tuple[str, ...], *, repo_
     yahoo_abr_series = _load_daily_symbol_metric_series(root, "data/signals/yahoo/*_yahoo_supplemental.csv", lambda p: p.name.split("_", 1)[0], lambda row: _to_float(row.get("abr")))
     fmp_consensus_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/daily/fmp_grades_consensus_*.csv", lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""), lambda row: _to_float(row.get("net_buy_score")))
     fmp_income_growth_series = _load_daily_symbol_metric_series(root, "data/signals/fmp/latest/latest_fmp_income_growth.csv", lambda _p: _today_utc().isoformat(), lambda row: _to_float(row.get("revenue_growth_q1_yoy")))
+    if analysis_as_of:
+        ess_series = _filter_metric_map_to_as_of(ess_series, analysis_as_of)
+        zacks_series = _filter_metric_map_to_as_of(zacks_series, analysis_as_of)
+        danelfin_series = _filter_metric_map_to_as_of(danelfin_series, analysis_as_of)
+        yahoo_pt_series = _filter_metric_map_to_as_of(yahoo_pt_series, analysis_as_of)
+        yahoo_abr_series = _filter_metric_map_to_as_of(yahoo_abr_series, analysis_as_of)
+        fmp_consensus_series = _filter_metric_map_to_as_of(fmp_consensus_series, analysis_as_of)
+        fmp_income_growth_series = _filter_metric_map_to_as_of(fmp_income_growth_series, analysis_as_of)
+
+    sector_members: dict[str, list[str]] = {}
+    industry_members: dict[str, list[str]] = {}
+    for symbol_name in context_symbols:
+        meta = universe.get(symbol_name, {})
+        sector = str(meta.get("sector", "")).strip()
+        industry = str(meta.get("industry", "")).strip()
+        if sector:
+            sector_members.setdefault(sector, []).append(symbol_name)
+        if industry and industry != "UNAVAILABLE":
+            industry_members.setdefault(industry, []).append(symbol_name)
+
+    context = MomentumEvaluationContext(
+        repo_root=root,
+        analysis_as_of=analysis_as_of,
+        universe=universe,
+        security_type_map=security_type_map,
+        market_horizons=market_horizons,
+        security_series=security_series,
+        sector_proxy_series=sector_proxy_series,
+        ess_series=ess_series,
+        zacks_series=zacks_series,
+        danelfin_series=danelfin_series,
+        yahoo_pt_series=yahoo_pt_series,
+        yahoo_abr_series=yahoo_abr_series,
+        fmp_consensus_series=fmp_consensus_series,
+        fmp_income_growth_series=fmp_income_growth_series,
+        sector_members=sector_members,
+        industry_members=industry_members,
+    )
 
     results: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for symbol in list(symbols):
-        sym = str(symbol).strip().upper()
-        if not sym or sym in seen:
-            continue
-        seen.add(sym)
+    for sym in requested_symbols:
         results.append(
             _build_symbol_evaluation_record(
                 sym,
-                repo_root=root,
-                universe=universe,
-                security_type_map=security_type_map,
-                market_horizons=market_horizons,
-                security_series=security_series,
-                sector_proxy_series=sector_proxy_series,
-                ess_series=ess_series,
-                zacks_series=zacks_series,
-                danelfin_series=danelfin_series,
-                yahoo_pt_series=yahoo_pt_series,
-                yahoo_abr_series=yahoo_abr_series,
-                fmp_consensus_series=fmp_consensus_series,
-                fmp_income_growth_series=fmp_income_growth_series,
+                repo_root=context.repo_root,
+                universe=context.universe,
+                security_type_map=context.security_type_map,
+                market_horizons=context.market_horizons,
+                security_series=context.security_series,
+                sector_proxy_series=context.sector_proxy_series,
+                ess_series=context.ess_series,
+                zacks_series=context.zacks_series,
+                danelfin_series=context.danelfin_series,
+                yahoo_pt_series=context.yahoo_pt_series,
+                yahoo_abr_series=context.yahoo_abr_series,
+                fmp_consensus_series=context.fmp_consensus_series,
+                fmp_income_growth_series=context.fmp_income_growth_series,
+                sector_members=context.sector_members,
+                industry_members=context.industry_members,
             )
         )
     return results
@@ -1932,51 +2242,102 @@ def pis_momentum_summary(*, repo_root: str | Path = ".") -> dict[str, object]:
     sector_parent_inventory = inventory_sector_parent_coverage(root)
     universe = _load_universe_metadata(root)
     holdings_snapshot_date, holdings = _load_holdings(root)
+    analysis_as_of = str(holdings_snapshot_date or "")[:10]
 
     market_series = _load_benchmark_series(root)
+    if analysis_as_of:
+        market_series = _filter_series_to_as_of(market_series, analysis_as_of) or MomentumSeries(
+            symbol="^GSPC",
+            source="data/current/benchmark_returns.csv",
+            as_of_date=analysis_as_of,
+            freshness_days=_freshness_days(analysis_as_of),
+            points=[],
+        )
     market_horizons = _build_horizon_payload(market_series)
     market_state = _classify_absolute_momentum_state(market_horizons)
 
     security_series = _load_security_price_series(root)
+    if analysis_as_of:
+        security_series = {
+            symbol: (
+                _filter_series_to_as_of(series, analysis_as_of)
+                or MomentumSeries(
+                    symbol=symbol,
+                    source=series.source,
+                    as_of_date=analysis_as_of,
+                    freshness_days=_freshness_days(analysis_as_of),
+                    points=[],
+                )
+            )
+            for symbol, series in security_series.items()
+        }
     sector_proxy_series = _load_sector_proxy_series(root, security_series=security_series)
+    if analysis_as_of:
+        sector_proxy_series = {
+            symbol: (
+                _filter_series_to_as_of(series, analysis_as_of)
+                or MomentumSeries(
+                    symbol=symbol,
+                    source=series.source,
+                    as_of_date=analysis_as_of,
+                    freshness_days=_freshness_days(analysis_as_of),
+                    points=[],
+                )
+            )
+            for symbol, series in sector_proxy_series.items()
+        }
 
     ess_series = _load_ess_series(root)
+    if analysis_as_of:
+        ess_series = _filter_metric_map_to_as_of(ess_series, analysis_as_of)
     zacks_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/zacks/*_zacks.csv",
         lambda p: p.name.split("_", 1)[0],
         lambda row: _to_float(row.get("zacks_score")),
     )
+    if analysis_as_of:
+        zacks_series = _filter_metric_map_to_as_of(zacks_series, analysis_as_of)
     danelfin_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/danelfin/*_danelfin*.csv",
         lambda p: p.name.split("_", 1)[0],
         lambda row: _to_float(row.get("danelfin_score")),
     )
+    if analysis_as_of:
+        danelfin_series = _filter_metric_map_to_as_of(danelfin_series, analysis_as_of)
     yahoo_pt_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/yahoo/*_yahoo_supplemental.csv",
         lambda p: p.name.split("_", 1)[0],
         lambda row: _to_float(row.get("price_target")),
     )
+    if analysis_as_of:
+        yahoo_pt_series = _filter_metric_map_to_as_of(yahoo_pt_series, analysis_as_of)
     yahoo_abr_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/yahoo/*_yahoo_supplemental.csv",
         lambda p: p.name.split("_", 1)[0],
         lambda row: _to_float(row.get("abr")),
     )
+    if analysis_as_of:
+        yahoo_abr_series = _filter_metric_map_to_as_of(yahoo_abr_series, analysis_as_of)
     fmp_consensus_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/fmp/daily/fmp_grades_consensus_*.csv",
         lambda p: p.name.rsplit("_", 1)[-1].replace(".csv", ""),
         lambda row: _to_float(row.get("net_buy_score")),
     )
+    if analysis_as_of:
+        fmp_consensus_series = _filter_metric_map_to_as_of(fmp_consensus_series, analysis_as_of)
     fmp_income_growth_series = _load_daily_symbol_metric_series(
         root,
         "data/signals/fmp/latest/latest_fmp_income_growth.csv",
         lambda _p: _today_utc().isoformat(),
         lambda row: _to_float(row.get("revenue_growth_q1_yoy")),
     )
+    if analysis_as_of:
+        fmp_income_growth_series = _filter_metric_map_to_as_of(fmp_income_growth_series, analysis_as_of)
 
     # Sector universe from holdings metadata.
     holdings_symbols = [str(h["symbol"]) for h in holdings]

@@ -2094,3 +2094,398 @@ def test_momentum_ui_renders_trend_structure_reporting_context() -> None:
     assert "currentness_state" in app_js
     assert "50DMA and 200DMA are reporting-only timing context." in app_js
     assert "id=\"trendStructure\"" in index_html
+
+
+def _write_momentum_summary_pit_fixture(tmp_path: Path, *, snapshot_date: str) -> None:
+    base = date(2026, 7, 1)
+    bench_rows: list[dict[str, object]] = []
+    for i in range(65):
+        d = base + timedelta(days=i)
+        bench_rows.append(
+            {
+                "benchmark_id": "BM",
+                "symbol_or_index": "^GSPC",
+                "date": d.isoformat(),
+                "adjusted_close": 100 + i,
+                "cumulative_return": 0,
+                "source_provider": "TEST",
+            }
+        )
+    for i, d in enumerate(("2026-09-01", "2026-09-02", "2026-09-03"), start=1):
+        bench_rows.append(
+            {
+                "benchmark_id": "BM",
+                "symbol_or_index": "^GSPC",
+                "date": d,
+                "adjusted_close": 180 + i,
+                "cumulative_return": 0,
+                "source_provider": "TEST",
+            }
+        )
+    _write_csv(
+        tmp_path / "data/current/benchmark_returns.csv",
+        ["benchmark_id", "symbol_or_index", "date", "adjusted_close", "cumulative_return", "source_provider"],
+        bench_rows,
+    )
+
+    _write_csv(
+        tmp_path / "data/current/analytical_universe.csv",
+        ["security_id", "symbol", "security_type", "snapshot_date", "run_id", "market_cap_bucket", "geography", "country", "industry", "sector"],
+        [
+            {"security_id": "MU1", "symbol": "MU", "security_type": "EQUITY", "snapshot_date": snapshot_date, "run_id": "R1", "market_cap_bucket": "MEGA", "geography": "US", "country": "US", "industry": "SEMICONDUCTORS", "sector": "TECHNOLOGY"},
+            {"security_id": "BND1", "symbol": "BND", "security_type": "ETF", "snapshot_date": snapshot_date, "run_id": "R1", "market_cap_bucket": "LARGE", "geography": "US", "country": "US", "industry": "BOND FUNDS", "sector": "FIXED INCOME"},
+        ],
+    )
+
+    _write_csv(
+        tmp_path / "data/history/pis/pis_snapshot_index.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "source_file",
+            "source_run_id",
+            "source_format",
+            "partition_path",
+            "snapshot_path",
+            "positions_path",
+            "position_count",
+            "portfolio_value",
+            "cash_value",
+            "equity_value",
+            "ingestion_status",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": snapshot_date,
+                "account_id": "A1",
+                "account_name": "TEST",
+                "source_file": "x",
+                "source_run_id": "R1",
+                "source_format": "csv",
+                "partition_path": "",
+                "snapshot_path": "",
+                "positions_path": f"data/history/pis/snapshot_date={snapshot_date}/positions.csv",
+                "position_count": 2,
+                "portfolio_value": 100000,
+                "cash_value": 0,
+                "equity_value": 100000,
+                "ingestion_status": "PASS",
+                "created_at_utc": f"{snapshot_date}T00:00:00+00:00",
+            }
+        ],
+    )
+    _write_csv(
+        tmp_path / f"data/history/pis/snapshot_date={snapshot_date}/positions.csv",
+        [
+            "snapshot_id",
+            "snapshot_date",
+            "account_id",
+            "account_name",
+            "symbol",
+            "description",
+            "quantity",
+            "market_value",
+            "percent_of_account",
+            "source_percent_of_account",
+            "cost_basis_total",
+            "security_type",
+            "operational_state",
+            "is_cash_equivalent",
+            "source_file",
+            "created_at_utc",
+        ],
+        [
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": snapshot_date,
+                "account_id": "A1",
+                "account_name": "TEST",
+                "symbol": "MU",
+                "description": "MU",
+                "quantity": 10,
+                "market_value": 60000,
+                "percent_of_account": 60,
+                "source_percent_of_account": 60,
+                "cost_basis_total": 50000,
+                "security_type": "COMMON STOCK",
+                "operational_state": "ACTIVE_POSITION",
+                "is_cash_equivalent": "False",
+                "source_file": "x",
+                "created_at_utc": f"{snapshot_date}T00:00:00+00:00",
+            },
+            {
+                "snapshot_id": "S1",
+                "snapshot_date": snapshot_date,
+                "account_id": "A1",
+                "account_name": "TEST",
+                "symbol": "BND",
+                "description": "BND",
+                "quantity": 10,
+                "market_value": 40000,
+                "percent_of_account": 40,
+                "source_percent_of_account": 40,
+                "cost_basis_total": 39000,
+                "security_type": "ETF",
+                "operational_state": "ACTIVE_POSITION",
+                "is_cash_equivalent": "False",
+                "source_file": "x",
+                "created_at_utc": f"{snapshot_date}T00:00:00+00:00",
+            },
+        ],
+    )
+
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=MU/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 7, 1), 65, 100.0, 0.7, "MU") + _price_rows(date(2026, 9, 1), 3, 160.0, 1.0, "MU"),
+    )
+    _write_csv(
+        tmp_path / "data/history/prices/symbol=BND/prices.csv",
+        ["security_id", "symbol", "security_type", "date", "open", "high", "low", "close", "adjusted_close", "volume", "dividend", "split_ratio", "source_provider", "created_at_utc"],
+        _price_rows(date(2026, 7, 1), 65, 80.0, 0.2, "BND") + _price_rows(date(2026, 9, 1), 3, 94.0, 0.2, "BND"),
+    )
+
+    _write_csv(
+        tmp_path / "data/current/market_regime_proxy_price_history.csv",
+        ["date", "symbol", "proxy_group", "price", "price_field", "provider", "source_timestamp", "retrieved_at_utc", "status"],
+        [
+            {"date": (date(2026, 7, 1) + timedelta(days=i)).isoformat(), "symbol": "XLK", "proxy_group": "technology", "price": 100 + i, "price_field": "close", "provider": "TEST", "source_timestamp": "", "retrieved_at_utc": "", "status": "OK"}
+            for i in range(65)
+        ]
+        + [
+            {"date": "2026-09-01", "symbol": "XLK", "proxy_group": "technology", "price": 170.0, "price_field": "close", "provider": "TEST", "source_timestamp": "", "retrieved_at_utc": "", "status": "OK"},
+            {"date": "2026-09-02", "symbol": "XLK", "proxy_group": "technology", "price": 50.0, "price_field": "close", "provider": "TEST", "source_timestamp": "", "retrieved_at_utc": "", "status": "OK"},
+            {"date": "2026-09-03", "symbol": "XLK", "proxy_group": "technology", "price": 49.0, "price_field": "close", "provider": "TEST", "source_timestamp": "", "retrieved_at_utc": "", "status": "OK"},
+        ],
+    )
+
+    _write_csv(
+        tmp_path / "data/signals/zacks/2026-08-30_zacks.csv",
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [
+            {"symbol": "MU", "zacks_rank": 3, "zacks_score": 2.0, "abr": 3.0, "price_target": 120, "eps_growth": 8, "sourced_date": "2026-08-30"},
+            {"symbol": "BND", "zacks_rank": 3, "zacks_score": 2.0, "abr": 3.0, "price_target": 90, "eps_growth": 2, "sourced_date": "2026-08-30"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/signals/zacks/2026-09-01_zacks.csv",
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [
+            {"symbol": "MU", "zacks_rank": 2, "zacks_score": 4.0, "abr": 2.0, "price_target": 122, "eps_growth": 9, "sourced_date": "2026-09-01"},
+            {"symbol": "BND", "zacks_rank": 2, "zacks_score": 3.0, "abr": 2.5, "price_target": 91, "eps_growth": 2, "sourced_date": "2026-09-01"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/signals/zacks/latest_zacks.csv",
+        ["symbol", "zacks_rank", "zacks_score", "abr", "price_target", "eps_growth", "sourced_date"],
+        [
+            {"symbol": "MU", "zacks_rank": 1, "zacks_score": 5.0, "abr": 1.8, "price_target": 130, "eps_growth": 10, "sourced_date": "2026-09-02"},
+            {"symbol": "BND", "zacks_rank": 2, "zacks_score": 4.0, "abr": 2.4, "price_target": 92, "eps_growth": 2, "sourced_date": "2026-09-02"},
+        ],
+    )
+
+    _write_csv(
+        tmp_path / "data/signals/yahoo/2026-09-01_yahoo_supplemental.csv",
+        ["symbol", "abr", "price_target", "sourced_date"],
+        [
+            {"symbol": "MU", "abr": 2.2, "price_target": 123, "sourced_date": "2026-09-01"},
+            {"symbol": "BND", "abr": 2.7, "price_target": 91, "sourced_date": "2026-09-01"},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/signals/yahoo/2026-09-02_yahoo_supplemental.csv",
+        ["symbol", "abr", "price_target", "sourced_date"],
+        [
+            {"symbol": "MU", "abr": 1.9, "price_target": 129, "sourced_date": "2026-09-02"},
+            {"symbol": "BND", "abr": 2.6, "price_target": 92, "sourced_date": "2026-09-02"},
+        ],
+    )
+
+    _write_csv(
+        tmp_path / "data/signals/fmp/daily/fmp_grades_consensus_2026-09-01.csv",
+        ["symbol", "net_buy_score"],
+        [
+            {"symbol": "MU", "net_buy_score": 0.5},
+            {"symbol": "BND", "net_buy_score": 0.1},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/signals/fmp/daily/fmp_grades_consensus_2026-09-02.csv",
+        ["symbol", "net_buy_score"],
+        [
+            {"symbol": "MU", "net_buy_score": 0.8},
+            {"symbol": "BND", "net_buy_score": 0.2},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/signals/fmp/latest/latest_fmp_income_growth.csv",
+        ["symbol", "revenue_growth_q1_yoy"],
+        [{"symbol": "MU", "revenue_growth_q1_yoy": 3.2}],
+    )
+
+    _write_csv(
+        tmp_path / "data/history/signals/snapshot_date=2026-09-01/run_id=R1/signal_snapshots.csv",
+        [
+            "snapshot_date",
+            "created_at_utc",
+            "run_id",
+            "provider",
+            "source_file",
+            "symbol",
+            "coverage_domain",
+            "signal_coverage_status",
+            "starmine_ess_text",
+            "starmine_ess_numeric",
+            "starmine_ess_numeric_estimated",
+            "starmine_ess_source_type",
+        ],
+        [
+            {"snapshot_date": "2026-09-01", "created_at_utc": "", "run_id": "R1", "provider": "ESS", "source_file": "", "symbol": "MU", "coverage_domain": "", "signal_coverage_status": "", "starmine_ess_text": "BULLISH", "starmine_ess_numeric": 4.0, "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": ""},
+            {"snapshot_date": "2026-09-01", "created_at_utc": "", "run_id": "R1", "provider": "ESS", "source_file": "", "symbol": "BND", "coverage_domain": "", "signal_coverage_status": "", "starmine_ess_text": "NEUTRAL", "starmine_ess_numeric": 3.0, "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": ""},
+        ],
+    )
+    _write_csv(
+        tmp_path / "data/history/signals/snapshot_date=2026-09-02/run_id=R2/signal_snapshots.csv",
+        [
+            "snapshot_date",
+            "created_at_utc",
+            "run_id",
+            "provider",
+            "source_file",
+            "symbol",
+            "coverage_domain",
+            "signal_coverage_status",
+            "starmine_ess_text",
+            "starmine_ess_numeric",
+            "starmine_ess_numeric_estimated",
+            "starmine_ess_source_type",
+        ],
+        [
+            {"snapshot_date": "2026-09-02", "created_at_utc": "", "run_id": "R2", "provider": "ESS", "source_file": "", "symbol": "MU", "coverage_domain": "", "signal_coverage_status": "", "starmine_ess_text": "VERY_BULLISH", "starmine_ess_numeric": 5.0, "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": ""},
+            {"snapshot_date": "2026-09-02", "created_at_utc": "", "run_id": "R2", "provider": "ESS", "source_file": "", "symbol": "BND", "coverage_domain": "", "signal_coverage_status": "", "starmine_ess_text": "BULLISH", "starmine_ess_numeric": 4.0, "starmine_ess_numeric_estimated": "False", "starmine_ess_source_type": ""},
+        ],
+    )
+
+
+def _collect_as_of_dates(payload: object) -> list[str]:
+    dates: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == "as_of_date" and isinstance(value, str) and value:
+                dates.append(value[:10])
+            dates.extend(_collect_as_of_dates(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            dates.extend(_collect_as_of_dates(item))
+    return dates
+
+
+def test_momentum_summary_clips_future_price_rows_to_snapshot_date(tmp_path: Path) -> None:
+    snapshot_date = "2026-09-01"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    assert payload["snapshot_date"] == snapshot_date
+
+    market_horizons = (((payload.get("market_momentum") or {}).get("market_absolute_momentum") or {}).get("horizons") or {})
+    market_as_of = sorted(
+        {str(v.get("as_of_date") or "") for v in market_horizons.values() if isinstance(v, dict) and str(v.get("as_of_date") or "")}
+    )
+    assert market_as_of and market_as_of[-1] <= snapshot_date
+
+    holding_rows = (((payload.get("portfolio_momentum_map") or {}).get("holdings")) or [])
+    for row in holding_rows:
+        horizons = ((row.get("absolute_security_momentum") or {}).get("horizons") or {})
+        for horizon in horizons.values():
+            d = str((horizon or {}).get("as_of_date") or "")
+            if d:
+                assert d <= snapshot_date
+
+
+def test_momentum_summary_clips_future_sector_proxy_rows_to_snapshot_date(tmp_path: Path) -> None:
+    snapshot_date = "2026-09-01"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    tech_row = next(row for row in payload["sector_rotation"] if str(row.get("sector") or "").upper() == "TECHNOLOGY")
+    tech_horizons = (tech_row["absolute_momentum"]["horizons"] or {})
+    assert str(tech_row.get("proxy_symbol") or "") == "XLK"
+    assert str((tech_horizons["1W"] or {}).get("as_of_date") or "") <= snapshot_date
+
+    raw_rows = list(csv.DictReader((tmp_path / "data/current/market_regime_proxy_price_history.csv").open("r", encoding="utf-8", newline="")))
+    assert max(str(row.get("date") or "") for row in raw_rows) == "2026-09-03"
+
+
+def test_momentum_summary_clips_future_fundamental_rows_to_snapshot_date(tmp_path: Path) -> None:
+    snapshot_date = "2026-09-01"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    rows = (((payload.get("portfolio_momentum_map") or {}).get("holdings")) or [])
+    mu = next(row for row in rows if str(row.get("symbol") or "") == "MU")
+    details = (((mu.get("fundamental_momentum") or {}).get("details")) or {})
+    assert str((details.get("ZACKS_CHANGE") or {}).get("as_of_date") or "") == "2026-09-01"
+
+    for row in rows:
+        row_details = (((row.get("fundamental_momentum") or {}).get("details")) or {})
+        for signal in row_details.values():
+            d = str((signal or {}).get("as_of_date") or "")
+            if d:
+                assert d <= snapshot_date
+
+
+def test_momentum_summary_relative_horizons_no_lookahead(tmp_path: Path) -> None:
+    snapshot_date = "2026-09-01"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    for sector_row in list(payload.get("sector_rotation") or []):
+        rel = (sector_row.get("relative_to_market") or {}).get("horizons") or {}
+        for horizon in rel.values():
+            d = str((horizon or {}).get("as_of_date") or "")
+            if d:
+                assert d <= snapshot_date
+
+    for row in (((payload.get("portfolio_momentum_map") or {}).get("holdings")) or []):
+        rel = row.get("security_vs_market") or {}
+        for horizon in rel.values():
+            d = str((horizon or {}).get("as_of_date") or "")
+            if d:
+                assert d <= snapshot_date
+
+
+def test_momentum_summary_no_lookahead_for_all_as_of_dates(tmp_path: Path) -> None:
+    snapshot_date = "2026-09-01"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    as_of_dates = _collect_as_of_dates(payload)
+    assert as_of_dates
+    assert max(as_of_dates) <= snapshot_date
+
+
+def test_historical_momentum_summary_no_lookahead(tmp_path: Path) -> None:
+    snapshot_date = "2026-08-28"
+    _write_momentum_summary_pit_fixture(tmp_path, snapshot_date=snapshot_date)
+
+    payload = pis_momentum_summary(repo_root=tmp_path)
+    assert payload["snapshot_date"] == snapshot_date
+    as_of_dates = _collect_as_of_dates(payload)
+    assert as_of_dates
+    assert max(as_of_dates) <= snapshot_date
+
+
+def test_momentum_formula_threshold_classification_and_coverage_contract_literals() -> None:
+    source = (REPO_ROOT / "src" / "pis" / "momentum_intelligence.py").read_text(encoding="utf-8")
+
+    assert "if ret >= 8.0:" in source
+    assert "elif ret >= 2.0:" in source
+    assert "elif ret <= -8.0:" in source
+    assert "elif ret <= -2.0:" in source
+    assert "if delta >= 1.5:" in source
+    assert "if evaluable_weight_pct >= 90.0:" in source
+    assert "elif evaluable_weight_pct > 0:" in source
