@@ -649,6 +649,10 @@ def test_dri_runtime_route_and_ui_contracts_present() -> None:
     assert "Most Dislocated" in dri_html
     assert "Improving Internals" in dri_html
     assert "Current Leadership" in dri_html
+    assert "Cohort selector — chooses the industries shown in all three views below." in dri_html
+    assert "Dislocation Profile" in dri_html
+    assert "Internal Recovery Signals" in dri_html
+    assert "Leadership Context" in dri_html
     assert "sortMode" in dri_html
     assert "industryFilter" in dri_html
 
@@ -656,6 +660,20 @@ def test_dri_runtime_route_and_ui_contracts_present() -> None:
     assert "renderMostDislocated" in dri_app
     assert "renderImprovingInternals" in dri_app
     assert "renderCurrentLeadership" in dri_app
+
+
+def test_dri_shared_cohort_labels_and_sort_keys_remain_explicit() -> None:
+    dri_html = (REPO_ROOT / "ui" / "dislocation_recovery_intelligence" / "index.html").read_text(encoding="utf-8")
+    dri_app = (REPO_ROOT / "ui" / "dislocation_recovery_intelligence" / "app.js").read_text(encoding="utf-8")
+
+    assert "All three views" in dri_html
+    assert 'const dislocatedKey = by(["returns", "return_3m_pct"], null);' in dri_app
+    assert 'const recoveryKey = by(["breadth", "above_50dma_share_change_20d_pp"], null);' in dri_app
+    assert 'const leaderKey = by(["returns", "return_3m_vs_market_pct"], null);' in dri_app
+    assert "const ordered = sortRows(rows, mode);" in dri_app
+    assert "renderMostDislocated(ordered);" in dri_app
+    assert "renderImprovingInternals(ordered);" in dri_app
+    assert "renderCurrentLeadership(ordered);" in dri_app
 
 
 def test_non_held_research_symbol_and_industry_are_included_in_dri(tmp_path: Path) -> None:
