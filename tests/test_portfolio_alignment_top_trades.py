@@ -771,6 +771,16 @@ def test_momentum_fetch_failure_resolves_loading_to_unavailable_and_keeps_order(
         assert momentum_cells.nth(1).inner_text().strip() == "UNAVAILABLE"
 
 
+def test_momentum_request_is_bounded_and_cannot_leave_ellipsis_permanently():
+    app_js = APP_JS.read_text(encoding="utf-8")
+
+    assert 'const momentumTimeout = new Promise' in app_js
+    assert 'setTimeout(() => reject(new Error("momentum summary request timed out")), 15000);' in app_js
+    assert "Promise.race([momentumRequest, momentumTimeout])" in app_js
+    assert '_dqMomentumStatus = "unavailable";' in app_js
+    assert 'return `<span class="dq-status dq-status-OW_NODE"' in app_js
+
+
 def test_context_change_clears_prior_map_shows_loading_then_unavailable():
     payload_compatible = _momentum_payload("2026-08-20")
     payload_historical = _momentum_payload("2026-08-19")

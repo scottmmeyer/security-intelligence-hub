@@ -3876,7 +3876,12 @@ function _dqEnsureMomentumContext(queueForRender, tbodyId) {
     }
   };
 
-  fetch("/api/pis/momentum/summary")
+  const momentumRequest = fetch("/api/pis/momentum/summary");
+  const momentumTimeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error("momentum summary request timed out")), 15000);
+  });
+
+  Promise.race([momentumRequest, momentumTimeout])
     .then(resp => resp.ok ? resp.json() : Promise.resolve(null))
     .then(summary => {
       const parDate = _dqMomentumParDate(_analysisResult);
