@@ -1737,7 +1737,9 @@ def _enrich_top_trades_entry_timing_context(result: dict) -> dict:
         return result
 
     try:
-        summary = _pis_momentum_summary_cached()
+        from src.pis.current_intelligence import load_current_intelligence
+
+        summary = load_current_intelligence(kind="momentum", repo_root=_REPO_ROOT)
     except Exception:
         summary = {}
 
@@ -2724,9 +2726,9 @@ def _macro_market_confirmation_payload() -> dict:
 
         if str(_REPO_ROOT) not in _sys.path:
             _sys.path.insert(0, str(_REPO_ROOT))
-        from src.pis.momentum_intelligence import pis_momentum_summary
+        from src.pis.current_intelligence import load_current_intelligence
 
-        summary = pis_momentum_summary(repo_root=_REPO_ROOT)
+        summary = load_current_intelligence(kind="momentum", repo_root=_REPO_ROOT)
 
         sector_rows = list(summary.get("sector_rotation") or [])
         holdings_rows = list((((summary or {}).get("portfolio_momentum_map") or {}).get("holdings") or []))
@@ -3872,6 +3874,7 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
     )
     from src.pis.canonical_daily import pis_canonical_history, pis_canonical_latest, pis_canonical_summary
     from src.pis.change_detection import pis_change_summary, pis_changes_latest
+    from src.pis.current_intelligence import load_current_intelligence
     from src.pis.dislocation_outcome_review import (
         pis_dor_cohorts,
         pis_dor_recommendations,
@@ -3978,7 +3981,7 @@ def _resolve_pis_dashboard_payload(path: str) -> object | None:
     if path == "/api/pis/compliance/summary":
         return pis_compliance_summary(repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/summary":
-        return _pis_momentum_summary_cached()
+        return load_current_intelligence(kind="momentum", repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/methodology":
         return pis_momentum_methodology(repo_root=_REPO_ROOT)
     if path == "/api/pis/momentum/history":
@@ -4367,16 +4370,23 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
                 if str(_REPO_ROOT) not in _sys.path:
                     _sys.path.insert(0, str(_REPO_ROOT))
-                from src.pis.dislocation_recovery_intelligence import pis_dri_industry_map
+                if as_of_date:
+                    from src.pis.dislocation_recovery_intelligence import pis_dri_industry_map
 
-                self._json_response(pis_dri_industry_map(repo_root=_REPO_ROOT, as_of_date=as_of_date))
+                    self._json_response(pis_dri_industry_map(repo_root=_REPO_ROOT, as_of_date=as_of_date))
+                else:
+                    from src.pis.current_intelligence import load_current_intelligence
+
+                    self._json_response(load_current_intelligence(kind="dri", repo_root=_REPO_ROOT))
             except Exception as exc:
                 self._json_response(
                     {
                         "status": "degraded",
                         "endpoint": path,
+                        "error_code": getattr(exc, "code", "CURRENT_INTELLIGENCE_INVALID"),
                         "error": str(exc),
-                    }
+                    },
+                    503,
                 )
         elif path == "/api/operator/policies" or path.startswith("/api/operator/policies/"):
             # GET /api/operator/policies         → all active policies
@@ -4748,8 +4758,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
                     {
                         "status": "degraded",
                         "endpoint": path,
+                        "error_code": getattr(exc, "code", "CURRENT_INTELLIGENCE_INVALID"),
                         "error": str(exc),
-                    }
+                    },
+                    503,
                 )
                 return
             if payload is None:
