@@ -168,7 +168,9 @@ def _validate_artifact(
     for key in ("snapshot_date", "as_of_date", "analysis_as_of"):
         if str(artifact.get(key) or "")[:10] != identity["snapshot_date"]:
             raise CurrentIntelligenceError("CURRENT_INTELLIGENCE_STALE", f"Artifact date mismatch: {artifact_path}")
-    if artifact.get("source_portfolio_run_id") != identity["portfolio_run_id"] or artifact.get("source_portfolio_snapshot_id") != identity["portfolio_snapshot_id"]:
+    # Run IDs are provenance-only; a duplicate analysis run for the same canonical
+    # portfolio snapshot must not invalidate a valid materialization.
+    if artifact.get("source_portfolio_snapshot_id") != identity["portfolio_snapshot_id"]:
         raise CurrentIntelligenceError("CURRENT_INTELLIGENCE_STALE", f"Artifact portfolio identity mismatch: {artifact_path}")
     payload = artifact.get("payload")
     if not isinstance(payload, dict) or any(key not in payload for key in required_payload_keys):
@@ -187,7 +189,10 @@ def load_current_intelligence(
     pointer = _read_json(_current_root(root) / POINTER_NAME)
     if pointer.get("schema_version") != SCHEMA_VERSION or str(pointer.get("snapshot_date") or "")[:10] != identity["snapshot_date"]:
         raise CurrentIntelligenceError("CURRENT_INTELLIGENCE_STALE", "Current intelligence pointer does not match the portfolio snapshot.")
-    if pointer.get("source_portfolio_run_id") != identity["portfolio_run_id"] or pointer.get("source_portfolio_snapshot_id") != identity["portfolio_snapshot_id"]:
+    # The canonical identity for current-intelligence materializations is the
+    # portfolio snapshot. An older analysis run ID for the same snapshot is
+    # provenance only and must not invalidate an otherwise valid artifact.
+    if pointer.get("source_portfolio_snapshot_id") != identity["portfolio_snapshot_id"]:
         raise CurrentIntelligenceError("CURRENT_INTELLIGENCE_STALE", "Current intelligence pointer has the wrong portfolio identity.")
     relative_path = pointer.get(kind)
     if not isinstance(relative_path, str) or not relative_path:

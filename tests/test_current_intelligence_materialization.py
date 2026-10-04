@@ -118,6 +118,103 @@ def test_market_confirmation_uses_current_artifact_without_compute(monkeypatch: 
     assert payload["market_state"] == "STRONG"
 
 
+def test_same_snapshot_id_validates_even_when_run_id_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = {
+        "version": 1,
+        "portfolios": [
+            {
+                "run_id": "PAR-NEW-0904",
+                "portfolio_snapshot_id": "PSNAP-TEST-0904",
+                "snapshot_date": "2026-09-04",
+                "created_at_utc": "2026-09-04T13:00:00+00:00",
+                "status": "COMPLETE",
+            }
+        ],
+    }
+    path = tmp_path / "data" / "portfolio_ingestion" / "manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    root = tmp_path / "data/current/current_intelligence"
+    root.mkdir(parents=True, exist_ok=True)
+    pointer = {
+        "schema_version": "1",
+        "snapshot_date": "2026-09-04",
+        "source_portfolio_run_id": "PAR-OLD-0904",
+        "source_portfolio_snapshot_id": "PSNAP-TEST-0904",
+        "momentum": "data/current/current_intelligence/momentum_summary.json",
+    }
+    (root / "current_pointer.json").write_text(json.dumps(pointer), encoding="utf-8")
+
+    momentum = {
+        "snapshot_date": "2026-09-04",
+        "market_momentum": {"market_absolute_momentum": {"state": "STRONG"}},
+        "sector_rotation": [],
+        "industry_rotation": [],
+        "portfolio_momentum_map": {"holdings": []},
+        "coverage": {"portfolio_coverage_state": "PARTIALLY_EVALUATED"},
+    }
+    artifact = {
+        "artifact_type": "CURRENT_MOMENTUM_SUMMARY",
+        "schema_version": "1",
+        "snapshot_date": "2026-09-04",
+        "as_of_date": "2026-09-04",
+        "analysis_as_of": "2026-09-04",
+        "source_portfolio_run_id": "PAR-OLD-0904",
+        "source_portfolio_snapshot_id": "PSNAP-TEST-0904",
+        "payload": momentum,
+    }
+    (root / "momentum_summary.json").write_text(json.dumps(artifact), encoding="utf-8")
+
+    result = current_intelligence.load_current_intelligence(kind="momentum", repo_root=tmp_path)
+    assert result["snapshot_date"] == "2026-09-04"
+    assert result["market_momentum"]["market_absolute_momentum"]["state"] == "STRONG"
+
+
+@pytest.mark.parametrize(
+    ("pointer_snapshot_id", "pointer_date", "message"),
+    [
+        ("PSNAP-OTHER", "2026-09-04", "wrong portfolio identity"),
+        ("PSNAP-TEST-0904", "2026-09-03", "does not match"),
+    ],
+)
+def test_mismatched_snapshot_identity_and_date_fail_fast(tmp_path: Path, pointer_snapshot_id: str, pointer_date: str, message: str) -> None:
+    _write_manifest(tmp_path)
+    root = tmp_path / "data/current/current_intelligence"
+    root.mkdir(parents=True, exist_ok=True)
+    pointer = {
+        "schema_version": "1",
+        "snapshot_date": pointer_date,
+        "source_portfolio_run_id": "PAR-OLD-0904",
+        "source_portfolio_snapshot_id": pointer_snapshot_id,
+        "momentum": "data/current/current_intelligence/momentum_summary.json",
+    }
+    (root / "current_pointer.json").write_text(json.dumps(pointer), encoding="utf-8")
+
+    momentum = {
+        "snapshot_date": "2026-09-04",
+        "market_momentum": {"market_absolute_momentum": {"state": "STRONG"}},
+        "sector_rotation": [],
+        "industry_rotation": [],
+        "portfolio_momentum_map": {"holdings": []},
+        "coverage": {"portfolio_coverage_state": "PARTIALLY_EVALUATED"},
+    }
+    artifact = {
+        "artifact_type": "CURRENT_MOMENTUM_SUMMARY",
+        "schema_version": "1",
+        "snapshot_date": "2026-09-04",
+        "as_of_date": "2026-09-04",
+        "analysis_as_of": "2026-09-04",
+        "source_portfolio_run_id": "PAR-OLD-0904",
+        "source_portfolio_snapshot_id": pointer_snapshot_id,
+        "payload": momentum,
+    }
+    (root / "momentum_summary.json").write_text(json.dumps(artifact), encoding="utf-8")
+
+    with pytest.raises(current_intelligence.CurrentIntelligenceError, match=message):
+        current_intelligence.load_current_intelligence(kind="momentum", repo_root=tmp_path)
+
+
 def test_missing_and_stale_current_artifacts_fail_fast(tmp_path: Path) -> None:
     _write_manifest(tmp_path)
     with pytest.raises(current_intelligence.CurrentIntelligenceError, match="Missing artifact"):
