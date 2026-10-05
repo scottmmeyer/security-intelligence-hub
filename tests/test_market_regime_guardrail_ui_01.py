@@ -160,6 +160,26 @@ def test_market_regime_guardrail_container_exists() -> None:
     assert 'id="marketContextContainer"' in html
 
 
+def test_market_regime_display_semantics_for_fresh_unknown_inconclusive() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "MIXED / INCONCLUSIVE" in app_js
+    assert "NOT CONFIRMED" in app_js
+    assert "HOLD EXCESS CASH" in app_js
+    assert "Advisory guardrail — not an execution block." in app_js
+    assert "Market regime evidence is mixed and inconclusive" in app_js
+
+
+def test_market_regime_display_semantics_preserve_unknown_fail_closed_states() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "freshnessStatus === \"STALE\"" in app_js
+    assert "Array.isArray(g.data_freshness)" not in app_js
+    assert "Missing required inputs" in app_js or "missing inputs" in app_js
+    assert "Deployment Confirmation" in app_js
+    assert "Canonical regime: UNKNOWN" in app_js or "Canonical regime" in app_js
+
+
 def test_macro_wti_crude_fails_closed_on_equity_identity_collision() -> None:
     payload, status = _macro_liquidity_context_payload()
 

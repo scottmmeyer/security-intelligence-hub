@@ -1341,12 +1341,13 @@ async function loadMarketRegimeGuardrail(data) {
 }
 
 function renderMarketRegimeGuardrailCard(g) {
-  const regime = escHtml(g.regime || "UNKNOWN");
+  const canonicalRegime = String(g.regime || "UNKNOWN");
+  const canonicalSafe = Boolean(g.safe_to_deploy);
+  const canonicalDeploy = String(g.deployment_posture || "CAUTION_DEPLOY");
+  const canonicalCash = String(g.cash_posture || "HOLD_EXCESS");
   const severity = escHtml(g.severity || "LOW");
   const confidence = escHtml(g.confidence || "LOW");
-  const deploy = escHtml(g.deployment_posture || "CAUTION_DEPLOY");
   const trim = escHtml(g.trim_posture || "REVIEW_OVERWEIGHTS");
-  const cash = escHtml(g.cash_posture || "HOLD_EXCESS");
   const summary = escHtml(g.operator_summary || "No market regime summary available.");
   const evidence = Array.isArray(g.evidence) ? g.evidence : [];
   const checks = Array.isArray(g.recommended_operator_checks) ? g.recommended_operator_checks : [];
@@ -1359,7 +1360,11 @@ function renderMarketRegimeGuardrailCard(g) {
       : (inputSourceRaw === "legacy_replay_fallback" ? "Legacy Replay Fallback" : inputSourceRaw));
   const marketTs = escHtml(freshness.market_proxies_ts || "unavailable");
   const snapTs = escHtml(freshness.portfolio_snapshot_ts || "unknown");
-  const freshnessStatus = escHtml(freshness.freshness_status || "UNKNOWN");
+  const freshnessStatus = String(freshness.freshness_status || "UNKNOWN").toUpperCase();
+  const freshnessStatusIsStale = freshnessStatus === "STALE";
+  const hasFreshnessArray = Object.prototype.toString.call(g.data_freshness) === "[object Array]";
+  const missingInputs = !freshness.market_proxies_ts || !freshness.portfolio_snapshot_ts;
+  const freshnessStatusDisplay = escHtml(freshnessStatus === "FRESH" ? "FRESH" : freshnessStatus);
   const lagRaw = (freshness.market_proxy_age_days === 0 || freshness.market_proxy_age_days)
     ? freshness.market_proxy_age_days
     : freshness.proxy_lag_days;
@@ -1375,7 +1380,20 @@ function renderMarketRegimeGuardrailCard(g) {
   const operatorGuidance = (actionRaw === "REFRESH_MARKET_PROXIES" || freshnessRaw === "STALE")
     ? "Run Refresh Current Holdings + Buy Candidates to refresh market-regime proxy inputs before reviewing posture changes."
     : "";
-  const safeText = g.safe_to_deploy ? "Yes" : "No";
+
+  const regimeDisplay = (canonicalRegime === "UNKNOWN" && freshnessStatus === "FRESH" && !hasFreshnessArray)
+    ? "MIXED / INCONCLUSIVE"
+    : canonicalRegime;
+  const deploymentDisplay = canonicalSafe ? "CONFIRMED" : "NOT CONFIRMED";
+  const deploymentPostureDisplay = canonicalDeploy === "CAUTION_DEPLOY" ? "CAUTION" : canonicalDeploy;
+  const cashPostureDisplay = canonicalCash === "HOLD_EXCESS" ? "HOLD EXCESS CASH" : canonicalCash;
+  const advisoryNote = "Market regime evidence is mixed and inconclusive. Advisory guardrail — not an execution block. Deployment confirmation is not currently established; use selective sizing and operator judgment.";
+  const canonicalRegimeLine = canonicalRegime !== regimeDisplay
+    ? `<div class="mrg-freshness">Canonical regime: ${escHtml(canonicalRegime)}</div>`
+    : "";
+  const failClosedMessage = freshnessStatusIsStale || missingInputs
+    ? "Missing required inputs or stale context: retain conservative posture until the market-regime snapshot is refreshed and validated."
+    : "";
 
   return `
     <div class="mrg-card">
@@ -1385,20 +1403,23 @@ function renderMarketRegimeGuardrailCard(g) {
       </div>
       <div class="mrg-warning">No automatic scoring, ranking, allocation, sizing, or execution changes</div>
       <div class="mrg-summary">${summary}</div>
+      <div class="mrg-summary">${escHtml(advisoryNote)}</div>
       <div class="mrg-grid">
-        <div><span class="mrg-k">Regime</span><span class="mrg-v">${regime}</span></div>
+        <div><span class="mrg-k">Regime</span><span class="mrg-v">${escHtml(regimeDisplay)}</span></div>
         <div><span class="mrg-k">Severity</span><span class="mrg-v">${severity}</span></div>
         <div><span class="mrg-k">Confidence</span><span class="mrg-v">${confidence}</span></div>
-        <div><span class="mrg-k">Safe to Deploy</span><span class="mrg-v">${safeText}</span></div>
-        <div><span class="mrg-k">Deployment</span><span class="mrg-v">${deploy}</span></div>
+        <div><span class="mrg-k">Deployment Confirmation</span><span class="mrg-v">${deploymentDisplay}</span></div>
+        <div><span class="mrg-k">Deployment Posture</span><span class="mrg-v">${escHtml(deploymentPostureDisplay)}</span></div>
         <div><span class="mrg-k">Trim</span><span class="mrg-v">${trim}</span></div>
-        <div><span class="mrg-k">Cash</span><span class="mrg-v">${cash}</span></div>
+        <div><span class="mrg-k">Cash Posture</span><span class="mrg-v">${escHtml(cashPostureDisplay)}</span></div>
         <div><span class="mrg-k">Scoring Impact</span><span class="mrg-v">${escHtml(g.scoring_impact || "none")}</span></div>
         <div><span class="mrg-k">Input Source</span><span class="mrg-v">${escHtml(inputSourceLabel)}</span></div>
       </div>
       <div class="mrg-freshness">Proxy TS: ${marketTs} · Portfolio TS: ${snapTs}</div>
-      <div class="mrg-freshness">Freshness Status: ${freshnessStatus} · Lag: ${lagDays} day(s) · Threshold: ${lagThreshold}</div>
+      <div class="mrg-freshness">Freshness Status: ${freshnessStatusDisplay} · Lag: ${lagDays} day(s) · Threshold: ${lagThreshold}</div>
       <div class="mrg-freshness">Operator Action: ${operatorAction}</div>
+      ${canonicalRegimeLine}
+      ${failClosedMessage ? `<div class="mrg-freshness">${escHtml(failClosedMessage)}</div>` : ""}
       ${operatorGuidance ? `<div class="mrg-freshness">Action Guidance: ${escHtml(operatorGuidance)}</div>` : ""}
       ${evidence.length ? `<ul class="mrg-list">${evidence.slice(0, 4).map(e => `<li>${escHtml(String(e))}</li>`).join("")}</ul>` : ""}
       ${checks.length ? `<ul class="mrg-checks">${checks.slice(0, 4).map(c => `<li>${escHtml(String(c))}</li>`).join("")}</ul>` : ""}
