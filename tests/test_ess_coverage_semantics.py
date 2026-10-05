@@ -148,18 +148,63 @@ def test_classifies_missing_stale_and_no_fresh_starmine(tmp_path: Path) -> None:
     )
 
     assert warning is not None
-    assert warning.warning_count == 3
+    assert warning.warning_count == 2
     assert warning.true_missing_count == 1
     assert warning.stale_coverage_count == 1
-    assert warning.no_fresh_starmine_count == 1
+    assert warning.no_fresh_starmine_count == 0
+    assert warning.no_coverage_available_count == 1
     assert warning.true_missing_symbols == ("AAA",)
     assert warning.stale_coverage_symbols == ("BBB",)
-    assert warning.no_fresh_starmine_symbols == ("CCC",)
+    assert warning.no_coverage_available_symbols == ("CCC",)
 
     by_symbol = {detail.symbol: detail for detail in warning.gaps}
     assert by_symbol["AAA"].gap_type == "TRUE_MISSING"
     assert by_symbol["BBB"].gap_type == "STALE_ESS"
-    assert by_symbol["CCC"].gap_type == "NO_FRESH_STARMINE"
+    assert "CCC" not in by_symbol
+
+
+def test_known_no_coverage_is_not_operational_warning(tmp_path: Path) -> None:
+    snapshot_date = date(2026, 6, 17)
+    base_universe = tmp_path / "data" / "current" / "base_equity_universe.csv"
+    _write_csv(base_universe, BASE_UNIVERSE_HEADERS, [{"symbol": "SIMO"}])
+
+    signal_snapshot = tmp_path / "data" / "current" / "signal_snapshot.csv"
+    _write_csv(
+        signal_snapshot,
+        SIGNAL_HEADERS,
+        [
+            {
+                "snapshot_date": "2026-06-17",
+                "created_at_utc": "2026-06-17T11:00:00+00:00",
+                "run_id": "non-starmine",
+                "provider": "FIDELITY",
+                "source_file": "non-ess.csv",
+                "symbol": "SIMO",
+                "coverage_domain": "NON_STARMINE_ANALYST",
+                "signal_coverage_status": "NON_COVERED",
+                "starmine_ess_text": "",
+                "starmine_ess_numeric": "",
+                "starmine_ess_numeric_estimated": "False",
+                "starmine_ess_source_type": "UNKNOWN",
+            }
+        ],
+    )
+
+    holdings_path = tmp_path / "data" / "portfolio_ingestion" / "analysis_runs" / "PAR-20260617-TEST" / "holdings.csv"
+    _write_csv(
+        holdings_path,
+        ["symbol", "asset_class", "description", "percent_of_portfolio"],
+        [{"symbol": "SIMO", "asset_class": "EQUITIES", "description": "SIMO", "percent_of_portfolio": "5.0"}],
+    )
+
+    warning = build_ess_coverage_gap_warning(
+        snapshot_date=snapshot_date,
+        signal_snapshot_path=signal_snapshot,
+        analysis_runs_root=tmp_path / "data" / "portfolio_ingestion" / "analysis_runs",
+        base_universe_csv=base_universe,
+    )
+
+    assert warning is None
 
 
 def test_excludes_non_applicable_and_keeps_applicable_missing_symbols(tmp_path: Path) -> None:
@@ -252,7 +297,7 @@ def test_classifies_no_score_and_no_coverage_without_false_true_missing(tmp_path
     )
 
     assert warning is not None
-    assert warning.warning_count == 2
+    assert warning.warning_count == 1
     assert warning.no_coverage_available_count == 1
     assert warning.no_score_available_count == 1
     assert warning.true_missing_count == 0

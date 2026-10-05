@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 from urllib.parse import parse_qs
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -1473,6 +1474,48 @@ def _latest_snapshot_date(csv_path: Path) -> str | None:
 
 
 def _load_ess_coverage_warning() -> dict:
+    # Recompute from canonical inputs when possible so UI semantics track the
+    # latest classification logic even if the persisted warning artifact is stale.
+    try:
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        from src.portfolio.ess_coverage import build_ess_coverage_gap_warning
+
+        latest_snapshot = _latest_snapshot_date(_ESS_SIGNAL_SNAPSHOT)
+        analysis_runs_root = _REPO_ROOT / "data" / "portfolio_ingestion" / "analysis_runs"
+        has_holdings_baseline = any(analysis_runs_root.glob("PAR-2*/holdings.csv"))
+        if latest_snapshot and _ESS_SIGNAL_SNAPSHOT.exists() and has_holdings_baseline:
+            canonical = build_ess_coverage_gap_warning(
+                snapshot_date=date.fromisoformat(latest_snapshot),
+                signal_snapshot_path=_ESS_SIGNAL_SNAPSHOT,
+                analysis_runs_root=analysis_runs_root,
+                base_universe_csv=_REPO_ROOT / "data" / "current" / "base_equity_universe.csv",
+            )
+            if canonical is None:
+                return {
+                    "warning_code": "ESS_COVERAGE_GAP",
+                    "status": "OK",
+                    "snapshot_date": latest_snapshot,
+                    "warning_count": 0,
+                    "example_symbols": [],
+                    "true_missing_count": 0,
+                    "stale_coverage_count": 0,
+                    "no_fresh_starmine_count": 0,
+                    "no_score_available_count": 0,
+                    "no_coverage_available_count": 0,
+                    "true_missing_symbols": [],
+                    "stale_coverage_symbols": [],
+                    "no_fresh_starmine_symbols": [],
+                    "no_score_available_symbols": [],
+                    "no_coverage_available_symbols": [],
+                    "counts_by_gap_type": {},
+                    "gaps": [],
+                    "summary_message": "ESS Coverage Warning — 0 holdings absent from latest ESS file.",
+                }
+            return asdict(canonical)
+    except Exception:
+        pass
+
     if not _ESS_COVERAGE_WARNING.exists():
         return {"warning_count": 0, "example_symbols": [], "summary_message": "", "status": "UNKNOWN"}
     try:

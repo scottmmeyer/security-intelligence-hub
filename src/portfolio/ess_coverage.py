@@ -142,15 +142,20 @@ def build_ess_coverage_gap_warning(
         has_non_starmine = "NON_STARMINE_ANALYST" in domain_values
         has_rows = bool(symbol_rows)
 
+        # Known no-coverage states are informational and should not create
+        # operational ESS warnings for holdings that are intentionally not
+        # exposed to StarMine coverage (for example, non-Starmine analyst
+        # securities or explicit vendor coverage gaps).
+        if has_non_starmine:
+            by_gap_type[GAP_TYPE_NO_COVERAGE_AVAILABLE].append(sym)
+            continue
+
         if "NO_SCORE_AVAILABLE" in tokens:
             gap_type = GAP_TYPE_NO_SCORE_AVAILABLE
             reason = "Holding has provider row but no score available in latest incoming ESS view."
         elif "NO_COVERAGE_AVAILABLE" in tokens:
-            gap_type = GAP_TYPE_NO_COVERAGE_AVAILABLE
-            reason = "Holding has provider row but no coverage available in latest incoming ESS view."
-        elif has_non_starmine:
-            gap_type = GAP_TYPE_NO_FRESH_STARMINE
-            reason = "Holding is marked NON_STARMINE_ANALYST in latest incoming ESS view."
+            by_gap_type[GAP_TYPE_NO_COVERAGE_AVAILABLE].append(sym)
+            continue
         elif previous is None and not has_rows:
             gap_type = GAP_TYPE_TRUE_MISSING
             reason = "Holding is ESS-applicable but was never covered and is absent from latest incoming ESS file."
