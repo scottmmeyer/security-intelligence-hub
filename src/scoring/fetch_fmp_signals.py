@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -820,6 +820,7 @@ def fetch_fmp_analyst_estimates(
     verbose: bool = True,
     limit: int = 8,
     periods: Sequence[str] = ("annual",),
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[Path, Dict[str, Any]]:
     """Fetch forward analyst-estimate rows for requested periods."""
     api_key = api_key or _get_api_key()
@@ -840,10 +841,49 @@ def fetch_fmp_analyst_estimates(
     failed = 0
     retries_performed = 0
     rate_limit_events = 0
+    timeout_count = 0
     period_capability: Dict[str, str] = {period: "UNKNOWN" for period in normalized_periods}
     network_requests_by_period: Dict[str, int] = {period: 0 for period in normalized_periods}
+    progress_started_at = datetime.now(timezone.utc).isoformat()
+    progress_t0 = time.perf_counter()
+    last_progress_emit = progress_t0
+    current_symbol = ""
+
+    def _emit_progress(*, state: str, force: bool = False) -> None:
+        nonlocal last_progress_emit
+        if progress_callback is None:
+            return
+        now = time.perf_counter()
+        if not force:
+            batch_due = attempted > 0 and attempted % 25 == 0
+            cadence_due = (now - last_progress_emit) >= 12.0
+            if not batch_due and not cadence_due:
+                return
+        progress_callback(
+            {
+                "state": state,
+                "substage": "analyst_estimates_fetch",
+                "planned_symbols": len(symbols),
+                "completed_symbols": attempted,
+                "current_symbol": current_symbol,
+                "attempted_count": attempted,
+                "success_count": with_data,
+                "no_coverage_count": no_coverage,
+                "failed_count": failed,
+                "retry_count": retries_performed,
+                "rate_limit_count": rate_limit_events,
+                "timeout_count": timeout_count,
+                "started_at": progress_started_at,
+                "last_progress_at": datetime.now(timezone.utc).isoformat(),
+                "runtime_sec": round(now - progress_t0, 4),
+            }
+        )
+        last_progress_emit = now
+
+    _emit_progress(state="RUNNING", force=True)
 
     for i, sym in enumerate(symbols, start=1):
+        current_symbol = str(sym or "").strip().upper()
         attempted += 1
         if verbose and i % 50 == 0:
             log.info("[fmp] analyst_estimates progress: %d/%d", i, len(symbols))
@@ -884,6 +924,12 @@ def fetch_fmp_analyst_estimates(
             else:
                 rows = _parse_analyst_estimates(sym, data, today, period=period)
             symbol_rows.extend(rows)
+            timeout_count += sum(
+                1
+                for row in rows
+                if str(row.get("fetch_status") or "").strip() == "FETCH_FAILED"
+                and str(row.get("failure_type") or "").strip().upper() == "TIMEOUT"
+            )
             period_status = _parse_period_status_from_rows(rows)
             period_statuses.append(period_status)
             existing = str(period_capability.get(period) or "UNKNOWN")
@@ -906,6 +952,8 @@ def fetch_fmp_analyst_estimates(
         else:
             no_coverage += 1
 
+        _emit_progress(state="RUNNING")
+
     estimate_path = daily_dir / f"fmp_analyst_estimates_{today}.csv"
     _write_csv(estimate_path, all_rows, ANALYST_ESTIMATES_HEADERS)
     latest_estimate_path = latest_dir / "latest_fmp_analyst_estimates.csv"
@@ -923,7 +971,12 @@ def fetch_fmp_analyst_estimates(
         "network_requests_by_period": dict(network_requests_by_period),
         "retries_performed": retries_performed,
         "rate_limit_events": rate_limit_events,
+        "timeout_count": timeout_count,
     }
+    terminal_state = "COMPLETE"
+    if failed > 0:
+        terminal_state = "PARTIAL" if (with_data + no_coverage) > 0 else "FAILED"
+    _emit_progress(state=terminal_state, force=True)
     return estimate_path, stats
 
 

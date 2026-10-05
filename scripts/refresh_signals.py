@@ -27,7 +27,7 @@ import tempfile
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -2403,6 +2403,7 @@ def _refresh_fmp(
     mode: str = "daily",
     collect_report: bool = False,
     symbols_override: Sequence[str] | None = None,
+    progress_hook: Callable[[dict[str, Any]], None] | None = None,
 ) -> bool | tuple[bool, dict[str, object]]:
     """Fetch fresh FMP fundamental signals.  Returns True when a fetch was triggered.
 
@@ -2451,6 +2452,13 @@ def _refresh_fmp(
         "failed": 0,
     }
     estimate_artifact_path = ""
+    runtime_progress: dict[str, Any] = {}
+
+    def _emit_progress(payload: dict[str, Any]) -> None:
+        nonlocal runtime_progress
+        runtime_progress = dict(payload)
+        if progress_hook is not None:
+            progress_hook(dict(payload))
 
     # Daily datasets
     if mode in ("daily", "all"):
@@ -2473,11 +2481,31 @@ def _refresh_fmp(
                             output_dir=_FMP_DIR,
                             verbose=verbose,
                             periods=_FMP_NORMAL_REFRESH_ESTIMATE_PERIODS,
+                            progress_callback=_emit_progress,
                         )
                         estimate_artifact_path = str(estimate_path)
                         triggered = True
                 except RuntimeError as exc:
                     print(f"[refresh_signals] FMP (daily): FAILED — {exc}")
+                    _emit_progress(
+                        {
+                            "state": "FAILED",
+                            "substage": "analyst_estimates_fetch",
+                            "planned_symbols": len(symbols),
+                            "completed_symbols": int(estimate_stats.get("attempted") or 0),
+                            "current_symbol": "",
+                            "attempted_count": int(estimate_stats.get("attempted") or 0),
+                            "success_count": int(estimate_stats.get("with_data") or 0),
+                            "no_coverage_count": int(estimate_stats.get("no_coverage") or 0),
+                            "failed_count": int(estimate_stats.get("failed") or 0),
+                            "retry_count": int(estimate_stats.get("retries_performed") or 0),
+                            "rate_limit_count": int(estimate_stats.get("rate_limit_events") or 0),
+                            "timeout_count": int(estimate_stats.get("timeout_count") or 0),
+                            "started_at": datetime.now(timezone.utc).isoformat(),
+                            "last_progress_at": datetime.now(timezone.utc).isoformat(),
+                            "runtime_sec": round(time.perf_counter() - t0, 4),
+                        }
+                    )
                     # Fail-open: log but don't crash the full refresh
         else:
             freshness = get_fmp_freshness_report(_FMP_DIR)
@@ -2530,7 +2558,9 @@ def _refresh_fmp(
             "estimate_network_requests_by_period": dict(estimate_stats.get("network_requests_by_period") or {}),
             "estimate_retries_performed": int(estimate_stats.get("retries_performed") or 0),
             "estimate_rate_limit_events": int(estimate_stats.get("rate_limit_events") or 0),
+            "estimate_timeout_count": int(estimate_stats.get("timeout_count") or 0),
             "estimate_artifact_path": estimate_artifact_path,
+            "runtime_progress": dict(runtime_progress),
             "runtime_sec": round(time.perf_counter() - t0, 4),
         }
     return triggered
@@ -2652,7 +2682,16 @@ def ensure_signals_fresh_with_report(
                 "planned": None,
                 "attempted": None,
                 "success": None,
+                "no_coverage": None,
                 "failed": None,
+                "retry_count": 0,
+                "rate_limit_count": 0,
+                "timeout_count": 0,
+                "substage": None,
+                "current_symbol": "",
+                "last_progress_at": None,
+                "runtime_sec": None,
+                "progress_pct": None,
                 "started_at": None,
                 "completed_at": None,
             },
@@ -2917,16 +2956,84 @@ def ensure_signals_fresh_with_report(
         _persist_snapshot()
     if "fmp" in provider_set:
         f_t0 = time.perf_counter()
+        fmp_progress_started_at = datetime.now(timezone.utc).isoformat()
+        fmp_runtime_progress: dict[str, Any] = {}
+
+        def _apply_fmp_runtime_progress(progress: dict[str, Any]) -> None:
+            nonlocal fmp_runtime_progress
+            if not isinstance(progress, dict):
+                return
+
+            fmp_provider = runtime_status["providers"]["fmp"]
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            state = str(progress.get("state") or fmp_provider.get("state") or "RUNNING").strip().upper()
+            planned_symbols_raw = progress.get("planned_symbols")
+            completed_symbols_raw = progress.get("completed_symbols")
+            attempted_count = int(progress.get("attempted_count") or 0)
+            success_count = int(progress.get("success_count") or 0)
+            no_coverage_count = int(progress.get("no_coverage_count") or 0)
+            failed_count = int(progress.get("failed_count") or 0)
+            planned_symbols = None if planned_symbols_raw in (None, "") else int(planned_symbols_raw)
+            completed_symbols = attempted_count if completed_symbols_raw in (None, "") else int(completed_symbols_raw)
+
+            progress_pct = None
+            if planned_symbols is not None and planned_symbols > 0:
+                progress_pct = round((min(completed_symbols, planned_symbols) / planned_symbols) * 100.0, 1)
+
+            fmp_provider["state"] = state
+            fmp_provider["substage"] = str(progress.get("substage") or "analyst_estimates_fetch")
+            fmp_provider["planned"] = planned_symbols
+            fmp_provider["attempted"] = attempted_count
+            fmp_provider["success"] = success_count
+            fmp_provider["no_coverage"] = no_coverage_count
+            fmp_provider["failed"] = failed_count
+            fmp_provider["retry_count"] = int(progress.get("retry_count") or 0)
+            fmp_provider["rate_limit_count"] = int(progress.get("rate_limit_count") or 0)
+            fmp_provider["timeout_count"] = int(progress.get("timeout_count") or 0)
+            fmp_provider["current_symbol"] = str(progress.get("current_symbol") or "")
+            fmp_provider["runtime_sec"] = float(progress.get("runtime_sec") or 0.0)
+            fmp_provider["last_progress_at"] = str(progress.get("last_progress_at") or now_iso)
+            fmp_provider["progress_pct"] = progress_pct
+            if state in {"COMPLETE", "PARTIAL", "FAILED", "SKIPPED"}:
+                fmp_provider["completed_at"] = str(progress.get("last_progress_at") or now_iso)
+
+            fmp_runtime_progress = {
+                "state": state,
+                "substage": str(progress.get("substage") or "analyst_estimates_fetch"),
+                "planned_symbols": planned_symbols,
+                "completed_symbols": completed_symbols,
+                "current_symbol": str(progress.get("current_symbol") or ""),
+                "attempted_count": attempted_count,
+                "success_count": success_count,
+                "no_coverage_count": no_coverage_count,
+                "failed_count": failed_count,
+                "retry_count": int(progress.get("retry_count") or 0),
+                "rate_limit_count": int(progress.get("rate_limit_count") or 0),
+                "timeout_count": int(progress.get("timeout_count") or 0),
+                "started_at": str(progress.get("started_at") or fmp_progress_started_at),
+                "last_progress_at": str(progress.get("last_progress_at") or now_iso),
+                "runtime_sec": float(progress.get("runtime_sec") or 0.0),
+                "progress_pct": progress_pct,
+            }
+
+            _persist_snapshot()
+
         runtime_status["current_stage"] = "FMP"
         runtime_status["current_stage_provider"] = "fmp"
         runtime_status["providers"]["fmp"]["state"] = "RUNNING"
         runtime_status["providers"]["fmp"]["started_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["providers"]["fmp"]["substage"] = "initializing"
+        runtime_status["providers"]["fmp"]["current_symbol"] = ""
+        runtime_status["providers"]["fmp"]["last_progress_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["providers"]["fmp"]["runtime_sec"] = 0.0
         _persist_snapshot()
         f_refresh = _refresh_fmp(
             dry_run=dry_run,
             verbose=verbose,
             mode="daily",
             collect_report=True,
+            progress_hook=_apply_fmp_runtime_progress,
         )
         f_triggered, f_metrics = f_refresh
         triggered["fmp"] = bool(f_triggered)
@@ -2968,15 +3075,42 @@ def ensure_signals_fresh_with_report(
             "estimate_network_requests_by_period": dict(f_metrics.get("estimate_network_requests_by_period") or {}),
             "estimate_retries_performed": int(f_metrics.get("estimate_retries_performed") or 0),
             "estimate_rate_limit_events": int(f_metrics.get("estimate_rate_limit_events") or 0),
+            "estimate_timeout_count": int(f_metrics.get("estimate_timeout_count") or 0),
             "estimate_artifact_path": str(f_metrics.get("estimate_artifact_path") or ""),
+            "runtime_progress": dict(f_metrics.get("runtime_progress") or fmp_runtime_progress),
             "runtime_sec": round(time.perf_counter() - f_t0, 4),
             **f_pit,
         }
-        runtime_status["providers"]["fmp"]["attempted"] = int(provider_report["fmp"].get("estimate_symbols_attempted") or 0)
-        runtime_status["providers"]["fmp"]["success"] = int(provider_report["fmp"].get("estimate_symbols_with_data") or 0)
-        runtime_status["providers"]["fmp"]["failed"] = int(provider_report["fmp"].get("failed") or 0)
-        runtime_status["providers"]["fmp"]["state"] = "COMPLETE" if bool(f_triggered) else "SKIPPED"
+        fmp_attempted = int(provider_report["fmp"].get("estimate_symbols_attempted") or 0)
+        fmp_success = int(provider_report["fmp"].get("estimate_symbols_with_data") or 0)
+        fmp_no_coverage = int(provider_report["fmp"].get("estimate_symbols_no_coverage") or 0)
+        fmp_failed = int(provider_report["fmp"].get("failed") or 0)
+        terminal_state = "SKIPPED"
+        if bool(f_triggered):
+            if fmp_failed > 0:
+                terminal_state = "PARTIAL" if (fmp_success + fmp_no_coverage) > 0 else "FAILED"
+            else:
+                terminal_state = "COMPLETE"
+
+        runtime_status["providers"]["fmp"]["attempted"] = fmp_attempted
+        runtime_status["providers"]["fmp"]["success"] = fmp_success
+        runtime_status["providers"]["fmp"]["no_coverage"] = fmp_no_coverage
+        runtime_status["providers"]["fmp"]["failed"] = fmp_failed
+        runtime_status["providers"]["fmp"]["retry_count"] = int(provider_report["fmp"].get("estimate_retries_performed") or 0)
+        runtime_status["providers"]["fmp"]["rate_limit_count"] = int(provider_report["fmp"].get("estimate_rate_limit_events") or 0)
+        runtime_status["providers"]["fmp"]["timeout_count"] = int(provider_report["fmp"].get("estimate_timeout_count") or 0)
+        runtime_status["providers"]["fmp"]["substage"] = "analyst_estimates_fetch"
+        runtime_status["providers"]["fmp"]["current_symbol"] = str((provider_report["fmp"].get("runtime_progress") or {}).get("current_symbol") or "")
+        runtime_status["providers"]["fmp"]["runtime_sec"] = round(time.perf_counter() - f_t0, 4)
+        if runtime_status["providers"]["fmp"].get("planned") not in (None, "", 0):
+            planned_total = int(runtime_status["providers"]["fmp"].get("planned") or 0)
+            attempted_total = int(runtime_status["providers"]["fmp"].get("attempted") or 0)
+            runtime_status["providers"]["fmp"]["progress_pct"] = round((min(attempted_total, planned_total) / planned_total) * 100.0, 1)
+        else:
+            runtime_status["providers"]["fmp"]["progress_pct"] = None
+        runtime_status["providers"]["fmp"]["state"] = terminal_state
         runtime_status["providers"]["fmp"]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        runtime_status["providers"]["fmp"]["last_progress_at"] = datetime.now(timezone.utc).isoformat()
         _persist_snapshot()
 
     market_proxy_count = int(scope_summary.get("market_proxy_count") or 0)

@@ -691,3 +691,41 @@ def test_refresh_transparency_ess_symbol_level_semantics(tmp_path, monkeypatch) 
     aapl_ess = rows["AAPL"]["ess"]
     assert aapl_ess["state"] == "fresh"
     assert aapl_ess["date"] == today
+
+
+def test_fmp_progress_payload_handles_legacy_report_without_runtime_progress() -> None:
+    fake_report = {
+        "providers": {
+            "fmp": {
+                "triggered": True,
+                "submitted": 2594,
+                "estimate_symbols_attempted": 2594,
+                "estimate_symbols_with_data": 2585,
+                "estimate_symbols_no_coverage": 9,
+                "estimate_symbols_failed": 0,
+                "estimate_retries_performed": 4,
+                "estimate_rate_limit_events": 1,
+            }
+        }
+    }
+
+    with patch("scripts.run_outcome_ui._refresh_last_report", fake_report), patch(
+        "scripts.run_outcome_ui._signal_status",
+        return_value={"zacks": {}, "danelfin": {}, "yahoo": {}, "ess": {}},
+    ), patch(
+        "scripts.run_outcome_ui._refresh_provider_planned_totals",
+        {},
+    ), patch(
+        "scripts.run_outcome_ui._refresh_resolved_intent",
+        "holdings_plus_buy_candidates",
+    ):
+        payload = outcome_ui._refresh_status_payload(running=False)
+
+    fmp_progress = payload["provider_progress"]["fmp"]
+    fmp_execution = payload["provider_execution"]["fmp"]
+    assert fmp_progress["completed_count"] == 2594
+    assert fmp_progress["planned_total_count"] is None
+    assert fmp_progress["progress_pct"] is None
+    assert fmp_execution["state"] == "COMPLETE"
+    assert fmp_execution["no_coverage_count"] == 9
+    assert fmp_execution["failed_count"] == 0

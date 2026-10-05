@@ -353,3 +353,262 @@ def test_runtime_status_startup_snapshot_does_not_raise_nameerror(tmp_path, monk
     assert saved["runtime_status"]["running"] is False
     assert saved["market_proxy_replay_publish"]["attempted"] is False
     assert report["market_proxy_replay_publish"]["status"] == "disabled"
+
+
+def test_fmp_runtime_progress_persists_during_loop_before_final_return(tmp_path, monkeypatch):
+    report_path = tmp_path / "current" / "last_signal_refresh_report.json"
+    writes: list[dict[str, object]] = []
+    original_write = rs._write_json_atomic
+
+    def _capture_write(path: Path, payload: dict[str, object]) -> None:
+        writes.append(json.loads(json.dumps(payload)))
+        original_write(path, payload)
+
+    monkeypatch.setattr(rs, "_write_json_atomic", _capture_write)
+    monkeypatch.setattr(
+        rs,
+        "_build_refresh_scope",
+        lambda refresh_mode: {
+            "scope_summary": {
+                "portfolio_holdings_count": 0,
+                "buy_candidate_count": 0,
+                "mandatory_dependency_count": 0,
+                "market_proxy_count": 0,
+                "deduped_symbol_count": 0,
+                "full_universe_count": 0,
+            },
+            "planned_symbol_samples": {},
+            "planned_symbols": {"provider_symbols": {"zacks": [], "yahoo": [], "danelfin": []}},
+            "buy_candidate_cap": 50,
+        },
+    )
+
+    def _fake_refresh_fmp(*, progress_hook=None, **kwargs):
+        if progress_hook is not None:
+            progress_hook(
+                {
+                    "state": "RUNNING",
+                    "substage": "analyst_estimates_fetch",
+                    "planned_symbols": 6,
+                    "completed_symbols": 0,
+                    "current_symbol": "",
+                    "attempted_count": 0,
+                    "success_count": 0,
+                    "no_coverage_count": 0,
+                    "failed_count": 0,
+                    "retry_count": 0,
+                    "rate_limit_count": 0,
+                    "timeout_count": 0,
+                    "started_at": "2026-10-05T10:00:00+00:00",
+                    "last_progress_at": "2026-10-05T10:00:00+00:00",
+                    "runtime_sec": 0.1,
+                }
+            )
+            progress_hook(
+                {
+                    "state": "RUNNING",
+                    "substage": "analyst_estimates_fetch",
+                    "planned_symbols": 6,
+                    "completed_symbols": 3,
+                    "current_symbol": "MSFT",
+                    "attempted_count": 3,
+                    "success_count": 2,
+                    "no_coverage_count": 1,
+                    "failed_count": 0,
+                    "retry_count": 2,
+                    "rate_limit_count": 1,
+                    "timeout_count": 0,
+                    "started_at": "2026-10-05T10:00:00+00:00",
+                    "last_progress_at": "2026-10-05T10:00:12+00:00",
+                    "runtime_sec": 12.0,
+                }
+            )
+            progress_hook(
+                {
+                    "state": "COMPLETE",
+                    "substage": "analyst_estimates_fetch",
+                    "planned_symbols": 6,
+                    "completed_symbols": 6,
+                    "current_symbol": "NVDA",
+                    "attempted_count": 6,
+                    "success_count": 5,
+                    "no_coverage_count": 1,
+                    "failed_count": 0,
+                    "retry_count": 2,
+                    "rate_limit_count": 1,
+                    "timeout_count": 0,
+                    "started_at": "2026-10-05T10:00:00+00:00",
+                    "last_progress_at": "2026-10-05T10:00:24+00:00",
+                    "runtime_sec": 24.0,
+                }
+            )
+        return True, {
+            "provider": "fmp",
+            "mode": "daily",
+            "submitted_symbols": ["AAPL", "MSFT", "NVDA", "CRM", "ORCL", "AMD"],
+            "submitted_count": 6,
+            "estimate_symbols_attempted": 6,
+            "estimate_symbols_with_data": 5,
+            "estimate_symbols_no_coverage": 1,
+            "estimate_symbols_failed": 0,
+            "estimate_periods_requested": ["annual"],
+            "estimate_periods_available": ["annual"],
+            "estimate_periods_plan_limited": ["quarter"],
+            "estimate_period_capability": {"annual": "AVAILABLE", "quarter": "PLAN_LIMIT"},
+            "estimate_network_requests_by_period": {"annual": 6},
+            "estimate_retries_performed": 2,
+            "estimate_rate_limit_events": 1,
+            "estimate_timeout_count": 0,
+            "estimate_artifact_path": "",
+            "runtime_progress": {
+                "state": "COMPLETE",
+                "planned_symbols": 6,
+                "completed_symbols": 6,
+                "attempted_count": 6,
+                "success_count": 5,
+                "no_coverage_count": 1,
+                "failed_count": 0,
+                "progress_pct": 100.0,
+            },
+            "runtime_sec": 24.0,
+        }
+
+    monkeypatch.setattr(rs, "_refresh_fmp", _fake_refresh_fmp)
+
+    report = rs.ensure_signals_fresh_with_report(
+        providers=["fmp"],
+        dry_run=False,
+        verbose=False,
+        refresh_mode=rs.REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
+        report_path=report_path,
+    )
+
+    assert len(writes) >= 4
+    running_snapshots = [
+        snap
+        for snap in writes
+        if str((((snap.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}).get("state") or "").upper()
+        == "RUNNING"
+    ]
+    assert running_snapshots
+
+    completed_series = [
+        int((((snap.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}).get("attempted") or 0)
+        for snap in running_snapshots
+    ]
+    assert completed_series == sorted(completed_series)
+
+    progress_times = [
+        str((((snap.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}).get("last_progress_at") or "")
+        for snap in running_snapshots
+    ]
+    assert len(set(progress_times)) >= 2
+    assert progress_times[-1]
+
+    planned_series = {
+        int((((snap.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}).get("planned") or 0)
+        for snap in running_snapshots
+        if (((snap.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}).get("planned") is not None
+    }
+    assert planned_series == {6}
+
+    final_fmp_runtime = ((report.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}
+    assert final_fmp_runtime.get("state") == "COMPLETE"
+    assert int(final_fmp_runtime.get("attempted") or 0) == 6
+    assert int(final_fmp_runtime.get("success") or 0) == 5
+    assert int(final_fmp_runtime.get("no_coverage") or 0) == 1
+    assert int(final_fmp_runtime.get("failed") or 0) == 0
+    assert float(final_fmp_runtime.get("progress_pct") or 0.0) == 100.0
+
+    fmp_provider_report = ((report.get("providers") or {}).get("fmp") or {})
+    assert int(fmp_provider_report.get("estimate_symbols_no_coverage") or 0) == 1
+    assert int(fmp_provider_report.get("estimate_symbols_failed") or 0) == 0
+
+
+def test_fmp_runtime_progress_terminal_failed_not_left_running(tmp_path, monkeypatch):
+    report_path = tmp_path / "current" / "last_signal_refresh_report.json"
+
+    monkeypatch.setattr(
+        rs,
+        "_build_refresh_scope",
+        lambda refresh_mode: {
+            "scope_summary": {
+                "portfolio_holdings_count": 0,
+                "buy_candidate_count": 0,
+                "mandatory_dependency_count": 0,
+                "market_proxy_count": 0,
+                "deduped_symbol_count": 0,
+                "full_universe_count": 0,
+            },
+            "planned_symbol_samples": {},
+            "planned_symbols": {"provider_symbols": {"zacks": [], "yahoo": [], "danelfin": []}},
+            "buy_candidate_cap": 50,
+        },
+    )
+
+    def _fake_failed_refresh_fmp(*, progress_hook=None, **kwargs):
+        if progress_hook is not None:
+            progress_hook(
+                {
+                    "state": "FAILED",
+                    "substage": "analyst_estimates_fetch",
+                    "planned_symbols": 4,
+                    "completed_symbols": 4,
+                    "current_symbol": "QQQ",
+                    "attempted_count": 4,
+                    "success_count": 0,
+                    "no_coverage_count": 0,
+                    "failed_count": 4,
+                    "retry_count": 1,
+                    "rate_limit_count": 0,
+                    "timeout_count": 2,
+                    "started_at": "2026-10-05T11:00:00+00:00",
+                    "last_progress_at": "2026-10-05T11:00:15+00:00",
+                    "runtime_sec": 15.0,
+                }
+            )
+        return True, {
+            "provider": "fmp",
+            "mode": "daily",
+            "submitted_symbols": ["SPY", "QQQ", "XLK", "XLE"],
+            "submitted_count": 4,
+            "estimate_symbols_attempted": 4,
+            "estimate_symbols_with_data": 0,
+            "estimate_symbols_no_coverage": 0,
+            "estimate_symbols_failed": 4,
+            "estimate_periods_requested": ["annual"],
+            "estimate_periods_available": [],
+            "estimate_periods_plan_limited": ["quarter"],
+            "estimate_period_capability": {"annual": "UNKNOWN", "quarter": "PLAN_LIMIT"},
+            "estimate_network_requests_by_period": {"annual": 4},
+            "estimate_retries_performed": 1,
+            "estimate_rate_limit_events": 0,
+            "estimate_timeout_count": 2,
+            "estimate_artifact_path": "",
+            "runtime_progress": {
+                "state": "FAILED",
+                "planned_symbols": 4,
+                "completed_symbols": 4,
+                "attempted_count": 4,
+                "success_count": 0,
+                "no_coverage_count": 0,
+                "failed_count": 4,
+            },
+            "runtime_sec": 15.0,
+        }
+
+    monkeypatch.setattr(rs, "_refresh_fmp", _fake_failed_refresh_fmp)
+
+    report = rs.ensure_signals_fresh_with_report(
+        providers=["fmp"],
+        dry_run=False,
+        verbose=False,
+        refresh_mode=rs.REFRESH_MODE_HOLDINGS_PLUS_BUY_CANDIDATES,
+        report_path=report_path,
+    )
+
+    final_runtime = ((report.get("runtime_status") or {}).get("providers") or {}).get("fmp") or {}
+    assert final_runtime.get("state") == "FAILED"
+    assert ((report.get("runtime_status") or {}).get("running")) is False
+    assert int(final_runtime.get("attempted") or 0) == 4
+    assert int(final_runtime.get("failed") or 0) == 4

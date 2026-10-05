@@ -396,7 +396,7 @@ def test_refresh_observability_shows_current_stage_queue_and_fmp_visibility() ->
         assert "Refresh state: RUNNING" in signal_text
         assert "Refresh state: QUEUED" in signal_text
         assert "current stage: YAHOO" in refresh_msg
-        assert "Execution: attempted 63 · success 63 · failed 0" in signal_text
+        assert "Execution: attempted 63 · success 63 · no coverage" in signal_text
 
 
 def test_refresh_observability_marks_terminal_danelfin_and_fmp_running() -> None:
@@ -489,9 +489,9 @@ def test_refresh_observability_marks_terminal_danelfin_and_fmp_running() -> None
         assert "Current stage: FMP (RUNNING)" in runtime_summary
         assert "DANELFINCOMPLETE_WITH_ERRORS 63/63" in runtime_details
         assert "FMPRUNNING —/—" in runtime_details
-        assert "Active refresh progress: 0/63 rows" in signal_text
+        assert "Active refresh progress: 0/63 rows" not in signal_text
         assert "Refresh state: COMPLETE_WITH_ERRORS" in signal_text
-        assert "Execution: attempted 63 · success 0 · failed 63" in signal_text
+        assert "Execution: attempted 63 · success 0 · no coverage" in signal_text
 
 
 def test_refresh_observability_no_active_refresh_state() -> None:
@@ -543,6 +543,139 @@ def test_refresh_observability_no_active_refresh_state() -> None:
     with _serve_outcome_page(routes) as page:
         runtime_summary = page.locator("#refreshActiveStateSummary").inner_text()
         assert runtime_summary == "No active refresh job."
+
+
+def test_fmp_provider_card_shows_running_progress_details() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=True)
+    refresh_payload = {
+        "running": True,
+        "resolved_intent": "holdings_plus_buy_candidates",
+        "provider_progress": {
+            "zacks": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "yahoo": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "danelfin": {
+                "completed_count": 63,
+                "planned_total_count": 63,
+                "progress_pct": 100.0,
+                "progress_label": "63/63",
+                "is_complete": True,
+            },
+            "fmp": {
+                "completed_count": 1420,
+                "planned_total_count": 2594,
+                "progress_pct": 54.7,
+                "progress_label": "1420/2594",
+                "is_complete": False,
+                "state": "RUNNING",
+                "attempted_count": 1420,
+                "success_count": 1414,
+                "no_coverage_count": 6,
+                "failed_count": 0,
+                "current_symbol": "XYZ",
+            },
+        },
+        "provider_execution": {
+            "zacks": {"provider": "zacks", "state": "COMPLETE", "attempted_count": 63, "success_count": 63, "failed_count": 0},
+            "yahoo": {"provider": "yahoo", "state": "COMPLETE", "attempted_count": 63, "success_count": 63, "failed_count": 0},
+            "danelfin": {"provider": "danelfin", "state": "COMPLETE", "attempted_count": 63, "success_count": 63, "failed_count": 0},
+            "fmp": {
+                "provider": "fmp",
+                "state": "RUNNING",
+                "planned_count": 2594,
+                "attempted_count": 1420,
+                "success_count": 1414,
+                "no_coverage_count": 6,
+                "failed_count": 0,
+                "current_symbol": "XYZ",
+            },
+        },
+        "current_stage": "provider_refresh_fmp",
+        "current_stage_provider": "fmp",
+    }
+
+    routes = [
+        (r".*/api/signal-refresh/status$", refresh_payload, 200, "application/json")
+        if pattern == r".*/api/signal-refresh/status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+        runtime_details = page.locator("#refreshActiveStateDetails").inner_text()
+
+        assert "FMP" in signal_text
+        assert "Refresh state: RUNNING" in signal_text
+        assert "Active refresh progress: 1420/2594 symbols" in signal_text
+        assert "54.7%" in signal_text
+        assert "no coverage 6" in signal_text
+        assert "Current: XYZ" in signal_text
+        assert "FMPRUNNING 1420/2594" in runtime_details
+
+
+def test_fmp_provider_card_shows_terminal_summary_when_complete() -> None:
+    routes = _base_routes(replay_series_status=404, refresh_running=False)
+    refresh_payload = {
+        "running": False,
+        "resolved_intent": "holdings_plus_buy_candidates",
+        "provider_progress": {
+            "fmp": {
+                "completed_count": 2594,
+                "planned_total_count": 2594,
+                "progress_pct": 100.0,
+                "progress_label": "2594/2594",
+                "is_complete": True,
+            }
+        },
+        "provider_execution": {
+            "fmp": {
+                "provider": "fmp",
+                "state": "COMPLETE",
+                "planned_count": 2594,
+                "attempted_count": 2594,
+                "success_count": 2585,
+                "no_coverage_count": 9,
+                "failed_count": 0,
+            }
+        },
+        "last_report": {
+            "providers": {
+                "fmp": {
+                    "submitted": 2594,
+                    "estimate_symbols_attempted": 2594,
+                    "estimate_symbols_with_data": 2585,
+                    "estimate_symbols_no_coverage": 9,
+                    "estimate_symbols_failed": 0,
+                }
+            }
+        },
+    }
+
+    routes = [
+        (r".*/api/signal-refresh/status$", refresh_payload, 200, "application/json")
+        if pattern == r".*/api/signal-refresh/status$"
+        else (pattern, payload, status, content_type)
+        for pattern, payload, status, content_type in routes
+    ]
+
+    with _serve_outcome_page(routes) as page:
+        signal_text = page.locator("#signalStatusPills").inner_text()
+
+        assert "FMP" in signal_text
+        assert "Refresh state: COMPLETE" in signal_text
+        assert "FMP terminal summary: 2594 attempted · 2585 data · 9 no coverage · 0 failed" in signal_text
 
 
 def test_recommendation_freshness_ess_labels_distinguish_no_score_and_missing() -> None:

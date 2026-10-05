@@ -516,3 +516,48 @@ def test_FMP_PERIOD_VS_RETRIEVAL_TIME_TEST() -> None:
     assert observations
     assert all(obs["retrieved_at_utc"] == retrieved for obs in observations)
     assert all(obs["fiscal_period"] == "2024-01-31" for obs in observations)
+
+
+def test_FMP_PROGRESS_CALLBACK_IS_ADDITIVE_AND_STABLE_TEST(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    progress_events: list[dict[str, object]] = []
+
+    def _fake_get_with_retry(url: str, api_key: str):
+        payload = [
+            {
+                "symbol": "AAA",
+                "date": "2031-01-31",
+                "revenueAvg": 1000000000,
+                "epsAvg": 3.2,
+                "numAnalystsRevenue": 10,
+                "numAnalystsEps": 8,
+            }
+        ]
+        return payload, 200, None, {"retries_performed": 0, "rate_limit_events": 0}
+
+    monkeypatch.setattr(fmp, "_fmp_get_with_retry_detailed", _fake_get_with_retry)
+
+    estimate_path, stats = fmp.fetch_fmp_analyst_estimates(
+        ["AAA", "BBB"],
+        api_key="TEST",
+        output_dir=tmp_path / "signals" / "fmp",
+        delay=0.0,
+        verbose=False,
+        periods=["annual"],
+        progress_callback=lambda payload: progress_events.append(dict(payload)),
+    )
+
+    assert estimate_path.exists()
+    assert int(stats["attempted"]) == 2
+    assert int(stats["with_data"]) == 2
+    assert int(stats["no_coverage"]) == 0
+    assert int(stats["failed"]) == 0
+
+    assert progress_events
+    assert str(progress_events[0].get("state") or "") == "RUNNING"
+    assert str(progress_events[-1].get("state") or "") == "COMPLETE"
+
+    planned_values = {int(event.get("planned_symbols") or 0) for event in progress_events}
+    assert planned_values == {2}
+
+    completed_values = [int(event.get("completed_symbols") or 0) for event in progress_events]
+    assert completed_values == sorted(completed_values)

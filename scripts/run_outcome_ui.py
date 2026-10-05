@@ -1098,6 +1098,14 @@ def _refresh_status_payload(running: bool) -> dict:
             "is_complete": is_complete,
         }
 
+    provider_progress["fmp"] = {
+        "completed_count": 0,
+        "planned_total_count": None,
+        "progress_pct": None,
+        "progress_label": "0 rows processed",
+        "is_complete": False,
+    }
+
     provider_order = ["zacks", "yahoo", "danelfin", "fmp"]
     provider_execution: dict[str, dict] = {}
     last_report_providers = {}
@@ -1113,7 +1121,14 @@ def _refresh_status_payload(running: bool) -> dict:
 
         attempted_count = None
         success_count = None
+        no_coverage_count = None
         failed_count = None
+        retry_count = None
+        rate_limit_count = None
+        timeout_count = None
+        current_symbol = ""
+        runtime_sec = None
+        last_progress_at = ""
         report_state = None
 
         info = signal_data.get(provider)
@@ -1136,6 +1151,48 @@ def _refresh_status_payload(running: bool) -> dict:
             if report.get("failed") is not None:
                 failed_count = int(report.get("failed") or 0)
 
+            if provider == "fmp":
+                if report.get("estimate_symbols_attempted") is not None:
+                    attempted_count = int(report.get("estimate_symbols_attempted") or 0)
+                if report.get("estimate_symbols_with_data") is not None:
+                    success_count = int(report.get("estimate_symbols_with_data") or 0)
+                if report.get("estimate_symbols_no_coverage") is not None:
+                    no_coverage_count = int(report.get("estimate_symbols_no_coverage") or 0)
+                if report.get("estimate_symbols_failed") is not None:
+                    failed_count = int(report.get("estimate_symbols_failed") or 0)
+                if report.get("estimate_retries_performed") is not None:
+                    retry_count = int(report.get("estimate_retries_performed") or 0)
+                if report.get("estimate_rate_limit_events") is not None:
+                    rate_limit_count = int(report.get("estimate_rate_limit_events") or 0)
+                if report.get("estimate_timeout_count") is not None:
+                    timeout_count = int(report.get("estimate_timeout_count") or 0)
+
+                runtime_progress = report.get("runtime_progress")
+                if isinstance(runtime_progress, dict):
+                    if runtime_progress.get("attempted_count") is not None:
+                        attempted_count = int(runtime_progress.get("attempted_count") or 0)
+                    if runtime_progress.get("success_count") is not None:
+                        success_count = int(runtime_progress.get("success_count") or 0)
+                    if runtime_progress.get("no_coverage_count") is not None:
+                        no_coverage_count = int(runtime_progress.get("no_coverage_count") or 0)
+                    if runtime_progress.get("failed_count") is not None:
+                        failed_count = int(runtime_progress.get("failed_count") or 0)
+                    if runtime_progress.get("retry_count") is not None:
+                        retry_count = int(runtime_progress.get("retry_count") or 0)
+                    if runtime_progress.get("rate_limit_count") is not None:
+                        rate_limit_count = int(runtime_progress.get("rate_limit_count") or 0)
+                    if runtime_progress.get("timeout_count") is not None:
+                        timeout_count = int(runtime_progress.get("timeout_count") or 0)
+                    if runtime_progress.get("current_symbol") is not None:
+                        current_symbol = str(runtime_progress.get("current_symbol") or "")
+                    if runtime_progress.get("runtime_sec") is not None:
+                        try:
+                            runtime_sec = float(runtime_progress.get("runtime_sec") or 0.0)
+                        except (TypeError, ValueError):
+                            runtime_sec = None
+                    if runtime_progress.get("last_progress_at") is not None:
+                        last_progress_at = str(runtime_progress.get("last_progress_at") or "")
+
             report_state = str(report.get("state") or "").strip().upper() or None
 
         if provider in ("zacks", "danelfin", "yahoo") and attempted_count is not None and success_count is not None and failed_count is None:
@@ -1147,7 +1204,14 @@ def _refresh_status_payload(running: bool) -> dict:
             "planned_count": planned,
             "attempted_count": attempted_count,
             "success_count": success_count,
+            "no_coverage_count": no_coverage_count,
             "failed_count": failed_count,
+            "retry_count": retry_count,
+            "rate_limit_count": rate_limit_count,
+            "timeout_count": timeout_count,
+            "current_symbol": current_symbol,
+            "runtime_sec": runtime_sec,
+            "last_progress_at": last_progress_at,
             "state": "UNKNOWN",
             "started_at": _refresh_started_at_utc if effective_running else None,
             "completed_at": _refresh_completed_at_utc if not effective_running else None,
@@ -1231,7 +1295,14 @@ def _refresh_status_payload(running: bool) -> dict:
                 target["planned_count"] = shared_provider.get("planned", target.get("planned_count"))
                 target["attempted_count"] = shared_provider.get("attempted", target.get("attempted_count"))
                 target["success_count"] = shared_provider.get("success", target.get("success_count"))
+                target["no_coverage_count"] = shared_provider.get("no_coverage", target.get("no_coverage_count"))
                 target["failed_count"] = shared_provider.get("failed", target.get("failed_count"))
+                target["retry_count"] = shared_provider.get("retry_count", target.get("retry_count"))
+                target["rate_limit_count"] = shared_provider.get("rate_limit_count", target.get("rate_limit_count"))
+                target["timeout_count"] = shared_provider.get("timeout_count", target.get("timeout_count"))
+                target["current_symbol"] = str(shared_provider.get("current_symbol") or target.get("current_symbol") or "")
+                target["runtime_sec"] = shared_provider.get("runtime_sec", target.get("runtime_sec"))
+                target["last_progress_at"] = str(shared_provider.get("last_progress_at") or target.get("last_progress_at") or "")
                 target["started_at"] = shared_provider.get("started_at", target.get("started_at"))
                 target["completed_at"] = shared_provider.get("completed_at", target.get("completed_at"))
 
@@ -1249,6 +1320,43 @@ def _refresh_status_payload(running: bool) -> dict:
             _refresh_started_at_utc = str(shared_runtime.get("started_at") or "") or None
         if not effective_running and _refresh_completed_at_utc is None:
             _refresh_completed_at_utc = str(shared_runtime.get("completed_at") or "") or None
+
+    fmp_exec = provider_execution.get("fmp") if isinstance(provider_execution, dict) else None
+    if isinstance(fmp_exec, dict):
+        fmp_planned = fmp_exec.get("planned_count")
+        fmp_completed = fmp_exec.get("attempted_count")
+        fmp_progress_pct = None
+        fmp_is_complete = False
+        fmp_label = f"{int(fmp_completed or 0)} rows processed"
+        if fmp_planned is not None:
+            try:
+                planned_int = int(fmp_planned)
+                completed_int = int(fmp_completed or 0)
+                display_completed = min(completed_int, planned_int)
+                if planned_int > 0:
+                    fmp_progress_pct = round((display_completed / planned_int) * 100.0, 1)
+                fmp_is_complete = completed_int >= planned_int
+                fmp_label = f"{display_completed}/{planned_int}"
+            except (TypeError, ValueError):
+                fmp_progress_pct = None
+        provider_progress["fmp"] = {
+            "completed_count": int(fmp_completed or 0),
+            "planned_total_count": fmp_planned,
+            "progress_pct": fmp_progress_pct,
+            "progress_label": fmp_label,
+            "is_complete": fmp_is_complete,
+            "state": str(fmp_exec.get("state") or "UNKNOWN").upper(),
+            "attempted_count": fmp_exec.get("attempted_count"),
+            "success_count": fmp_exec.get("success_count"),
+            "no_coverage_count": fmp_exec.get("no_coverage_count"),
+            "failed_count": fmp_exec.get("failed_count"),
+            "retry_count": fmp_exec.get("retry_count"),
+            "rate_limit_count": fmp_exec.get("rate_limit_count"),
+            "timeout_count": fmp_exec.get("timeout_count"),
+            "current_symbol": str(fmp_exec.get("current_symbol") or ""),
+            "last_progress_at": str(fmp_exec.get("last_progress_at") or ""),
+            "runtime_sec": fmp_exec.get("runtime_sec"),
+        }
 
     scope_formula = _refresh_scope_formula(_refresh_scope_summary if isinstance(_refresh_scope_summary, dict) else {}, _refresh_resolved_intent)
     replay_publish = None

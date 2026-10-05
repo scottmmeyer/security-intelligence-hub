@@ -2113,7 +2113,19 @@ function loadSignalStatus() {
       const refreshRunning = Boolean(runtime && runtime.running);
       const progress = (runtime && runtime.provider_progress) ? runtime.provider_progress : {};
       const runtimeView = _deriveRefreshRuntimeView(runtime);
-      ["zacks", "danelfin", "yahoo"].forEach((provider) => {
+      if (!data.fmp || typeof data.fmp !== "object") {
+        data.fmp = {
+          sourced_date: "",
+          stale: false,
+          exists: true,
+          badge_state: "UNKNOWN",
+          attempted_count: 0,
+          with_data_count: 0,
+          coverage_pct: null,
+        };
+      }
+
+      ["zacks", "danelfin", "yahoo", "fmp"].forEach((provider) => {
         if (!data[provider] || !progress[provider]) return;
         const p = progress[provider];
         const derived = runtimeView.providers[provider] || {};
@@ -2130,13 +2142,32 @@ function loadSignalStatus() {
           state,
           attempted_count: derived.attempted_count,
           success_count: derived.success_count,
+          no_coverage_count: derived.no_coverage_count,
           failed_count: derived.failed,
+          retry_count: derived.retry_count,
+          rate_limit_count: derived.rate_limit_count,
+          timeout_count: derived.timeout_count,
+          current_symbol: derived.current_symbol || "",
           last_activity_at: derived.last_activity_at || "",
           stage_elapsed_seconds: derived.stage_elapsed_seconds,
           no_recent_progress_signal: Boolean(
             refreshRunning && derived.state === "RUNNING" && !derived.last_activity_at,
           ),
         };
+
+        if (provider === "fmp") {
+          if (state === "RUNNING" || state === "QUEUED") {
+            data.fmp.badge_state = "REFRESHING";
+          } else if (state === "COMPLETE") {
+            data.fmp.badge_state = "FRESH";
+          } else if (state === "PARTIAL" || state === "COMPLETE_WITH_ERRORS") {
+            data.fmp.badge_state = "FRESH_PARTIAL";
+          } else if (state === "FAILED") {
+            data.fmp.badge_state = "ERROR";
+          } else {
+            data.fmp.badge_state = "UNKNOWN";
+          }
+        }
       });
       _renderSignalPills(data);
       _renderHoldingsCoverage(data.portfolio_holdings_coverage || null);
@@ -2313,6 +2344,10 @@ function _deriveRefreshRuntimeView(runtime) {
     const attemptedCount = _asFiniteNumber(e.attempted_count);
     const successCount = _asFiniteNumber(e.success_count);
     const failedCount = _asFiniteNumber(e.failed_count);
+    const noCoverageCount = _asFiniteNumber(e.no_coverage_count);
+    const retryCount = _asFiniteNumber(e.retry_count);
+    const rateLimitCount = _asFiniteNumber(e.rate_limit_count);
+    const timeoutCount = _asFiniteNumber(e.timeout_count);
     const executionState = String(e.state || "").toUpperCase();
     const inferredTerminal = plannedCount != null && attemptedCount != null && attemptedCount >= plannedCount;
     const isTerminal = ["COMPLETE", "FAILED", "COMPLETE_WITH_ERRORS", "SKIPPED"].includes(executionState) || inferredTerminal;
@@ -2337,11 +2372,16 @@ function _deriveRefreshRuntimeView(runtime) {
       planned_count: plannedCount,
       attempted_count: attemptedCount,
       success_count: successCount,
+      no_coverage_count: noCoverageCount,
       failed: failedCount,
+      retry_count: retryCount,
+      rate_limit_count: rateLimitCount,
+      timeout_count: timeoutCount,
+      current_symbol: String(e.current_symbol || ""),
       state: executionState || "UNKNOWN",
       started_at: String(e.started_at || ""),
       completed_at: String(e.completed_at || ""),
-      last_activity_at: "",
+      last_activity_at: String(e.last_progress_at || ""),
       queue_position: order.indexOf(provider) + 1,
       is_terminal: isTerminal,
       stage_elapsed_seconds: null,
@@ -2488,7 +2528,7 @@ function loadRefreshRuntimeStatus() {
             ? " · no progress signal yet"
             : "";
           const attemptSummary = (item.attempted_count != null || item.success_count != null)
-            ? ` · success ${item.success_count == null ? 0 : item.success_count}`
+            ? ` · success ${item.success_count == null ? 0 : item.success_count}${item.no_coverage_count != null ? ` · no coverage ${item.no_coverage_count}` : ""}${item.failed != null ? ` · failed ${item.failed}` : ""}`
             : "";
           return `<span class="refresh-insight-pill"><span class="universe-tag">${providerLabel}</span>${stateLabel} ${progress}${attemptSummary}${noActivity}</span>`;
         });
@@ -2520,8 +2560,8 @@ function _renderSignalPills(data) {
   const el = document.getElementById("signalStatusPills");
   if (!el) return;
   const holdingsProviders = (data.portfolio_holdings_coverage && data.portfolio_holdings_coverage.providers) || {};
-  const providers = ["ess", "zacks", "danelfin", "yahoo"];
-  const labels = { ess: "ESS / LSEG", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo" };
+  const providers = ["ess", "zacks", "danelfin", "yahoo", "fmp"];
+  const labels = { ess: "ESS / LSEG", zacks: "Zacks", danelfin: "Danelfin", yahoo: "Yahoo", fmp: "FMP" };
   const renderPill = (key) => {
     const info    = data[key];
     const label   = labels[key];
@@ -2569,15 +2609,18 @@ function _renderSignalPills(data) {
       const attemptedExec = _asFiniteNumber(refreshProgress.attempted_count);
       const successExec = _asFiniteNumber(refreshProgress.success_count);
       const failedExec = _asFiniteNumber(refreshProgress.failed_count);
+      const noCoverageExec = _asFiniteNumber(refreshProgress.no_coverage_count);
+      const currentSymbol = String(refreshProgress.current_symbol || "").toUpperCase();
 
       if (refreshProgress.active || isTerminalState) {
         refreshStateHtml = `<span class="pill-coverage">Refresh state: ${refreshState}</span>`;
       }
-      if ((refreshProgress.active || isTerminalState) && (attemptedExec != null || successExec != null || failedExec != null)) {
+      if ((refreshProgress.active || isTerminalState) && (attemptedExec != null || successExec != null || failedExec != null || noCoverageExec != null)) {
         const attemptedLabel = attemptedExec == null ? "—" : attemptedExec;
         const successLabel = successExec == null ? "—" : successExec;
+        const noCoverageLabel = noCoverageExec == null ? "—" : noCoverageExec;
         const failedLabel = failedExec == null ? "—" : failedExec;
-        refreshStateHtml += ` <span class="pill-coverage">Execution: attempted ${attemptedLabel} · success ${successLabel} · failed ${failedLabel}</span>`;
+        refreshStateHtml += ` <span class="pill-coverage">Execution: attempted ${attemptedLabel} · success ${successLabel} · no coverage ${noCoverageLabel} · failed ${failedLabel}</span>`;
       }
 
       if (refreshProgress.active) {
@@ -2590,10 +2633,22 @@ function _renderSignalPills(data) {
             ? Number(refreshProgress.progress_pct)
             : (planned > 0 ? (shownCompleted / planned) * 100.0 : 100.0);
           const pctLabel = Number.isFinite(progressPct) ? progressPct.toFixed(1) : "0.0";
-          refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} rows · ${pctLabel}%</span>`;
+          const unitLabel = key === "fmp" ? "symbols" : "rows";
+          refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${shownCompleted}/${planned} ${unitLabel} · ${pctLabel}%</span>`;
         } else {
           refreshProgressHtml = `<span class="pill-coverage">Active refresh progress: ${completed} rows processed</span>`;
         }
+        if (currentSymbol) {
+          refreshProgressHtml += ` <span class="pill-coverage">Current: ${_ovEscHtml(currentSymbol)}</span>`;
+        }
+      }
+
+      if (key === "fmp" && isTerminalState) {
+        const attemptedLabel = attemptedExec == null ? "—" : attemptedExec;
+        const successLabel = successExec == null ? "—" : successExec;
+        const noCoverageLabel = noCoverageExec == null ? "—" : noCoverageExec;
+        const failedLabel = failedExec == null ? "—" : failedExec;
+        refreshProgressHtml += ` <span class="pill-coverage">FMP terminal summary: ${attemptedLabel} attempted · ${successLabel} data · ${noCoverageLabel} no coverage · ${failedLabel} failed</span>`;
       }
       if (refreshProgress.active && refreshProgress.no_recent_progress_signal) {
         refreshProgressHtml += " <span class=\"pill-degraded-advisory\">RUNNING — no progress signal yet</span>";
@@ -2650,7 +2705,7 @@ function _renderSignalPills(data) {
     </div>`;
     };
 
-  const automatedProviders = ["zacks", "danelfin", "yahoo"].filter((k) => k in data);
+  const automatedProviders = ["zacks", "danelfin", "yahoo", "fmp"].filter((k) => k in data);
   const manualProviders = ["ess"].filter((k) => k in data);
   const sections = [];
   if (automatedProviders.length) {
