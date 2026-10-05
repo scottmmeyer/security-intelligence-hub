@@ -36,7 +36,7 @@ CASH_POSTURES = {
 }
 
 CONFIDENCE_LEVELS = {"HIGH", "MEDIUM", "LOW"}
-FRESHNESS_STATUSES = {"FRESH", "STALE", "PARTIAL", "MISSING", "UNKNOWN"}
+FRESHNESS_STATUSES = {"FRESH", "DEGRADED", "STALE", "PARTIAL", "MISSING", "UNKNOWN"}
 FRESHNESS_ACTIONS = {
     "NONE",
     "REFRESH_MARKET_PROXIES",
@@ -108,6 +108,13 @@ def unknown_guardrail(
     freshness_threshold_days: int = 2,
     operator_action: str = "REFRESH_MARKET_PROXIES",
     operator_summary: str | None = None,
+    calendar_lag_days: int | None = None,
+    trading_session_lag: int | None = None,
+    freshness_basis: str = "TRADING_SESSIONS",
+    missed_session: bool | None = None,
+    expected_session: str | None = None,
+    expected_session_close_utc: str | None = None,
+    warnings: list[str] | None = None,
 ) -> MarketRegimeGuardrail:
     freshness = str(freshness_status or "UNKNOWN").upper()
     if operator_summary is None:
@@ -140,8 +147,15 @@ def unknown_guardrail(
             "freshness_status": freshness_status,
             "market_proxy_age_days": proxy_lag_days,
             "proxy_lag_days": proxy_lag_days,
+            "calendar_lag_days": calendar_lag_days if calendar_lag_days is not None else proxy_lag_days,
+            "trading_session_lag": trading_session_lag,
+            "freshness_basis": freshness_basis,
+            "missed_session": missed_session,
+            "expected_session": expected_session,
+            "expected_session_close_utc": expected_session_close_utc,
             "freshness_threshold_days": int(freshness_threshold_days),
             "operator_action": operator_action,
+            "warnings": list(warnings or []),
         },
         guardrail_version="MRG-1.0",
         recommended_operator_checks=[

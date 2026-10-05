@@ -6,6 +6,9 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+import exchange_calendars as xc
+import pandas as pd
+
 from src.portfolio.regime.market_regime_guardrail import market_regime_guardrail_latest
 from src.portfolio.regime.market_regime_proxy_artifacts import (
     DEDICATED_HISTORY_CSV,
@@ -93,6 +96,17 @@ def _seed_manifest_and_holdings(repo_root: Path) -> None:
 
 def _symbol_series(start: date, count: int, base: float) -> list[tuple[str, float]]:
     return [((start + timedelta(days=i)).isoformat(), base + i) for i in range(count)]
+
+
+def _session_offset_from_today(offset: int) -> date:
+    cal = xc.get_calendar("XNYS")
+    # Use the nearest completed/active session as anchor for deterministic offsets.
+    today = pd.Timestamp(date.today().isoformat())
+    if cal.is_session(today):
+        anchor = cal.date_to_session(today, direction="none")
+    else:
+        anchor = cal.date_to_session(today, direction="previous")
+    return cal.session_offset(anchor, offset).date()
 
 
 def _write_dedicated_history(repo_root: Path, series_by_symbol: dict[str, list[tuple[str, float]]]) -> None:
@@ -317,7 +331,8 @@ def test_builder_accepts_exact_freshness_boundary(tmp_path: Path) -> None:
     repo_root = tmp_path
     _seed_manifest_and_holdings(repo_root)
 
-    boundary_latest = date.today() - timedelta(days=2)
+    # Trading-session contract: lag=1 is still FRESH.
+    boundary_latest = _session_offset_from_today(-1)
     series = {
         "XLK": [((boundary_latest - timedelta(days=i)).isoformat(), 100.0 + i) for i in range(70)],
         "XLE": [((boundary_latest - timedelta(days=i)).isoformat(), 110.0 + i) for i in range(70)],
@@ -331,13 +346,16 @@ def test_builder_accepts_exact_freshness_boundary(tmp_path: Path) -> None:
     assert result["status"] == "completed"
     assert result["published"] is True
     assert result["reason"] == "completed"
+    payload = json.loads((repo_root / "data" / "current" / DEDICATED_SUMMARY_JSON).read_text(encoding="utf-8"))
+    assert payload["freshness"]["status"] == "FRESH"
 
 
 def test_builder_rejects_one_day_past_freshness_boundary(tmp_path: Path) -> None:
     repo_root = tmp_path
     _seed_manifest_and_holdings(repo_root)
 
-    stale_latest = date.today() - timedelta(days=3)
+    # Trading-session contract: lag=2 is DEGRADED, not STALE.
+    stale_latest = _session_offset_from_today(-2)
     series = {
         "XLK": [((stale_latest - timedelta(days=i)).isoformat(), 100.0 + i) for i in range(70)],
         "XLE": [((stale_latest - timedelta(days=i)).isoformat(), 110.0 + i) for i in range(70)],
@@ -348,10 +366,11 @@ def test_builder_rejects_one_day_past_freshness_boundary(tmp_path: Path) -> None
 
     result = build_market_regime_proxy_artifacts(repo_root=repo_root)
 
-    assert result["status"] == "failed"
-    assert result["reason"] == "stale_proxy_history"
-    assert result["published"] is False
-    assert result["latest_proxy_date_after"] is None
+    assert result["status"] == "completed"
+    assert result["reason"] == "completed"
+    assert result["published"] is True
+    payload = json.loads((repo_root / "data" / "current" / DEDICATED_SUMMARY_JSON).read_text(encoding="utf-8"))
+    assert payload["freshness"]["status"] == "DEGRADED"
 
 
 def test_builder_rejects_stale_proxy_history_even_when_valid_shape(tmp_path: Path) -> None:

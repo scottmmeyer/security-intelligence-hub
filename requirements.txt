@@ -2,3 +2,4 @@ PyYAML==6.0.2
 pytest==8.3.5
 pypdf==5.9.0
 yfinance==0.2.61
+exchange_calendars==4.5.6

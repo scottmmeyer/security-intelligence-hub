@@ -77,8 +77,15 @@ def build_market_regime_guardrail_from_rotation_summary(
             reason="Market proxy data unavailable or stale; using conservative display-only posture.",
             freshness_status=freshness_status,
             proxy_lag_days=freshness.get("proxy_lag_days"),
+            calendar_lag_days=freshness.get("calendar_lag_days"),
+            trading_session_lag=freshness.get("trading_session_lag"),
+            freshness_basis=str(freshness.get("freshness_basis") or "TRADING_SESSIONS"),
+            missed_session=freshness.get("missed_session"),
+            expected_session=freshness.get("expected_session"),
+            expected_session_close_utc=freshness.get("expected_session_close_utc"),
             freshness_threshold_days=int(freshness.get("freshness_threshold_days") or 2),
             operator_action=str(freshness.get("operator_action") or "REFRESH_MARKET_PROXIES"),
+            warnings=freshness_warnings,
             operator_summary=(
                 "Market regime inputs are unavailable or stale. Use conservative posture: "
                 "deploy cautiously, review overweights, and hold excess cash."
@@ -115,8 +122,15 @@ def build_market_regime_guardrail_from_rotation_summary(
             reason=reason,
             freshness_status=freshness_status,
             proxy_lag_days=freshness.get("proxy_lag_days"),
+            calendar_lag_days=freshness.get("calendar_lag_days"),
+            trading_session_lag=freshness.get("trading_session_lag"),
+            freshness_basis=str(freshness.get("freshness_basis") or "TRADING_SESSIONS"),
+            missed_session=freshness.get("missed_session"),
+            expected_session=freshness.get("expected_session"),
+            expected_session_close_utc=freshness.get("expected_session_close_utc"),
             freshness_threshold_days=int(freshness.get("freshness_threshold_days") or 2),
             operator_action=str(freshness.get("operator_action") or "REFRESH_MARKET_PROXIES"),
+            warnings=freshness_warnings,
         ).to_dict()
 
     raw = ctx["raw"]
@@ -315,8 +329,15 @@ def build_market_regime_guardrail_from_rotation_summary(
         reason=reason,
         freshness_status=freshness_status,
         proxy_lag_days=freshness.get("proxy_lag_days"),
+        calendar_lag_days=freshness.get("calendar_lag_days"),
+        trading_session_lag=freshness.get("trading_session_lag"),
+        freshness_basis=str(freshness.get("freshness_basis") or "TRADING_SESSIONS"),
+        missed_session=freshness.get("missed_session"),
+        expected_session=freshness.get("expected_session"),
+        expected_session_close_utc=freshness.get("expected_session_close_utc"),
         freshness_threshold_days=int(freshness.get("freshness_threshold_days") or 2),
         operator_action=str(freshness.get("operator_action") or "REFRESH_MARKET_PROXIES"),
+        warnings=freshness_warnings,
         operator_summary=operator_summary,
     ).to_dict()
 
@@ -410,8 +431,15 @@ def _build_payload(
             "freshness_status": str(freshness.get("freshness_status") or "UNKNOWN"),
             "market_proxy_age_days": freshness.get("market_proxy_age_days"),
             "proxy_lag_days": freshness.get("proxy_lag_days"),
+            "calendar_lag_days": freshness.get("calendar_lag_days"),
+            "trading_session_lag": freshness.get("trading_session_lag"),
+            "freshness_basis": str(freshness.get("freshness_basis") or "TRADING_SESSIONS"),
+            "missed_session": freshness.get("missed_session"),
+            "expected_session": freshness.get("expected_session"),
+            "expected_session_close_utc": freshness.get("expected_session_close_utc"),
             "freshness_threshold_days": int(freshness.get("freshness_threshold_days") or 2),
             "operator_action": str(freshness.get("operator_action") or "VERIFY_TIMESTAMP_FORMATS"),
+            "warnings": [str(x) for x in list(freshness.get("warnings") or []) if str(x).strip()],
         },
         guardrail_version="MRG-1.0",
         recommended_operator_checks=recommended_operator_checks,

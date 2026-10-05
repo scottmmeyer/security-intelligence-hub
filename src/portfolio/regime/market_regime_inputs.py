@@ -4,6 +4,8 @@ from copy import deepcopy
 from datetime import date, datetime
 from typing import Any
 
+from src.portfolio.regime.market_regime_sessions import trading_session_lag_from_proxy_and_evaluation
+
 
 def normalized_rotation_context(rotation_summary: dict[str, Any] | None) -> dict[str, Any]:
     data = deepcopy(rotation_summary or {})
@@ -61,6 +63,11 @@ def evaluate_market_proxy_freshness(
             "freshness_status": "MISSING",
             "market_proxy_age_days": None,
             "proxy_lag_days": None,
+            "calendar_lag_days": None,
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": None,
+            "expected_session": None,
             "freshness_threshold_days": int(threshold_days),
             "operator_action": "REFRESH_MARKET_PROXIES",
             "warnings": ["Market proxy timestamp missing.", "Portfolio snapshot timestamp missing."],
@@ -71,6 +78,11 @@ def evaluate_market_proxy_freshness(
             "freshness_status": "UNKNOWN",
             "market_proxy_age_days": None,
             "proxy_lag_days": None,
+            "calendar_lag_days": None,
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": None,
+            "expected_session": None,
             "freshness_threshold_days": int(threshold_days),
             "operator_action": "VERIFY_TIMESTAMP_FORMATS",
             "warnings": [
@@ -85,6 +97,11 @@ def evaluate_market_proxy_freshness(
             "freshness_status": "MISSING",
             "market_proxy_age_days": None,
             "proxy_lag_days": None,
+            "calendar_lag_days": None,
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": None,
+            "expected_session": None,
             "freshness_threshold_days": int(threshold_days),
             "operator_action": "REFRESH_MARKET_PROXIES",
             "warnings": ["Market proxy timestamp missing."],
@@ -95,18 +112,28 @@ def evaluate_market_proxy_freshness(
             "freshness_status": "PARTIAL",
             "market_proxy_age_days": None,
             "proxy_lag_days": None,
+            "calendar_lag_days": None,
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": None,
+            "expected_session": None,
             "freshness_threshold_days": int(threshold_days),
             "operator_action": "REFRESH_CURRENT_HOLDINGS_PLUS_BUY_CANDIDATES",
             "warnings": ["Portfolio snapshot timestamp missing; unable to compute proxy age."],
         }
 
     try:
-        lag_days = max((date.fromisoformat(snapshot_ts) - date.fromisoformat(market_ts)).days, 0)
+        calendar_lag_days = (date.fromisoformat(snapshot_ts) - date.fromisoformat(market_ts)).days
     except Exception:
         return {
             "freshness_status": "UNKNOWN",
             "market_proxy_age_days": None,
             "proxy_lag_days": None,
+            "calendar_lag_days": None,
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": None,
+            "expected_session": None,
             "freshness_threshold_days": int(threshold_days),
             "operator_action": "VERIFY_TIMESTAMP_FORMATS",
             "warnings": [
@@ -114,14 +141,51 @@ def evaluate_market_proxy_freshness(
             ],
         }
 
-    freshness_status = "FRESH" if lag_days <= threshold_days else "STALE"
+    session_lag = trading_session_lag_from_proxy_and_evaluation(
+        proxy_session=market_proxies_ts,
+        evaluation_time=portfolio_snapshot_ts,
+    )
+    lag_sessions = session_lag.trading_session_lag
+
+    if lag_sessions is None:
+        return {
+            "freshness_status": "UNKNOWN",
+            "market_proxy_age_days": int(calendar_lag_days),
+            "proxy_lag_days": int(calendar_lag_days),
+            "calendar_lag_days": int(calendar_lag_days),
+            "trading_session_lag": None,
+            "freshness_basis": "TRADING_SESSIONS",
+            "missed_session": session_lag.missed_session,
+            "expected_session": session_lag.expected_session,
+            "expected_session_close_utc": session_lag.expected_session_close_utc,
+            "freshness_threshold_days": int(threshold_days),
+            "operator_action": "VALIDATE_PROXY_AND_SNAPSHOT_TIMESTAMPS",
+            "warnings": [str(w) for w in session_lag.warnings if str(w).strip()],
+        }
+
+    if lag_sessions <= 1:
+        freshness_status = "FRESH"
+        operator_action = "NONE"
+    elif lag_sessions == 2:
+        freshness_status = "DEGRADED"
+        operator_action = "VALIDATE_PROXY_AND_SNAPSHOT_TIMESTAMPS"
+    else:
+        freshness_status = "STALE"
+        operator_action = "REFRESH_MARKET_PROXIES"
+
     return {
         "freshness_status": freshness_status,
-        "market_proxy_age_days": int(lag_days),
-        "proxy_lag_days": int(lag_days),
+        "market_proxy_age_days": int(calendar_lag_days),
+        "proxy_lag_days": int(calendar_lag_days),
+        "calendar_lag_days": int(calendar_lag_days),
+        "trading_session_lag": int(lag_sessions),
+        "freshness_basis": "TRADING_SESSIONS",
+        "missed_session": bool(session_lag.missed_session),
+        "expected_session": session_lag.expected_session,
+        "expected_session_close_utc": session_lag.expected_session_close_utc,
         "freshness_threshold_days": int(threshold_days),
-        "operator_action": "NONE" if freshness_status == "FRESH" else "REFRESH_MARKET_PROXIES",
-        "warnings": [],
+        "operator_action": operator_action,
+        "warnings": [str(w) for w in session_lag.warnings if str(w).strip()],
     }
 
 

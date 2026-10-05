@@ -634,9 +634,15 @@ def build_market_regime_proxy_artifacts(
         "hard_asset_proxy": hard_proxy,
         "freshness": {
             "status": str(freshness.get("freshness_status") or "UNKNOWN"),
+            "freshness_basis": str(freshness.get("freshness_basis") or "TRADING_SESSIONS"),
             "portfolio_date": _latest_portfolio_snapshot_date(repo_root),
             "proxy_date": latest_common_date,
             "lag_days": freshness.get("proxy_lag_days"),
+            "calendar_lag_days": freshness.get("calendar_lag_days"),
+            "trading_session_lag": freshness.get("trading_session_lag"),
+            "expected_session": freshness.get("expected_session"),
+            "expected_session_close_utc": freshness.get("expected_session_close_utc"),
+            "missed_session": freshness.get("missed_session"),
             "threshold_days": int(freshness.get("freshness_threshold_days") or 2),
         },
         "provenance": {
