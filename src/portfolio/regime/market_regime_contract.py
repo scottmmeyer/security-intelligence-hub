@@ -114,6 +114,7 @@ def unknown_guardrail(
     missed_session: bool | None = None,
     expected_session: str | None = None,
     expected_session_close_utc: str | None = None,
+    freshness_evaluation_ts: str | None = None,
     warnings: list[str] | None = None,
 ) -> MarketRegimeGuardrail:
     freshness = str(freshness_status or "UNKNOWN").upper()
@@ -153,6 +154,7 @@ def unknown_guardrail(
             "missed_session": missed_session,
             "expected_session": expected_session,
             "expected_session_close_utc": expected_session_close_utc,
+            "freshness_evaluation_ts": freshness_evaluation_ts,
             "freshness_threshold_days": int(freshness_threshold_days),
             "operator_action": operator_action,
             "warnings": list(warnings or []),

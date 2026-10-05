@@ -5,9 +5,10 @@ import hashlib
 import json
 import tempfile
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.portfolio.regime.market_regime_inputs import evaluate_market_proxy_freshness
 from src.replay.history_providers import PricePoint, YahooHistoricalPriceProvider
@@ -73,6 +74,18 @@ def _latest_portfolio_snapshot_date(repo_root: Path) -> str:
         return snap or date.today().isoformat()
     except Exception:
         return date.today().isoformat()
+
+
+def _snapshot_day_freshness_evaluation_ts(snapshot_date: str | None) -> str | None:
+    raw = str(snapshot_date or "").strip()
+    if not raw:
+        return None
+    try:
+        market_day = date.fromisoformat(raw)
+    except ValueError:
+        return None
+    market_tz = ZoneInfo("America/New_York")
+    return datetime.combine(market_day, time(23, 59, 59), tzinfo=market_tz).astimezone(timezone.utc).isoformat()
 
 
 def _normalize_points(points: list[PricePoint]) -> list[tuple[str, float]]:
@@ -598,9 +611,11 @@ def build_market_regime_proxy_artifacts(
         input_source=input_source,
     )
 
+    snapshot_ts = _latest_portfolio_snapshot_date(repo_root)
     freshness = evaluate_market_proxy_freshness(
         market_proxies_ts=latest_common_date,
-        portfolio_snapshot_ts=_latest_portfolio_snapshot_date(repo_root),
+        portfolio_snapshot_ts=snapshot_ts,
+        freshness_evaluation_ts=_snapshot_day_freshness_evaluation_ts(snapshot_ts),
         threshold_days=2,
     )
     freshness_status = str(freshness.get("freshness_status") or "UNKNOWN").upper()

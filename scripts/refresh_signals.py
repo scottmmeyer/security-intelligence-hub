@@ -813,29 +813,15 @@ def _market_proxy_symbols() -> list[str]:
 
 
 def _filter_proxies_by_provider_applicability(provider: str, proxies: list[str]) -> list[str]:
-    """Filter market proxy symbols through provider-specific applicability rules.
-    
-    Market proxies are ETF/INDEX securities not in the base equity universe.
-    Most providers (stock-focused) cannot process these symbols. This function
-    filters the global market proxy list to only include those applicable to
-    the specified provider.
-    
-    Args:
-        provider: Provider name (zacks, danelfin, yahoo, etc.)
-        proxies: List of market proxy symbols
-    
-    Returns:
-        Filtered list of proxies applicable to this provider
+    """Return market proxies for the provider scope used by refresh planning.
+
+    Market-regime monitoring needs the proxy basket in the same refresh scopes as
+    portfolio holdings and buy candidates even for stock-focused providers. The
+    proxy assets are not being fetched through provider-specific equity screens;
+    they are a separate governance signal and should remain in scope for the
+    refresh planner.
     """
-    # Current implementation: stock providers (zacks, danelfin, yahoo) do not process ETF proxies.
-    # Market proxies are needed for market-regime monitoring (separate refresh mode),
-    # but should not be included in stock provider scope.
-    # This ensures provider-specific applicability rules are applied consistently.
-    if provider in ("zacks", "danelfin", "yahoo"):
-        # Stock-focused providers: filter out market proxies (ETFs/indices not in base_equity_universe)
-        return []
-    # Other providers: pass through (in case future providers need proxy access)
-    return proxies
+    return list(proxies)
 
 
 def _market_proxy_refresh_needed(threshold_days: int = 2) -> bool:

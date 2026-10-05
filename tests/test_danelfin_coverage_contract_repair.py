@@ -415,7 +415,7 @@ def test_danelfin_portfolio_mode_regression_scope(tmp_path, monkeypatch):
     scope = refresh._build_refresh_scope(refresh_mode=refresh.REFRESH_MODE_PORTFOLIO_SIGNALS)
     danelfin_symbols = scope["planned_symbols"]["provider_symbols"]["danelfin"]
 
-    assert danelfin_symbols == ["A", "B"]
+    assert danelfin_symbols == ["A", "B", "SPY", "QQQ"]
 
 
 def test_danelfin_known_covered_readiness_and_transparency(tmp_path, monkeypatch):

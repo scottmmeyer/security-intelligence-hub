@@ -551,6 +551,9 @@ def test_no_shared_runtime_artifact_falls_back_to_local_inference() -> None:
         "scripts.run_outcome_ui._signal_status",
         return_value=signal_payload,
     ), patch(
+        "scripts.run_outcome_ui._refresh_last_report",
+        None,
+    ), patch(
         "scripts.run_outcome_ui._REFRESH_REPORT_PATH",
         Path("/tmp/nonexistent_refresh_status_artifact.json"),
     ), patch(

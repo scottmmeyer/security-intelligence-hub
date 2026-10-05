@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -268,6 +269,52 @@ def test_calendar_vs_trading_session_provenance_distinction() -> None:
     assert monday_pm_trading_lag == 1
 
 
+def test_current_date_live_evaluation_uses_runtime_clock() -> None:
+    with patch(
+        "src.portfolio.regime.market_regime_inputs._utc_now",
+        return_value=datetime(2026, 10, 5, 12, 30, tzinfo=timezone.utc),
+    ):
+        freshness = evaluate_market_proxy_freshness(
+            market_proxies_ts="2026-10-02",
+            portfolio_snapshot_ts="2026-10-05",
+        )
+
+    assert freshness["expected_session"] == "2026-10-02"
+    assert freshness["trading_session_lag"] == 0
+    assert freshness["missed_session"] is False
+    assert freshness["freshness_status"] == "FRESH"
+    assert freshness["freshness_evaluation_ts"] == "2026-10-05T12:30:00+00:00"
+
+
+def test_historical_date_only_behavior_is_preserved() -> None:
+    with patch(
+        "src.portfolio.regime.market_regime_inputs._utc_now",
+        return_value=datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc),
+    ):
+        freshness = evaluate_market_proxy_freshness(
+            market_proxies_ts="2026-09-03",
+            portfolio_snapshot_ts="2026-09-04",
+        )
+
+    assert freshness["freshness_status"] == "FRESH"
+    assert freshness["freshness_evaluation_source"] == "historical_snapshot_date"
+
+
+def test_future_portfolio_snapshot_fails_closed() -> None:
+    with patch(
+        "src.portfolio.regime.market_regime_inputs._utc_now",
+        return_value=datetime(2026, 10, 5, 12, 30, tzinfo=timezone.utc),
+    ):
+        freshness = evaluate_market_proxy_freshness(
+            market_proxies_ts="2026-10-02",
+            portfolio_snapshot_ts="2026-10-06",
+        )
+
+    assert freshness["freshness_status"] == "UNKNOWN"
+    assert freshness["expected_session"] is None
+    assert freshness["operator_action"] == "VALIDATE_PROXY_AND_SNAPSHOT_TIMESTAMPS"
+
+
 def test_regime_classification_contract_unchanged_for_mixed_fresh_inputs() -> None:
     payload = build_market_regime_guardrail_from_rotation_summary(
         {
@@ -275,9 +322,10 @@ def test_regime_classification_contract_unchanged_for_mixed_fresh_inputs() -> No
             "signal": "NO_CLEAR_SIGNAL",
             "risk_score": 18,
             "as_of_date": "2026-10-05",
+            "freshness_evaluation_ts": "2026-10-05T12:30:00+00:00",
             "confirmation": {"confirmation_passed": False},
             "proxy_returns": {
-                "latest_proxy_date": "2026-10-05",
+                "latest_proxy_date": "2026-10-02",
                 "tech_returns": {"5d": 0.1, "20d": -0.1, "60d": 0.0},
                 "rotation_spread_pct": {"5d": 0.1, "20d": 0.1, "60d": -0.1},
             },
