@@ -253,6 +253,13 @@ function _debugLog(msg) {
   }
 }
 
+function _toLocalDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Boot
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,9 +267,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     _debugLog("📍 DOMContentLoaded fired");
 
-    // Default date = today
+    // Default date = browser-local calendar date, not UTC rollover date
     const dateInput = document.getElementById("snapshotDate");
-    dateInput.value = new Date().toISOString().slice(0, 10);
+    dateInput.value = _toLocalDateString();
 
     setupUploadZone();
 
@@ -390,7 +397,7 @@ function loadFile(file) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function runAnalysis() {
   if (!_fileContent) return;
-  const snapshotDate = document.getElementById("snapshotDate").value || new Date().toISOString().slice(0,10);
+  const snapshotDate = document.getElementById("snapshotDate").value || _toLocalDateString();
 
   setLoading(true);
   showStatus("info", `<span class="spinner"></span>Analyzing portfolio — enriching holdings against SIH intelligence…`);

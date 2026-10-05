@@ -160,6 +160,22 @@ def test_market_regime_guardrail_container_exists() -> None:
     assert 'id="marketContextContainer"' in html
 
 
+def test_portfolio_alignment_default_date_uses_browser_local_calendar() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "function _toLocalDateString" in app_js
+    assert "new Date().toISOString().slice(0, 10)" not in app_js
+    assert "dateInput.value = _toLocalDateString();" in app_js
+    assert "document.getElementById(\"snapshotDate\").value || _toLocalDateString()" in app_js
+
+
+def test_portfolio_alignment_preserves_explicit_snapshot_date_on_analyze() -> None:
+    app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
+
+    assert "const snapshotDate = document.getElementById(\"snapshotDate\").value || _toLocalDateString();" in app_js
+    assert "snapshot_date: snapshotDate" in app_js
+
+
 def test_market_regime_display_semantics_for_fresh_unknown_inconclusive() -> None:
     app_js = (ROOT / "ui" / "portfolio_alignment" / "app.js").read_text(encoding="utf-8")
 
