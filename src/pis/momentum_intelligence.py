@@ -11,6 +11,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -57,6 +58,11 @@ _MARKET_FALLBACK_ASSET_TYPES = {
 }
 
 _TAXONOMY_UNKNOWN_VALUES = {"", "UNKNOWN", "N/A", "NA", "NONE"}
+
+# Shared current-intelligence holdings loaders should accept normal ticker-like
+# symbols while excluding administrative placeholder rows (for example symbols
+# containing spaces such as "PENDING ACTIVITY").
+_PORTFOLIO_SYMBOL_TOKEN_RE = re.compile(r"^[A-Z0-9][A-Z0-9./_-]*$")
 
 
 @dataclass(frozen=True)
@@ -880,6 +886,13 @@ def _latest_positions_file(repo_root: Path) -> tuple[str, Path | None]:
     return snapshot_date, p
 
 
+def _is_investable_position_symbol(raw_symbol: str) -> bool:
+    symbol = str(raw_symbol or "").strip().upper()
+    if not symbol or symbol in {"CASH", "PENDING"}:
+        return False
+    return bool(_PORTFOLIO_SYMBOL_TOKEN_RE.fullmatch(symbol))
+
+
 def _load_holdings(repo_root: Path) -> tuple[str, list[dict[str, object]]]:
     snapshot_date, path = _latest_positions_file(repo_root)
     if path is None or not path.exists():
@@ -887,7 +900,7 @@ def _load_holdings(repo_root: Path) -> tuple[str, list[dict[str, object]]]:
     out: list[dict[str, object]] = []
     for row in _read_csv_rows(path):
         symbol = str(row.get("symbol", "")).strip().upper()
-        if not symbol or symbol in {"CASH", "PENDING"}:
+        if not _is_investable_position_symbol(symbol):
             continue
         weight = _to_float(row.get("percent_of_account"))
         market_value = _to_float(row.get("market_value"))
@@ -926,7 +939,7 @@ def _load_holdings_as_of(repo_root: Path, as_of_date: str) -> tuple[str, list[di
     out: list[dict[str, object]] = []
     for row in _read_csv_rows(p):
         symbol = str(row.get("symbol", "")).strip().upper()
-        if not symbol or symbol in {"CASH", "PENDING"}:
+        if not _is_investable_position_symbol(symbol):
             continue
         weight = _to_float(row.get("percent_of_account"))
         market_value = _to_float(row.get("market_value"))

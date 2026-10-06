@@ -606,6 +606,22 @@ def test_dri_industry_map_reports_raw_industry_metrics_and_coverage(tmp_path: Pa
     assert oil["drawdown"]["from_available_history_high_pct"] is None
 
 
+def test_dri_holding_count_excludes_placeholder_symbols(tmp_path: Path) -> None:
+    _seed_minimal_dri_fixture(tmp_path)
+
+    _rewrite_positions(tmp_path, "2026-08-19", ["CRM", "MSFT", "XOM", "PENDING ACTIVITY"])
+
+    payload = pis_dri_industry_map(repo_root=tmp_path, as_of_date="2026-08-19")
+
+    assert payload["coverage_summary"]["holding_count"] == 3
+    portfolio_symbols = {
+        symbol
+        for row in payload["industries"]
+        for symbol in (row.get("portfolio_context", {}).get("portfolio_symbols") or [])
+    }
+    assert "PENDING ACTIVITY" not in portfolio_symbols
+
+
 def test_dri_industry_map_as_of_filter_prevents_lookahead_from_future_price_spike(tmp_path: Path) -> None:
     _seed_minimal_dri_fixture(tmp_path)
 
